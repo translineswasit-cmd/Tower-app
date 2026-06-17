@@ -582,6 +582,10 @@ tbody tr:hover { background: #F7FAFC; }
     <h3>📋 بيانات الحساب</h3>
     <div class="grid-2">
       <div class="field">
+        <label>الاسم الكامل</label>
+        <input id="acc_fullname_input" placeholder="مثال: أمير عبد الحسين">
+      </div>
+      <div class="field">
         <label>رقم الهاتف</label>
         <input id="acc_phone" placeholder="مثال: 07xxxxxxxxx">
       </div>
@@ -1550,6 +1554,7 @@ function renderThermalArchive() {
 // ACCOUNT PAGE
 // ========================
 function loadAccountPage() {
+  document.getElementById('acc_fullname_input').value = currentUser.full_name || '';
   document.getElementById('acc_username').value = currentUser.username || '';
   document.getElementById('acc_phone').value = currentUser.phone || '';
   document.getElementById('acc_jobtitle').value = currentUser.department || '—';
@@ -1572,13 +1577,21 @@ function loadAccountPage() {
 }
 
 async function saveAccountInfo() {
+  const fullName = document.getElementById('acc_fullname_input').value.trim();
   const phone = document.getElementById('acc_phone').value.trim();
+  if (!fullName) { showToast('⚠️ الاسم الكامل لا يمكن أن يكون فاضي', 'error'); return; }
   try {
-    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ phone }) });
+    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ full_name: fullName, phone }) });
     if (!res.ok) throw new Error();
+    currentUser.full_name = fullName;
     currentUser.phone = phone;
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
-    showToast('✅ تم حفظ رقم الهاتف');
+    // تحديث العرض بالحال بكل مكان يظهر فيه الاسم
+    const initials = fullName.charAt(0) || '?';
+    document.getElementById('userAvatar').textContent = initials;
+    document.getElementById('acc_fullName').textContent = fullName;
+    document.getElementById('headerUserName').textContent = fullName;
+    showToast('✅ تم حفظ البيانات');
   } catch { showToast('❌ تعذر الحفظ، حاول مرة أخرى', 'error'); }
 }
 
