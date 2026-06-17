@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام كشف أبراج النقل الكهربائي</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #1a202c; direction: rtl; min-height: 100vh; }
+
+/* LOGIN SCREEN */
+#loginScreen {
+  position: fixed; inset: 0; background: linear-gradient(135deg, #1a2e4a 0%, #2E4057 60%, #3a5a8a 100%);
+  display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px;
+}
+.login-box { background: white; border-radius: 20px; padding: 40px 32px; max-width: 380px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center; }
+.login-box .logo { font-size: 3rem; margin-bottom: 8px; }
+.login-box h1 { font-size: 1.3rem; color: #1a2e4a; margin-bottom: 4px; }
+.login-box p { color: #718096; font-size: 0.82rem; margin-bottom: 24px; }
+.login-field { margin-bottom: 14px; text-align: right; }
+.login-field label { display: block; font-size: 0.82rem; font-weight: 600; color: #4A5568; margin-bottom: 6px; }
+.login-field input { width: 100%; padding: 12px 14px; border: 1.5px solid #E2E8F0; border-radius: 10px; font-family: inherit; font-size: 0.95rem; }
+.login-field input:focus { outline: none; border-color: #2E4057; }
+.login-btn { width: 100%; padding: 13px; background: #2E4057; color: white; border: none; border-radius: 10px; font-family: inherit; font-size: 0.95rem; font-weight: 700; cursor: pointer; margin-top: 8px; }
+.login-btn:hover { background: #1a2e4a; }
+.login-btn:disabled { opacity: 0.6; }
+.login-error { background: #FED7D7; color: #822727; padding: 10px; border-radius: 8px; font-size: 0.82rem; margin-top: 12px; display: none; }
+.login-error.show { display: block; }
+
+/* HEADER */
+.header { background: linear-gradient(135deg, #1a2e4a 0%, #2E4057 60%, #3a5a8a 100%); color: white; position: sticky; top: 0; z-index: 200; box-shadow: 0 3px 16px rgba(0,0,0,0.25); }
+.header-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; }
+.header-brand { display: flex; align-items: center; gap: 12px; }
+.header-brand .logo { font-size: 2rem; }
+.header-brand h1 { font-size: 1.1rem; font-weight: 700; }
+.header-brand p { font-size: 0.7rem; opacity: 0.75; }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.user-pill { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.12); padding: 6px 12px; border-radius: 20px; font-size: 0.8rem; cursor: pointer; }
+.user-pill .avatar { width: 24px; height: 24px; border-radius: 50%; background: #63B3ED; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.75rem; }
+.status-pill { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.12); padding: 5px 12px; border-radius: 20px; font-size: 0.78rem; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot.green { background: #48BB78; box-shadow: 0 0 6px #48BB78; }
+.dot.red { background: #FC8181; }
+nav { display: flex; border-top: 1px solid rgba(255,255,255,0.12); overflow-x: auto; }
+nav button { flex: 1; min-width: 80px; padding: 11px 8px; background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; font-family: inherit; font-size: 0.82rem; transition: all 0.2s; border-bottom: 3px solid transparent; white-space: nowrap; }
+nav button:hover { color: white; background: rgba(255,255,255,0.08); }
+nav button.active { color: white; border-bottom-color: #63B3ED; background: rgba(255,255,255,0.1); }
+nav button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.page { display: none; padding: 20px; max-width: 1300px; margin: 0 auto; }
+.page.active { display: block; }
+#toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); padding: 12px 28px; border-radius: 10px; font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,0.2); z-index: 9999; display: none; font-size: 0.92rem; }
+#toast.show { display: block; animation: popIn 0.3s ease; }
+#toast.success { background: #1f6641; color: white; }
+#toast.error { background: #C53030; color: white; }
+@keyframes popIn { from { top: -40px; opacity: 0; } to { top: 16px; opacity: 1; } }
+
+.home-hero { background: white; border-radius: 14px; padding: 28px 24px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.06); text-align: center; }
+.home-hero h2 { font-size: 1.5rem; color: #1a2e4a; margin-bottom: 8px; }
+.home-hero p { color: #718096; }
+.cards-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+.card { background: white; border-radius: 12px; padding: 24px 16px; text-align: center; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.card:hover { transform: translateY(-4px); box-shadow: 0 8px 28px rgba(0,0,0,0.13); }
+.card .icon { font-size: 2.2rem; }
+.card .label { font-weight: 700; color: #2E4057; font-size: 0.95rem; }
+.card .sublabel { color: #A0AEC0; font-size: 0.75rem; }
+.page-title { font-size: 1.3rem; color: #1a2e4a; font-weight: 700; margin-bottom: 20px; }
+
+.form-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.form-card h3 { font-size: 0.95rem; color: #2E4057; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid #EBF0F5; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 0.82rem; font-weight: 600; color: #4A5568; }
+.field input, .field select, .field textarea { padding: 9px 12px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.88rem; color: #1a202c; background: #FAFBFC; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: #2E4057; background: white; }
+.tower-info-box { background: #EBF8FF; border: 1.5px solid #90CDF4; border-radius: 10px; padding: 10px 14px; margin-top: 8px; display: none; }
+.tower-info-box .type-value { font-size: 1.2rem; font-weight: 800; color: #1a365d; }
+.tower-info-box .type-desc { font-size: 0.75rem; color: #4A5568; }
+.line-info-strip { background: #F0FFF4; border: 1.5px solid #9AE6B4; border-radius: 10px; padding: 8px 14px; margin-top: 8px; display: none; font-size: 0.82rem; color: #276749; font-weight: 600; }
+.form-actions { display: flex; gap: 10px; padding-top: 6px; flex-wrap: wrap; }
+.btn { padding: 11px 24px; border: none; border-radius: 8px; font-family: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+.btn-primary { background: #2E4057; color: white; }
+.btn-primary:hover { background: #1a2e4a; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary { background: #EDF2F7; color: #2D3748; }
+.btn-secondary:hover { background: #E2E8F0; }
+.btn-excel { background: #276749; color: white; padding: 9px 18px; border: none; border-radius: 8px; font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+.btn-sm { padding: 5px 11px; border: none; border-radius: 6px; font-family: inherit; font-size: 0.78rem; cursor: pointer; font-weight: 600; }
+.btn-edit { background: #3182CE; color: white; }
+.btn-del { background: #C53030; color: white; }
+
+.insulator-section { background: white; border-radius: 12px; padding: 20px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.insulator-section h3 { font-size: 0.95rem; color: #2E4057; margin-bottom: 6px; padding-bottom: 10px; border-bottom: 2px solid #EBF0F5; }
+.insulator-hint { font-size: 0.78rem; color: #718096; margin-bottom: 16px; }
+.phases-wrap { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+.phase-block { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.phase-label { font-weight: 700; font-size: 0.9rem; color: #2E4057; background: #EBF0F5; padding: 4px 16px; border-radius: 20px; }
+.chain-wrap { display: flex; gap: 6px; }
+.chain-col { display: flex; flex-direction: column; gap: 2px; }
+.ins-rect { width: 18px; height: 14px; border: 1.5px solid #555; border-radius: 2px; cursor: pointer; background: white; }
+.ins-rect.damaged { background: #FC4444; border-color: #9B0000; }
+.insulator-legend { display: flex; gap: 16px; margin-top: 12px; justify-content: center; font-size: 0.8rem; }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-box { width: 16px; height: 12px; border-radius: 2px; border: 1.5px solid #555; }
+.legend-box.ok { background: white; }
+.legend-box.dmg { background: #FC4444; border-color: #9B0000; }
+
+.records-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+.toolbar-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.search-box { padding: 9px 14px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.88rem; min-width: 200px; }
+.table-wrap { overflow-x: auto; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.07); }
+table { width: 100%; border-collapse: collapse; background: white; font-size: 0.8rem; }
+thead th { background: #2E4057; color: white; padding: 10px 8px; text-align: center; white-space: nowrap; font-size: 0.77rem; }
+tbody td { padding: 8px; text-align: center; border-bottom: 1px solid #EDF2F7; vertical-align: middle; }
+tbody tr:hover { background: #F7FAFC; }
+.badge { padding: 3px 9px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; display: inline-block; }
+.badge-green { background: #C6F6D5; color: #22543D; }
+.badge-yellow { background: #FEFCBF; color: #744210; }
+.badge-red { background: #FED7D7; color: #822727; }
+.badge-gray { background: #E2E8F0; color: #4A5568; }
+.records-footer { margin-top: 12px; color: #718096; font-size: 0.82rem; }
+.empty-state { text-align: center; padding: 40px; color: #A0AEC0; }
+.modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500; align-items: center; justify-content: center; padding: 16px; }
+.modal-bg.show { display: flex; }
+.modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 380px; width: 100%; text-align: center; max-height: 90vh; overflow-y: auto; }
+.modal-box h3 { color: #C53030; margin-bottom: 10px; }
+.modal-box p { color: #4A5568; margin-bottom: 22px; }
+.modal-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+.admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.admin-card { background: white; border-radius: 12px; padding: 22px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.admin-card h3 { color: #2E4057; margin-bottom: 10px; }
+.admin-card p { color: #4A5568; font-size: 0.85rem; margin-bottom: 12px; }
+.admin-stat { font-size: 2rem; font-weight: 700; color: #2E4057; }
+
+/* Add member modal */
+.new-user-result { background: #F0FFF4; border: 2px solid #48BB78; border-radius: 12px; padding: 20px; margin-top: 16px; text-align: right; }
+.new-user-result .cred-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #C6F6D5; }
+.new-user-result .cred-row:last-child { border-bottom: none; }
+.new-user-result .cred-label { font-size: 0.8rem; color: #4A5568; }
+.new-user-result .cred-value { font-weight: 700; color: #1a202c; font-family: monospace; font-size: 1rem; }
+
+.members-table-wrap { overflow-x: auto; margin-top: 16px; }
+.role-badge { padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 700; }
+.role-admin { background: #FED7D7; color: #822727; }
+.role-supervisor { background: #FEEBC8; color: #7B341E; }
+.role-technician { background: #C6F6D5; color: #22543D; }
+.role-readonly { background: #E2E8F0; color: #4A5568; }
+
+@media (max-width: 900px) { .cards-grid { grid-template-columns: 1fr 1fr; } .admin-grid { grid-template-columns: 1fr; } .phases-wrap { gap: 12px; } }
+@media (max-width: 600px) { .grid-2,.grid-3 { grid-template-columns: 1fr; } .cards-grid { grid-template-columns: 1fr 1fr; } nav button { font-size: 0.7rem; padding: 8px 3px; } .page { padding: 10px; } }
+
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="logo">⚡</div>
+    <h1>نظام كشف أبراج النقل الكهربائي</h1>
+    <p>محافظة واسط — شبكة الضغط العالي</p>
+    <div class="login-field">
+      <label>اسم المستخدم</label>
+      <input id="loginUserInput" placeholder="مثال: admin">
+    </div>
+    <div class="login-field">
+      <label>الباسورد</label>
+      <input id="loginPassInput" type="password" placeholder="••••••••">
+    </div>
+    <button class="login-btn" id="loginBtn" onclick="doLogin()">دخول</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<!-- APP ROOT -->
+<div id="appRoot" style="display:none">
+
+<div class="header">
+  <div class="header-top">
+    <div class="header-brand">
+      <span class="logo">⚡</span>
+      <div><h1>نظام كشف أبراج النقل الكهربائي</h1><p>محافظة واسط — شبكة الضغط العالي</p></div>
+    </div>
+    <div class="header-right">
+      <div class="status-pill"><span class="dot green" id="statusDot"></span><span id="statusText">متصل</span></div>
+      <div class="user-pill" onclick="logout()" title="تسجيل خروج">
+        <span class="avatar" id="userAvatar">؟</span>
+        <span id="userNameDisplay">—</span>
+        <span>🚪</span>
+      </div>
+    </div>
+  </div>
+  <nav>
+    <button class="active" onclick="showPage('home',this)">🏠 الرئيسية</button>
+    <button onclick="showPage('form',this)">➕ كشف جديد</button>
+    <button onclick="showPage('records',this);loadRecords();">📋 السجلات</button>
+    <button onclick="showPage('admin',this)">⚙️ الإدارة</button>
+  </nav>
+</div>
+<div id="toast"></div>
+
+<!-- DELETE RECORD MODAL -->
+<div class="modal-bg" id="deleteModal">
+  <div class="modal-box">
+    <h3>⚠️ تأكيد الحذف</h3><p>هل تريد حذف هذا السجل نهائياً؟</p>
+    <div class="modal-actions">
+      <button class="btn btn-del btn-sm" style="padding:10px 24px" onclick="confirmDelete()">نعم، احذف</button>
+      <button class="btn btn-secondary" onclick="closeModal()">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE USER MODAL -->
+<div class="modal-bg" id="deleteUserModal">
+  <div class="modal-box">
+    <h3>⚠️ تأكيد حذف العضو</h3><p>هل تريد حذف هذا العضو نهائياً؟ سيفقد القدرة على الدخول للنظام.</p>
+    <div class="modal-actions">
+      <button class="btn btn-del btn-sm" style="padding:10px 24px" onclick="confirmDeleteUser()">نعم، احذف</button>
+      <button class="btn btn-secondary" onclick="closeDeleteUserModal()">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD MEMBER MODAL -->
+<div class="modal-bg" id="addMemberModal">
+  <div class="modal-box" style="max-width:420px">
+    <h3 style="color:#2E4057">➕ إضافة عضو جديد</h3>
+    <form id="newMemberForm" style="text-align:right;display:flex;flex-direction:column;gap:12px;margin-top:16px" onsubmit="event.preventDefault();createMember();">
+      <div class="field">
+        <label>الاسم الكامل *</label>
+        <input id="newMemberName" placeholder="مثال: أحمد علي">
+      </div>
+      <div class="field">
+        <label>الصلاحية *</label>
+        <select id="newMemberRole">
+          <option value="technician">فني — يضيف ويعدل كشوفاته</option>
+          <option value="supervisor">مشرف — يضيف ويعدل ويحذف</option>
+          <option value="readonly">قراءة فقط — يشوف بدون تعديل</option>
+          <option value="admin">مدير — كل الصلاحيات</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>القسم / الموقع</label>
+        <input id="newMemberDept" placeholder="مثال: فرق الميدان">
+      </div>
+      <button type="submit" class="btn btn-primary" style="margin-top:4px">➕ إنشاء الحساب</button>
+    </form>
+
+    <div class="new-user-result" id="newUserResult" style="display:none">
+      <p style="color:#276749;font-weight:700;margin-bottom:10px">✅ تم إنشاء الحساب! أعطِ هذه البيانات للعضو:</p>
+      <div class="cred-row"><span class="cred-label">الاسم</span><span class="cred-value" id="resultName"></span></div>
+      <div class="cred-row"><span class="cred-label">اسم المستخدم</span><span class="cred-value" id="resultUsername"></span></div>
+      <div class="cred-row"><span class="cred-label">الباسورد</span><span class="cred-value" id="resultPassword"></span></div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:18px">
+      <button class="btn btn-secondary" onclick="closeAddMemberModal()">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- HOME -->
+<div class="page active" id="page-home">
+  <div class="home-hero"><h2>مرحباً بك في نظام كشف الأبراج</h2><p>سجّل بيانات الكشف، تصفح السجلات، وصدّر التقارير</p></div>
+  <div class="cards-grid">
+    <div class="card" onclick="showPage('form',document.querySelectorAll('nav button')[1])"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
+    <div class="card" onclick="showPage('records',document.querySelectorAll('nav button')[2]);loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span><span class="sublabel">عرض جميع البيانات</span></div>
+    <div class="card" onclick="exportExcel()"><span class="icon">📊</span><span class="label">تصدير Excel</span><span class="sublabel">تحميل التقرير</span></div>
+    <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[3])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
+  </div>
+</div>
+
+<!-- FORM -->
+<div class="page" id="page-form">
+  <div class="page-title" id="formTitle">➕ إضافة كشف جديد</div>
+  <div class="form-card">
+    <h3>📌 معلومات عامة</h3>
+    <div class="grid-2">
+      <div class="field">
+        <label>اسم الخط *</label>
+        <select id="f_line_name" onchange="onLineChange()"><option value="">-- اختر الخط --</option></select>
+        <div class="line-info-strip" id="lineInfoStrip"></div>
+      </div>
+      <div class="field"><label>تاريخ الكشف *</label><input type="date" id="f_inspection_date"></div>
+      <div class="field">
+        <label>رقم البرج *</label>
+        <select id="f_tower_number" onchange="onTowerChange()" disabled><option value="">-- اختر الخط أولاً --</option></select>
+        <div class="tower-info-box" id="towerInfoBox"><div class="type-value" id="towerTypeValue">—</div><div class="type-desc" id="towerTypeDesc"></div></div>
+      </div>
+      <div class="field"><label>نوع البرج</label><input id="f_tower_type" readonly placeholder="يُحدد تلقائياً" style="background:#F7FAFC;color:#4A5568;"></div>
+    </div>
+  </div>
+  <div class="insulator-section" id="insulatorSection" style="display:none">
+    <h3>🔘 كشف العوازل</h3>
+    <p class="insulator-hint">اضغط على أي عازل لتحديده كمتضرر (أحمر) أو سليم (أبيض)</p>
+    <div class="phases-wrap" id="phasesWrap"></div>
+    <div class="insulator-legend">
+      <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
+      <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
+    </div>
+  </div>
+  <div class="form-card">
+    <h3>🔩 تقاطعات الحديد</h3>
+    <div class="field"><label>الحالة</label>
+      <select id="f_iron_intersections"><option value="">-- اختر --</option><option>سليم</option><option>صدأ بسيط</option><option>صدأ شديد</option><option>تلف</option><option>مفقود</option></select>
+    </div>
+  </div>
+  <div class="form-card">
+    <h3>🏗️ قواعد البرج</h3>
+    <div class="field"><label>الحالة</label>
+      <select id="f_tower_foundations"><option value="">-- اختر --</option><option>سليم</option><option>تشققات بسيطة</option><option>تشققات شديدة</option><option>انهيار جزئي</option><option>يحتاج تدعيم</option></select>
+    </div>
+  </div>
+  <div class="form-card">
+    <h3>🔧 ملحقات البرج</h3>
+    <div class="field"><label>الحالة</label>
+      <select id="f_tower_attachments"><option value="">-- اختر --</option><option>مكتملة وسليمة</option><option>ناقصة</option><option>تالفة</option><option>مسروقة</option></select>
+    </div>
+  </div>
+  <div class="form-card">
+    <h3>⚡ الأسلاك</h3>
+    <div class="grid-3">
+      <div class="field"><label>الطور R</label><select id="f_wires_r"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label>الطور S</label><select id="f_wires_s"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label>الطور T</label><select id="f_wires_t"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+    </div>
+  </div>
+  <div class="form-card">
+    <h3>🌍 الأرضي</h3>
+    <div class="grid-3">
+      <div class="field"><label>الطور R</label><select id="f_ground_r"><option value="">-- اختر --</option><option>سليم</option><option>تلف</option><option>مفقود</option><option>غير متصل</option></select></div>
+      <div class="field"><label>الطور S</label><select id="f_ground_s"><option value="">-- اختر --</option><option>سليم</option><option>تلف</option><option>مفقود</option><option>غير متصل</option></select></div>
+      <div class="field"><label>الطور T</label><select id="f_ground_t"><option value="">-- اختر --</option><option>سليم</option><option>تلف</option><option>مفقود</option><option>غير متصل</option></select></div>
+    </div>
+  </div>
+  <div class="form-card">
+    <h3>🔥 مسببات الحرائق ووجود الطريق</h3>
+    <div class="grid-2">
+      <div class="field"><label>مسببات الحرائق</label><select id="f_fire_causes"><option value="">-- اختر --</option><option>لا يوجد</option><option>أعشاب جافة</option><option>مخلفات</option><option>أشجار قريبة</option><option>تجاوزات</option></select></div>
+      <div class="field"><label>وجود طريق</label><select id="f_road_access"><option value="">-- اختر --</option><option>متاح</option><option>صعب الوصول</option><option>غير متاح</option></select></div>
+    </div>
+  </div>
+  <div class="form-card">
+    <h3>📝 ملاحظات</h3>
+    <div class="field"><textarea id="f_notes" rows="3" placeholder="أي ملاحظات إضافية..."></textarea></div>
+  </div>
+  <div class="form-actions">
+    <button class="btn btn-primary" id="saveBtn" onclick="saveRecord()">💾 حفظ الكشف</button>
+    <button class="btn btn-secondary" onclick="clearForm()">🔄 مسح</button>
+    <button class="btn btn-secondary" id="cancelEditBtn" style="display:none" onclick="cancelEdit()">❌ إلغاء</button>
+  </div>
+</div>
+
+<!-- RECORDS -->
+<div class="page" id="page-records">
+  <div class="records-toolbar">
+    <div class="page-title" style="margin:0">📋 سجلات الكشف</div>
+    <div class="toolbar-right">
+      <input class="search-box" id="searchBox" placeholder="🔍 بحث..." oninput="filterRecords()">
+      <button class="btn-excel" onclick="exportExcel()">📊 تصدير Excel</button>
+      <button class="btn btn-primary" onclick="loadRecords()" style="padding:9px 18px">🔄 تحديث</button>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>#</th><th>اسم الخط</th><th>التاريخ</th><th>رقم البرج</th><th>نوع البرج</th>
+        <th>عوازل R</th><th>عوازل S</th><th>عوازل T</th>
+        <th>تقاطعات الحديد</th><th>قواعد البرج</th><th>ملحقات البرج</th>
+        <th>R أسلاك</th><th>S أسلاك</th><th>T أسلاك</th>
+        <th>R أرضي</th><th>S أرضي</th><th>T أرضي</th>
+        <th>حرائق</th><th>طريق</th><th>ملاحظات</th><th>إجراءات</th>
+      </tr></thead>
+      <tbody id="recordsBody"><tr><td colspan="21" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+    </table>
+  </div>
+  <div class="records-footer" id="recordsFooter"></div>
+</div>
+
+<!-- ADMIN -->
+<div class="page" id="page-admin">
+  <div class="page-title">⚙️ لوحة الإدارة</div>
+  <div class="admin-grid">
+    <div class="admin-card"><h3>📊 إحصائيات الكشوفات</h3><div class="admin-stat" id="totalCount">0</div><p>إجمالي السجلات المحفوظة</p></div>
+    <div class="admin-card"><h3>👥 الأعضاء</h3><div class="admin-stat" id="totalMembers">0</div><p>عدد الأعضاء المسجلين</p></div>
+  </div>
+
+  <div class="admin-card" style="margin-top:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <h3 style="margin:0">👥 إدارة الأعضاء</h3>
+      <button class="btn btn-primary" onclick="openAddMemberModal()">➕ إضافة عضو جديد</button>
+    </div>
+    <div class="members-table-wrap">
+      <table>
+        <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>القسم</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+        <tbody id="membersBody"><tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+</div><!-- end appRoot -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const LINES_DATA = {"عزيزية - صويرة 132 ك.ف": [{"num": 1, "type": "برج نهائي", "type_code": "E"}, {"num": 2, "type": "برج شد", "type_code": "T"}, {"num": 3, "type": "برج شد", "type_code": "T"}, {"num": 4, "type": "برج تعليق", "type_code": "S"}, {"num": 5, "type": "برج تعليق", "type_code": "S"}, {"num": 6, "type": "برج تعليق", "type_code": "S"}, {"num": 7, "type": "برج شد", "type_code": "T"}, {"num": 8, "type": "برج عبور", "type_code": "R"}, {"num": 9, "type": "برج تعليق", "type_code": "S"}, {"num": 10, "type": "برج تعليق", "type_code": "S"}, {"num": 11, "type": "برج شد", "type_code": "T"}, {"num": 12, "type": "برج تعليق", "type_code": "S"}, {"num": 13, "type": "برج تعليق", "type_code": "S"}, {"num": 14, "type": "برج تعليق", "type_code": "S"}, {"num": 15, "type": "برج تعليق", "type_code": "S"}, {"num": 16, "type": "برج تعليق", "type_code": "S"}, {"num": 17, "type": "برج تعليق", "type_code": "S"}, {"num": 18, "type": "برج تعليق", "type_code": "S"}, {"num": 19, "type": "برج تعليق", "type_code": "S"}, {"num": 20, "type": "برج تعليق", "type_code": "S"}, {"num": 21, "type": "برج تعليق", "type_code": "S"}, {"num": 22, "type": "برج تعليق", "type_code": "S"}, {"num": 23, "type": "برج شد", "type_code": "T"}, {"num": 24, "type": "برج تعليق", "type_code": "S"}, {"num": 25, "type": "برج تعليق", "type_code": "S"}, {"num": 26, "type": "برج تعليق", "type_code": "S"}, {"num": 27, "type": "برج تعليق", "type_code": "S"}, {"num": 28, "type": "برج تعليق", "type_code": "S"}, {"num": 29, "type": "برج تعليق", "type_code": "S"}, {"num": 30, "type": "برج تعليق", "type_code": "S"}, {"num": 31, "type": "برج تعليق", "type_code": "S"}, {"num": 32, "type": "برج تعليق", "type_code": "S"}, {"num": 33, "type": "برج تعليق", "type_code": "S"}, {"num": 34, "type": "برج تعليق", "type_code": "S"}, {"num": 35, "type": "برج شد", "type_code": "T"}, {"num": 36, "type": "برج تعليق", "type_code": "S"}, {"num": 37, "type": "برج تعليق", "type_code": "S"}, {"num": 38, "type": "برج تعليق", "type_code": "S"}, {"num": 39, "type": "برج تعليق", "type_code": "S"}, {"num": 40, "type": "برج تعليق", "type_code": "S"}, {"num": 41, "type": "برج تعليق", "type_code": "S"}, {"num": 42, "type": "برج تعليق", "type_code": "S"}, {"num": 43, "type": "برج تعليق", "type_code": "S"}, {"num": 44, "type": "برج تعليق", "type_code": "S"}, {"num": 45, "type": "برج شد", "type_code": "T"}, {"num": 46, "type": "برج تعليق", "type_code": "S"}, {"num": 47, "type": "برج تعليق", "type_code": "S"}, {"num": 48, "type": "برج تعليق", "type_code": "S"}, {"num": 49, "type": "برج تعليق", "type_code": "S"}, {"num": 50, "type": "برج تعليق", "type_code": "S"}, {"num": 51, "type": "برج تعليق", "type_code": "S"}, {"num": 52, "type": "برج تعليق", "type_code": "S"}, {"num": 53, "type": "برج تعليق", "type_code": "S"}, {"num": 54, "type": "برج تعليق", "type_code": "S"}, {"num": 55, "type": "برج تعليق", "type_code": "S"}, {"num": 56, "type": "برج تعليق", "type_code": "S"}, {"num": 57, "type": "برج شد", "type_code": "T"}, {"num": 58, "type": "برج تعليق", "type_code": "S"}, {"num": 59, "type": "برج تعليق", "type_code": "S"}, {"num": 60, "type": "برج تعليق", "type_code": "S"}, {"num": 61, "type": "برج تعليق", "type_code": "S"}, {"num": 62, "type": "برج تعليق", "type_code": "S"}, {"num": 63, "type": "برج تعليق", "type_code": "S"}, {"num": 64, "type": "برج تعليق", "type_code": "S"}, {"num": 65, "type": "برج تعليق", "type_code": "S"}, {"num": 66, "type": "برج خاص", "type_code": "SP"}, {"num": 67, "type": "برج تعليق", "type_code": "S"}, {"num": 68, "type": "برج شد", "type_code": "T"}, {"num": 69, "type": "برج تعليق", "type_code": "S"}, {"num": 70, "type": "برج تعليق", "type_code": "S"}, {"num": 71, "type": "برج تعليق", "type_code": "S"}, {"num": 72, "type": "برج تعليق", "type_code": "S"}, {"num": 73, "type": "برج تعليق", "type_code": "S"}, {"num": 74, "type": "برج تعليق", "type_code": "S"}, {"num": 75, "type": "برج تعليق", "type_code": "S"}, {"num": 76, "type": "برج تعليق", "type_code": "S"}, {"num": 77, "type": "برج تعليق", "type_code": "S"}, {"num": 78, "type": "برج شد", "type_code": "T"}, {"num": 79, "type": "برج تعليق", "type_code": "S"}, {"num": 80, "type": "برج تعليق", "type_code": "S"}, {"num": 81, "type": "برج تعليق", "type_code": "S"}, {"num": 82, "type": "برج تعليق", "type_code": "S"}, {"num": 83, "type": "برج تعليق", "type_code": "S"}, {"num": 84, "type": "برج تعليق", "type_code": "S"}, {"num": 85, "type": "برج تعليق", "type_code": "S"}, {"num": 86, "type": "برج تعليق", "type_code": "S"}, {"num": 87, "type": "برج تعليق", "type_code": "S"}, {"num": 88, "type": "برج شد", "type_code": "T"}, {"num": 89, "type": "برج عبور", "type_code": "R"}, {"num": 90, "type": "برج شد", "type_code": "T"}, {"num": 91, "type": "برج تعليق", "type_code": "S"}, {"num": 92, "type": "برج تعليق", "type_code": "S"}, {"num": 93, "type": "برج تعليق", "type_code": "S"}, {"num": 94, "type": "برج تعليق", "type_code": "S"}, {"num": 95, "type": "برج تعليق", "type_code": "S"}, {"num": 96, "type": "برج تعليق", "type_code": "S"}, {"num": 97, "type": "برج تعليق", "type_code": "S"}, {"num": 98, "type": "برج نهائي", "type_code": "E"}], "واسط الحرارية - النعمانية 132 ك.ف": [{"num": 1, "type": "برج نهائي", "type_code": "E"}, {"num": 2, "type": "برج نهائي", "type_code": "E"}, {"num": 3, "type": "برج نهائي", "type_code": "E"}, {"num": 4, "type": "برج شد", "type_code": "T"}, {"num": 5, "type": "برج شد", "type_code": "T"}, {"num": 6, "type": "برج شد", "type_code": "T"}, {"num": 7, "type": "برج شد", "type_code": "T"}, {"num": 8, "type": "برج شد", "type_code": "T"}, {"num": 9, "type": "برج شد", "type_code": "T"}, {"num": 10, "type": "برج شد", "type_code": "T"}, {"num": 11, "type": "برج شد", "type_code": "T"}, {"num": 12, "type": "برج عبور", "type_code": "R"}, {"num": 13, "type": "برج عبور", "type_code": "R"}, {"num": 14, "type": "برج شد", "type_code": "T"}, {"num": 15, "type": "برج شد", "type_code": "T"}, {"num": 16, "type": "برج شد", "type_code": "T"}, {"num": 17, "type": "برج شد", "type_code": "T"}, {"num": 18, "type": "برج شد", "type_code": "T"}, {"num": 19, "type": "برج شد", "type_code": "T"}, {"num": 20, "type": "برج شد", "type_code": "T"}, {"num": 21, "type": "برج شد", "type_code": "T"}, {"num": 22, "type": "برج شد", "type_code": "T"}, {"num": 23, "type": "برج شد", "type_code": "T"}, {"num": 24, "type": "برج شد", "type_code": "T"}, {"num": 25, "type": "برج شد", "type_code": "T"}, {"num": 26, "type": "برج شد", "type_code": "T"}, {"num": 27, "type": "برج شد", "type_code": "T"}, {"num": 28, "type": "برج شد", "type_code": "T"}, {"num": 29, "type": "برج شد", "type_code": "T"}, {"num": 30, "type": "برج شد", "type_code": "T"}, {"num": 31, "type": "برج شد", "type_code": "T"}, {"num": 32, "type": "برج شد", "type_code": "T"}, {"num": 33, "type": "برج شد", "type_code": "T"}, {"num": 34, "type": "برج شد", "type_code": "T"}, {"num": 35, "type": "برج شد", "type_code": "T"}, {"num": 36, "type": "برج خاص", "type_code": "sp"}, {"num": 37, "type": "برج شد", "type_code": "T"}, {"num": 38, "type": "برج شد", "type_code": "T"}, {"num": 39, "type": "برج شد", "type_code": "T"}, {"num": 40, "type": "برج شد", "type_code": "T"}, {"num": 41, "type": "برج شد", "type_code": "T"}, {"num": 42, "type": "برج شد", "type_code": "T"}, {"num": 43, "type": "برج شد", "type_code": "T"}, {"num": 44, "type": "برج شد", "type_code": "T"}, {"num": 45, "type": "برج شد", "type_code": "T"}, {"num": 46, "type": "برج شد", "type_code": "T"}, {"num": 47, "type": "برج شد", "type_code": "T"}, {"num": 48, "type": "برج شد", "type_code": "T"}, {"num": 49, "type": "برج شد", "type_code": "T"}, {"num": 50, "type": "برج شد", "type_code": "T"}, {"num": 51, "type": "برج شد", "type_code": "T"}, {"num": 52, "type": "برج شد", "type_code": "T"}, {"num": 53, "type": "برج شد", "type_code": "T"}, {"num": 54, "type": "برج شد", "type_code": "T"}, {"num": 55, "type": "برج شد", "type_code": "T"}, {"num": 56, "type": "برج شد", "type_code": "T"}, {"num": 57, "type": "برج شد", "type_code": "T"}, {"num": 58, "type": "برج شد", "type_code": "T"}, {"num": 59, "type": "برج شد", "type_code": "T"}, {"num": 60, "type": "برج شد", "type_code": "T"}, {"num": 61, "type": "برج شد", "type_code": "T"}, {"num": 62, "type": "برج شد", "type_code": "T"}, {"num": 63, "type": "برج شد", "type_code": "T"}, {"num": 64, "type": "برج شد", "type_code": "T"}, {"num": 65, "type": "برج شد", "type_code": "T"}, {"num": 66, "type": "برج شد", "type_code": "T"}, {"num": 67, "type": "برج شد", "type_code": "T"}, {"num": 68, "type": "برج شد", "type_code": "T"}, {"num": 69, "type": "برج شد", "type_code": "T"}, {"num": 70, "type": "برج شد", "type_code": "T"}, {"num": 71, "type": "برج شد", "type_code": "T"}, {"num": 72, "type": "برج شد", "type_code": "T"}, {"num": 73, "type": "برج شد", "type_code": "T"}, {"num": 74, "type": "برج شد", "type_code": "T"}, {"num": 75, "type": "برج شد", "type_code": "T"}, {"num": 76, "type": "برج شد", "type_code": "T"}, {"num": 77, "type": "برج شد", "type_code": "T"}, {"num": 78, "type": "برج شد", "type_code": "T"}, {"num": 79, "type": "برج شد", "type_code": "T"}, {"num": 80, "type": "برج شد", "type_code": "T"}, {"num": 81, "type": "برج شد", "type_code": "T"}, {"num": 82, "type": "برج شد", "type_code": "T"}, {"num": 83, "type": "برج شد", "type_code": "T"}, {"num": 84, "type": "برج شد", "type_code": "T"}, {"num": 85, "type": "برج شد", "type_code": "T"}, {"num": 86, "type": "برج خاص", "type_code": "SP"}, {"num": 87, "type": "برج خاص", "type_code": "SP"}, {"num": 88, "type": "برج خاص", "type_code": "SP"}, {"num": 89, "type": "برج خاص", "type_code": "SP"}, {"num": 90, "type": "برج خاص", "type_code": "SP"}, {"num": 91, "type": "برج خاص", "type_code": "SP"}, {"num": 92, "type": "برج خاص", "type_code": "SP"}, {"num": 93, "type": "برج خاص", "type_code": "SP"}, {"num": 94, "type": "برج شد", "type_code": "T"}, {"num": 95, "type": "برج شد", "type_code": "T"}, {"num": 96, "type": "برج شد", "type_code": "T"}, {"num": 97, "type": "برج شد", "type_code": "T"}, {"num": 98, "type": "برج شد", "type_code": "T"}, {"num": 99, "type": "برج شد", "type_code": "T"}, {"num": 100, "type": "برج شد", "type_code": "T"}, {"num": 101, "type": "برج شد", "type_code": "T"}, {"num": 102, "type": "برج شد", "type_code": "T"}, {"num": 103, "type": "برج شد", "type_code": "T"}, {"num": 104, "type": "برج شد", "type_code": "T"}, {"num": 105, "type": "برج شد", "type_code": "T"}, {"num": 106, "type": "برج شد", "type_code": "T"}, {"num": 107, "type": "برج شد", "type_code": "T"}, {"num": 108, "type": "برج شد", "type_code": "T"}, {"num": 109, "type": "برج شد", "type_code": "T"}, {"num": 110, "type": "برج شد", "type_code": "T"}, {"num": 111, "type": "برج شد", "type_code": "T"}, {"num": 112, "type": "برج شد", "type_code": "T"}, {"num": 113, "type": "برج شد", "type_code": "T"}, {"num": 114, "type": "برج شد", "type_code": "T"}, {"num": 115, "type": "برج شد", "type_code": "T"}, {"num": 116, "type": "برج شد", "type_code": "T"}, {"num": 117, "type": "برج شد", "type_code": "T"}, {"num": 118, "type": "برج شد", "type_code": "T"}, {"num": 119, "type": "برج شد", "type_code": "T"}, {"num": 120, "type": "برج شد", "type_code": "T"}, {"num": 121, "type": "برج شد", "type_code": "T"}, {"num": 122, "type": "برج شد", "type_code": "T"}, {"num": 123, "type": "برج شد", "type_code": "T"}, {"num": 124, "type": "برج شد", "type_code": "T"}, {"num": 125, "type": "برج شد", "type_code": "T"}, {"num": 126, "type": "برج شد", "type_code": "T"}, {"num": 127, "type": "برج شد", "type_code": "T"}, {"num": 128, "type": "برج شد", "type_code": "T"}, {"num": 129, "type": "برج شد", "type_code": "T"}, {"num": 130, "type": "برج شد", "type_code": "T"}, {"num": 131, "type": "برج شد", "type_code": "T"}, {"num": 132, "type": "برج شد", "type_code": "T"}, {"num": 133, "type": "برج شد", "type_code": "T"}, {"num": 134, "type": "برج شد", "type_code": "T"}, {"num": 135, "type": "برج شد", "type_code": "T"}, {"num": 136, "type": "برج شد", "type_code": "T"}, {"num": 137, "type": "برج شد", "type_code": "T"}, {"num": 138, "type": "برج شد", "type_code": "T"}, {"num": 139, "type": "برج شد", "type_code": "T"}, {"num": 140, "type": "برج شد", "type_code": "T"}, {"num": 141, "type": "برج شد", "type_code": "T"}, {"num": 142, "type": "برج شد", "type_code": "T"}, {"num": 143, "type": "برج شد", "type_code": "T"}, {"num": 144, "type": "برج عبور", "type_code": "R"}, {"num": 145, "type": "برج عبور", "type_code": "R"}, {"num": 146, "type": "برج شد", "type_code": "T"}, {"num": 147, "type": "برج تعليق", "type_code": "S"}, {"num": 148, "type": "برج شد", "type_code": "T"}, {"num": 149, "type": "برج شد", "type_code": "T"}, {"num": 150, "type": "برج شد", "type_code": "T"}, {"num": 151, "type": "برج شد", "type_code": "T"}, {"num": 152, "type": "برج شد", "type_code": "T"}, {"num": 153, "type": "برج شد", "type_code": "T"}, {"num": 154, "type": "برج شد", "type_code": "T"}, {"num": 155, "type": "برج شد", "type_code": "T"}, {"num": 156, "type": "برج شد", "type_code": "T"}, {"num": 157, "type": "برج شد", "type_code": "T"}, {"num": 158, "type": "برج شد", "type_code": "T"}, {"num": 159, "type": "برج شد", "type_code": "T"}, {"num": 160, "type": "برج شد", "type_code": "T"}, {"num": 161, "type": "برج شد", "type_code": "T"}, {"num": 162, "type": "برج شد", "type_code": "T"}, {"num": 163, "type": "برج شد", "type_code": "T"}, {"num": 164, "type": "برج شد", "type_code": "T"}, {"num": 165, "type": "برج شد", "type_code": "T"}, {"num": 166, "type": "برج شد", "type_code": "T"}, {"num": 167, "type": "برج شد", "type_code": "T"}, {"num": 168, "type": "برج شد", "type_code": "T"}, {"num": 169, "type": "برج شد", "type_code": "T"}, {"num": 170, "type": "برج شد", "type_code": "T"}, {"num": 171, "type": "برج شد", "type_code": "T"}, {"num": 172, "type": "برج شد", "type_code": "T"}, {"num": 173, "type": "برج شد", "type_code": "T"}, {"num": 174, "type": "برج شد", "type_code": "T"}, {"num": 175, "type": "برج شد", "type_code": "T"}, {"num": 176, "type": "برج نهائي", "type_code": "E"}], "واسط - شطرة 400 ك.ف": [{"num": 1, "type": "XD"}, {"num": 2, "type": "XC"}, {"num": 3, "type": "XA"}, {"num": 4, "type": "XA"}, {"num": 5, "type": "XA"}, {"num": 6, "type": "XA"}, {"num": 7, "type": "XA"}, {"num": 8, "type": "XC"}, {"num": 9, "type": "XB"}, {"num": 10, "type": "XB"}, {"num": 11, "type": "XB"}, {"num": 12, "type": "XC"}, {"num": 13, "type": "XA"}, {"num": 14, "type": "XA"}, {"num": 15, "type": "XA"}, {"num": 16, "type": "XA"}, {"num": 17, "type": "XA"}, {"num": 18, "type": "XA"}, {"num": 19, "type": "XA"}, {"num": 20, "type": "XA"}, {"num": 21, "type": "XA"}, {"num": 22, "type": "XA"}, {"num": 23, "type": "XA"}, {"num": 24, "type": "XA"}, {"num": 25, "type": "XA"}, {"num": 26, "type": "XA"}, {"num": 27, "type": "XA"}, {"num": 28, "type": "XA"}, {"num": 29, "type": "XA"}, {"num": 30, "type": "XA"}, {"num": 31, "type": "XA"}, {"num": 32, "type": "XC"}, {"num": 33, "type": "XA"}, {"num": 34, "type": "XA"}, {"num": 35, "type": "XA"}, {"num": 36, "type": "XA"}, {"num": 37, "type": "XA"}, {"num": 38, "type": "XA"}, {"num": 39, "type": "XA"}, {"num": 40, "type": "XA"}, {"num": 41, "type": "XA"}, {"num": 42, "type": "XB"}, {"num": 43, "type": "XA"}, {"num": 44, "type": "XA"}, {"num": 45, "type": "XA"}, {"num": 46, "type": "XA"}, {"num": 47, "type": "XA"}, {"num": 48, "type": "XA"}, {"num": 49, "type": "XA"}, {"num": 50, "type": "XA"}, {"num": 51, "type": "XA"}, {"num": 52, "type": "XA"}, {"num": 53, "type": "XA"}, {"num": 54, "type": "XA"}, {"num": 55, "type": "XA"}, {"num": 56, "type": "XA"}, {"num": 57, "type": "XA"}, {"num": 58, "type": "XA"}, {"num": 59, "type": "XA"}, {"num": 60, "type": "XA"}, {"num": 61, "type": "XA"}, {"num": 62, "type": "XA"}, {"num": 63, "type": "XA"}, {"num": 64, "type": "XA"}, {"num": 65, "type": "XA"}, {"num": 66, "type": "XA"}, {"num": 67, "type": "XA"}, {"num": 68, "type": "XA"}, {"num": 69, "type": "XA"}, {"num": 70, "type": "XA"}, {"num": 71, "type": "XA"}, {"num": 72, "type": "XA"}, {"num": 73, "type": "XA"}, {"num": 74, "type": "XA"}, {"num": 75, "type": "XA"}, {"num": 76, "type": "XA"}, {"num": 77, "type": "XA"}, {"num": 78, "type": "XA"}, {"num": 79, "type": "XA"}, {"num": 80, "type": "XA"}, {"num": 81, "type": "XA"}, {"num": 82, "type": "XC"}, {"num": 83, "type": "XA"}, {"num": 84, "type": "XA"}, {"num": 85, "type": "XA"}, {"num": 86, "type": "XA"}, {"num": 87, "type": "XA"}, {"num": 88, "type": "XA"}, {"num": 89, "type": "XA"}, {"num": 90, "type": "XA"}, {"num": 91, "type": "XA"}, {"num": 92, "type": "XA"}, {"num": 93, "type": "XA"}, {"num": 94, "type": "XA"}, {"num": 95, "type": "XA"}, {"num": 96, "type": "XA"}, {"num": 97, "type": "XA"}, {"num": 98, "type": "XA"}, {"num": 99, "type": "XA"}, {"num": 100, "type": "XA"}, {"num": 101, "type": "XA"}, {"num": 102, "type": "XA"}, {"num": 103, "type": "XA"}, {"num": 104, "type": "XA"}, {"num": 105, "type": "XA"}, {"num": 106, "type": "XA"}, {"num": 107, "type": "XA"}, {"num": 108, "type": "XA"}, {"num": 109, "type": "XA"}, {"num": 110, "type": "XA"}, {"num": 111, "type": "XA"}, {"num": 112, "type": "XA"}, {"num": 113, "type": "XA"}, {"num": 114, "type": "XA"}, {"num": 115, "type": "XA"}, {"num": 116, "type": "XA"}, {"num": 117, "type": "XA"}, {"num": 118, "type": "XA"}, {"num": 119, "type": "XA"}, {"num": 120, "type": "XA"}, {"num": 121, "type": "XA"}, {"num": 122, "type": "XA"}, {"num": 123, "type": "XA"}, {"num": 124, "type": "XA"}, {"num": 125, "type": "XA"}, {"num": 126, "type": "XA"}, {"num": 127, "type": "XA"}, {"num": 128, "type": "XA"}, {"num": 129, "type": "XA"}, {"num": 130, "type": "XA"}, {"num": 131, "type": "XA"}, {"num": 132, "type": "XA"}, {"num": 133, "type": "XA"}, {"num": 134, "type": "XA"}, {"num": 135, "type": "XA"}, {"num": 136, "type": "XA"}, {"num": 137, "type": "XA"}, {"num": 138, "type": "XA"}, {"num": 139, "type": "XA"}, {"num": 140, "type": "XA"}, {"num": 141, "type": "XA"}, {"num": 142, "type": "XA"}, {"num": 143, "type": "XA"}, {"num": 144, "type": "XA"}, {"num": 145, "type": "XA"}, {"num": 146, "type": "XA"}, {"num": 147, "type": "XA"}, {"num": 148, "type": "XA"}, {"num": 149, "type": "XA"}, {"num": 150, "type": "XC"}, {"num": 151, "type": "XA"}, {"num": 152, "type": "XA"}, {"num": 153, "type": "XA"}, {"num": 154, "type": "XA"}, {"num": 155, "type": "XA"}, {"num": 156, "type": "XA"}, {"num": 157, "type": "XA"}, {"num": 158, "type": "XA"}, {"num": 159, "type": "XA"}, {"num": 160, "type": "XA"}, {"num": 161, "type": "XA"}, {"num": 162, "type": "XA"}, {"num": 163, "type": "XA"}, {"num": 164, "type": "XA"}, {"num": 165, "type": "XA"}, {"num": 166, "type": "XA"}, {"num": 167, "type": "XA"}, {"num": 168, "type": "XA"}, {"num": 169, "type": "XA"}, {"num": 170, "type": "XA"}, {"num": 171, "type": "XA"}, {"num": 172, "type": "XA"}, {"num": 173, "type": "XA"}, {"num": 174, "type": "XA"}, {"num": 175, "type": "XA"}, {"num": 176, "type": "XA"}, {"num": 177, "type": "XA"}, {"num": 178, "type": "XA"}, {"num": 179, "type": "XA"}, {"num": 180, "type": "XA"}], "واسط - شيخ سعد 132 ك.ف": [{"num": 1, "type": "برج نهائي", "type_code": "E"}, {"num": 2, "type": "برج خاص", "type_code": "K"}, {"num": 3, "type": "برج نهائي", "type_code": "E"}, {"num": 4, "type": "برج نهائي", "type_code": "E"}, {"num": 5, "type": "برج نهائي", "type_code": "E"}, {"num": 6, "type": "برج نهائي", "type_code": "E"}, {"num": 7, "type": "برج نهائي", "type_code": "E"}, {"num": 8, "type": "برج نهائي", "type_code": "E"}, {"num": 9, "type": "برج نهائي", "type_code": "E"}, {"num": 10, "type": "برج نهائي", "type_code": "E"}, {"num": 11, "type": "برج نهائي", "type_code": "E"}, {"num": 12, "type": "برج نهائي", "type_code": "E"}, {"num": 13, "type": "برج شد", "type_code": "T"}, {"num": 14, "type": "برج شد", "type_code": "T"}, {"num": 15, "type": "برج شد", "type_code": "T"}, {"num": 16, "type": "برج شد", "type_code": "T"}, {"num": 17, "type": "برج شد", "type_code": "T"}, {"num": 18, "type": "برج شد", "type_code": "T"}, {"num": 19, "type": "برج شد", "type_code": "T"}, {"num": 20, "type": "برج شد", "type_code": "T"}, {"num": 21, "type": "برج شد", "type_code": "T"}, {"num": 22, "type": "برج شد", "type_code": "T"}, {"num": 23, "type": "برج شد", "type_code": "T"}, {"num": 24, "type": "برج شد", "type_code": "T"}, {"num": 25, "type": "برج شد", "type_code": "T"}, {"num": 26, "type": "برج شد", "type_code": "T"}, {"num": 27, "type": "برج شد", "type_code": "T"}, {"num": 28, "type": "برج شد", "type_code": "T"}, {"num": 29, "type": "برج شد", "type_code": "T"}, {"num": 30, "type": "برج شد", "type_code": "T"}, {"num": 31, "type": "برج خاص", "type_code": "SP"}, {"num": 32, "type": "برج خاص", "type_code": "SP"}, {"num": 33, "type": "برج خاص", "type_code": "SP"}, {"num": 34, "type": "برج شد", "type_code": "T"}, {"num": 35, "type": "برج شد", "type_code": "T"}, {"num": 36, "type": "برج شد", "type_code": "T"}, {"num": 37, "type": "برج شد", "type_code": "T"}, {"num": 38, "type": "برج شد", "type_code": "T"}, {"num": 39, "type": "برج شد", "type_code": "T"}, {"num": 40, "type": "برج شد", "type_code": "T"}, {"num": 41, "type": "برج شد", "type_code": "T"}, {"num": 42, "type": "برج شد", "type_code": "T"}, {"num": 43, "type": "برج شد", "type_code": "T"}, {"num": 44, "type": "برج شد", "type_code": "T"}, {"num": 45, "type": "برج شد", "type_code": "T"}, {"num": 46, "type": "برج شد", "type_code": "T"}, {"num": 47, "type": "برج شد", "type_code": "T"}, {"num": 48, "type": "برج شد", "type_code": "T"}, {"num": 49, "type": "برج شد", "type_code": "T"}, {"num": 50, "type": "برج شد", "type_code": "T"}, {"num": 51, "type": "برج شد", "type_code": "T"}, {"num": 52, "type": "برج شد", "type_code": "T"}, {"num": 53, "type": "برج شد", "type_code": "T"}, {"num": 54, "type": "برج شد", "type_code": "T"}, {"num": 55, "type": "برج شد", "type_code": "T"}, {"num": 56, "type": "برج شد", "type_code": "T"}, {"num": 57, "type": "برج شد", "type_code": "T"}, {"num": 58, "type": "برج شد", "type_code": "T"}, {"num": 59, "type": "برج شد", "type_code": "T"}, {"num": 60, "type": "برج شد", "type_code": "T"}, {"num": 61, "type": "برج شد", "type_code": "T"}, {"num": 62, "type": "برج شد", "type_code": "T"}, {"num": 63, "type": "برج شد", "type_code": "T"}, {"num": 64, "type": "برج شد", "type_code": "T"}, {"num": 65, "type": "برج شد", "type_code": "T"}, {"num": 66, "type": "برج شد", "type_code": "T"}, {"num": 67, "type": "برج شد", "type_code": "T"}, {"num": 68, "type": "برج شد", "type_code": "T"}, {"num": 69, "type": "برج شد", "type_code": "T"}, {"num": 70, "type": "برج شد", "type_code": "T"}, {"num": 71, "type": "برج شد", "type_code": "T"}, {"num": 72, "type": "برج شد", "type_code": "T"}, {"num": 73, "type": "برج شد", "type_code": "T"}, {"num": 74, "type": "برج شد", "type_code": "T"}, {"num": 75, "type": "برج شد", "type_code": "T"}, {"num": 76, "type": "برج شد", "type_code": "T"}, {"num": 77, "type": "برج شد", "type_code": "T"}, {"num": 78, "type": "برج شد", "type_code": "T"}, {"num": 79, "type": "برج شد", "type_code": "T"}, {"num": 80, "type": "برج شد", "type_code": "T"}, {"num": 81, "type": "برج شد", "type_code": "T"}, {"num": 82, "type": "برج شد", "type_code": "T"}, {"num": 83, "type": "برج شد", "type_code": "T"}, {"num": 84, "type": "برج شد", "type_code": "T"}, {"num": 85, "type": "برج شد", "type_code": "T"}, {"num": 86, "type": "برج شد", "type_code": "T"}, {"num": 87, "type": "برج شد", "type_code": "T"}, {"num": 88, "type": "برج شد", "type_code": "T"}, {"num": 89, "type": "برج شد", "type_code": "T"}, {"num": 90, "type": "برج شد", "type_code": "T"}, {"num": 91, "type": "برج شد", "type_code": "T"}, {"num": 92, "type": "برج شد", "type_code": "T"}, {"num": 93, "type": "برج شد", "type_code": "T"}, {"num": 94, "type": "برج شد", "type_code": "T"}, {"num": 95, "type": "برج شد", "type_code": "T"}, {"num": 96, "type": "برج شد", "type_code": "T"}, {"num": 97, "type": "برج شد", "type_code": "T"}, {"num": 98, "type": "برج شد", "type_code": "T"}, {"num": 99, "type": "برج شد", "type_code": "T"}, {"num": 100, "type": "برج شد", "type_code": "T"}, {"num": 101, "type": "برج شد", "type_code": "T"}, {"num": 102, "type": "برج شد", "type_code": "T"}, {"num": 103, "type": "برج شد", "type_code": "T"}, {"num": 104, "type": "برج شد", "type_code": "T"}, {"num": 105, "type": "برج شد", "type_code": "T"}, {"num": 106, "type": "برج شد", "type_code": "T"}, {"num": 107, "type": "برج شد", "type_code": "T"}, {"num": 108, "type": "برج شد", "type_code": "T"}, {"num": 109, "type": "برج عبور", "type_code": "R"}, {"num": 110, "type": "برج عبور", "type_code": "R"}, {"num": 111, "type": "برج شد", "type_code": "T"}, {"num": 112, "type": "برج شد", "type_code": "T"}, {"num": 113, "type": "برج شد", "type_code": "T"}, {"num": 114, "type": "برج شد", "type_code": "T"}, {"num": 115, "type": "برج شد", "type_code": "T"}, {"num": 116, "type": "برج شد", "type_code": "T"}, {"num": 117, "type": "برج شد", "type_code": "T"}, {"num": 118, "type": "برج شد", "type_code": "T"}, {"num": 119, "type": "برج شد", "type_code": "T"}, {"num": 120, "type": "برج شد", "type_code": "T"}, {"num": 121, "type": "برج تعليق", "type_code": "S"}, {"num": 122, "type": "برج شد", "type_code": "T"}, {"num": 123, "type": "برج شد", "type_code": "T"}, {"num": 124, "type": "برج شد", "type_code": "T"}, {"num": 125, "type": "برج شد", "type_code": "T"}, {"num": 126, "type": "برج شد", "type_code": "T"}, {"num": 127, "type": "برج شد", "type_code": "T"}, {"num": 128, "type": "برج شد", "type_code": "T"}, {"num": 129, "type": "برج شد", "type_code": "T"}, {"num": 130, "type": "برج شد", "type_code": "T"}, {"num": 131, "type": "برج شد", "type_code": "T"}, {"num": 132, "type": "برج شد", "type_code": "T"}, {"num": 133, "type": "برج شد", "type_code": "T"}, {"num": 134, "type": "برج شد", "type_code": "T"}, {"num": 135, "type": "برج شد", "type_code": "T"}, {"num": 136, "type": "برج شد", "type_code": "T"}, {"num": 137, "type": "برج شد", "type_code": "T"}, {"num": 138, "type": "برج شد", "type_code": "T"}, {"num": 139, "type": "برج شد", "type_code": "T"}, {"num": 140, "type": "برج شد", "type_code": "T"}, {"num": 141, "type": "برج شد", "type_code": "T"}, {"num": 142, "type": "برج شد", "type_code": "T"}, {"num": 143, "type": "برج شد", "type_code": "T"}, {"num": 144, "type": "برج شد", "type_code": "T"}, {"num": 145, "type": "برج شد", "type_code": "T"}, {"num": 146, "type": "برج شد", "type_code": "T"}, {"num": 147, "type": "برج شد", "type_code": "T"}, {"num": 148, "type": "برج شد", "type_code": "T"}, {"num": 149, "type": "برج شد", "type_code": "T"}, {"num": 150, "type": "برج شد", "type_code": "T"}, {"num": 151, "type": "برج شد", "type_code": "T"}, {"num": 152, "type": "برج شد", "type_code": "T"}, {"num": 153, "type": "برج شد", "type_code": "T"}, {"num": 154, "type": "برج شد", "type_code": "T"}, {"num": 155, "type": "برج شد", "type_code": "T"}, {"num": 156, "type": "برج شد", "type_code": "T"}, {"num": 157, "type": "برج شد", "type_code": "T"}, {"num": 158, "type": "برج شد", "type_code": "T"}, {"num": 159, "type": "برج شد", "type_code": "T"}, {"num": 160, "type": "برج شد", "type_code": "T"}, {"num": 161, "type": "برج شد", "type_code": "T"}, {"num": 162, "type": "برج شد", "type_code": "T"}, {"num": 163, "type": "برج شد", "type_code": "T"}, {"num": 164, "type": "برج شد", "type_code": "T"}, {"num": 165, "type": "برج شد", "type_code": "T"}, {"num": 166, "type": "برج شد", "type_code": "T"}, {"num": 167, "type": "برج شد", "type_code": "T"}, {"num": 168, "type": "برج شد", "type_code": "T"}, {"num": 169, "type": "برج شد", "type_code": "T"}, {"num": 170, "type": "برج شد", "type_code": "T"}, {"num": 171, "type": "برج شد", "type_code": "T"}, {"num": 172, "type": "برج شد", "type_code": "T"}, {"num": 173, "type": "برج شد", "type_code": "T"}, {"num": 174, "type": "برج شد", "type_code": "T"}, {"num": 175, "type": "برج شد", "type_code": "T"}, {"num": 176, "type": "برج شد", "type_code": "T"}, {"num": 177, "type": "برج شد", "type_code": "T"}, {"num": 178, "type": "برج شد", "type_code": "T"}, {"num": 179, "type": "برج شد", "type_code": "T"}, {"num": 180, "type": "برج شد", "type_code": "T"}, {"num": 181, "type": "برج شد", "type_code": "T"}, {"num": 182, "type": "برج شد", "type_code": "T"}, {"num": 183, "type": "برج شد", "type_code": "T"}, {"num": 184, "type": "برج شد", "type_code": "T"}, {"num": 185, "type": "برج شد", "type_code": "T"}, {"num": 186, "type": "برج شد", "type_code": "T"}, {"num": 187, "type": "برج شد", "type_code": "T"}, {"num": 188, "type": "برج شد", "type_code": "T"}, {"num": 189, "type": "برج شد", "type_code": "T"}, {"num": 190, "type": "برج شد", "type_code": "T"}, {"num": 191, "type": "برج شد", "type_code": "T"}, {"num": 192, "type": "برج شد", "type_code": "T"}, {"num": 193, "type": "برج نهائي", "type_code": "E"}, {"num": 194, "type": "برج نهائي", "type_code": "E"}], "واسط الحرارية - الامين رقم 2 400 ك.ف": [{"num": 1, "type": "XE"}, {"num": 2, "type": "XC"}, {"num": 3, "type": "XA"}, {"num": 4, "type": "XA"}, {"num": 5, "type": "XC"}, {"num": 6, "type": "XB"}, {"num": 7, "type": "XB"}, {"num": 8, "type": "XC"}, {"num": 9, "type": "XA"}, {"num": 10, "type": "XA"}, {"num": 11, "type": "XA"}, {"num": 12, "type": "XA"}, {"num": 13, "type": "XA"}, {"num": 14, "type": "XA"}, {"num": 15, "type": "XA"}, {"num": 16, "type": "XA"}, {"num": 17, "type": "XA"}, {"num": 18, "type": "XA"}, {"num": 19, "type": "XA"}, {"num": 20, "type": "XC"}, {"num": 21, "type": "XB"}, {"num": 22, "type": "XB"}, {"num": 23, "type": "XC"}, {"num": 24, "type": "XA"}, {"num": 25, "type": "XA"}, {"num": 26, "type": "XA"}, {"num": 27, "type": "XA"}, {"num": 28, "type": "XA"}, {"num": 29, "type": "XA"}, {"num": 30, "type": "XA"}, {"num": 31, "type": "XA"}, {"num": 32, "type": "XA"}, {"num": 33, "type": "XA"}, {"num": 34, "type": "XA"}, {"num": 35, "type": "XC"}, {"num": 36, "type": "XC"}, {"num": 37, "type": "XA"}, {"num": 38, "type": "XA"}, {"num": 39, "type": "XA"}, {"num": 40, "type": "XA"}, {"num": 41, "type": "XA"}, {"num": 42, "type": "XA"}, {"num": 43, "type": "XA"}, {"num": 44, "type": "XA"}, {"num": 45, "type": "XA"}, {"num": 46, "type": "XA"}, {"num": 47, "type": "XA"}, {"num": 48, "type": "XC"}, {"num": 49, "type": "XA"}, {"num": 50, "type": "XA"}, {"num": 51, "type": "XA"}, {"num": 52, "type": "XA"}, {"num": 53, "type": "XC"}, {"num": 54, "type": "XA"}, {"num": 55, "type": "XA"}, {"num": 56, "type": "XA"}, {"num": 57, "type": "XA"}, {"num": 58, "type": "XA"}, {"num": 59, "type": "XA"}, {"num": 60, "type": "XA"}, {"num": 61, "type": "XA"}, {"num": 62, "type": "XA"}, {"num": 63, "type": "XC"}, {"num": 64, "type": "XA"}, {"num": 65, "type": "XA"}, {"num": 66, "type": "XA"}, {"num": 67, "type": "XA"}, {"num": 68, "type": "XA"}, {"num": 69, "type": "XA"}, {"num": 70, "type": "XA"}, {"num": 71, "type": "XA"}, {"num": 72, "type": "XA"}, {"num": 73, "type": "XC"}, {"num": 74, "type": "XA"}, {"num": 75, "type": "XA"}, {"num": 76, "type": "XA"}, {"num": 77, "type": "XA"}, {"num": 78, "type": "XA"}, {"num": 79, "type": "XA"}, {"num": 80, "type": "XC"}, {"num": 81, "type": "XA"}, {"num": 82, "type": "XA"}, {"num": 83, "type": "XA"}, {"num": 84, "type": "XA"}, {"num": 85, "type": "XA"}, {"num": 86, "type": "XA"}, {"num": 87, "type": "XA"}, {"num": 88, "type": "XA"}, {"num": 89, "type": "XA"}, {"num": 90, "type": "XA"}, {"num": 91, "type": "XA"}, {"num": 92, "type": "XA"}, {"num": 93, "type": "XC"}, {"num": 94, "type": "XA"}, {"num": 95, "type": "XA"}, {"num": 96, "type": "XA"}, {"num": 97, "type": "XA"}, {"num": 98, "type": "XA"}, {"num": 99, "type": "XA"}, {"num": 100, "type": "XA"}, {"num": 101, "type": "XA"}, {"num": 102, "type": "XA"}, {"num": 103, "type": "XA"}, {"num": 104, "type": "XA"}, {"num": 105, "type": "XA"}, {"num": 106, "type": "XC"}, {"num": 107, "type": "XA"}, {"num": 108, "type": "XA"}, {"num": 109, "type": "XA"}, {"num": 110, "type": "XA"}, {"num": 111, "type": "XA"}, {"num": 112, "type": "XA"}, {"num": 113, "type": "XA"}, {"num": 114, "type": "XA"}, {"num": 115, "type": "XA"}, {"num": 116, "type": "XA"}, {"num": 117, "type": "XC"}, {"num": 118, "type": "XA"}, {"num": 119, "type": "XA"}, {"num": 120, "type": "XA"}, {"num": 121, "type": "XA"}, {"num": 122, "type": "XA"}, {"num": 123, "type": "XA"}, {"num": 124, "type": "XA"}, {"num": 125, "type": "XA"}, {"num": 126, "type": "XA"}, {"num": 127, "type": "XC"}, {"num": 128, "type": "XA"}, {"num": 129, "type": "XC"}, {"num": 130, "type": "XA"}, {"num": 131, "type": "XC"}, {"num": 132, "type": "XA"}, {"num": 133, "type": "XA"}, {"num": 134, "type": "XA"}, {"num": 135, "type": "XA"}, {"num": 136, "type": "XA"}, {"num": 137, "type": "XA"}, {"num": 138, "type": "XA"}, {"num": 139, "type": "XC"}, {"num": 140, "type": "XA"}, {"num": 141, "type": "XA"}, {"num": 142, "type": "XC"}, {"num": 143, "type": "XA"}, {"num": 144, "type": "XA"}, {"num": 145, "type": "XA"}, {"num": 146, "type": "XA"}, {"num": 147, "type": "XC"}, {"num": 148, "type": "XA"}, {"num": 149, "type": "XA"}, {"num": 150, "type": "XA"}, {"num": 151, "type": "XA"}, {"num": 152, "type": "XA"}, {"num": 153, "type": "XA"}, {"num": 154, "type": "XA"}, {"num": 155, "type": "XA"}, {"num": 156, "type": "XC"}, {"num": 157, "type": "XA"}, {"num": 158, "type": "XA"}, {"num": 159, "type": "XA"}, {"num": 160, "type": "XC"}, {"num": 161, "type": "XA"}, {"num": 162, "type": "XA"}, {"num": 163, "type": "XA"}, {"num": 164, "type": "XA"}, {"num": 165, "type": "XA"}, {"num": 166, "type": "XA"}, {"num": 167, "type": "XA"}, {"num": 168, "type": "XA"}, {"num": 169, "type": "XA"}, {"num": 170, "type": "XC"}, {"num": 171, "type": "XA"}, {"num": 172, "type": "XC"}, {"num": 173, "type": "XA"}], "واسط الحرارية - العزيزية 132 ك.ف": [{"num": 1, "type": "برج نهائي", "type_code": "E"}, {"num": 2, "type": "برج شد", "type_code": "T"}, {"num": 3, "type": "برج شد", "type_code": "T"}, {"num": 4, "type": "برج تعليق", "type_code": "S"}, {"num": 5, "type": "برج تعليق", "type_code": "S"}, {"num": 6, "type": "برج شد", "type_code": "T"}, {"num": 7, "type": "برج شد", "type_code": "T"}, {"num": 8, "type": "برج شد", "type_code": "T"}, {"num": 9, "type": "برج عبور", "type_code": "R"}, {"num": 10, "type": "برج عبور", "type_code": "R"}, {"num": 11, "type": "برج شد", "type_code": "T"}, {"num": 12, "type": "برج شد", "type_code": "T"}, {"num": 13, "type": "برج تعليق", "type_code": "S"}, {"num": 14, "type": "برج تعليق", "type_code": "S"}, {"num": 15, "type": "برج تعليق", "type_code": "S"}, {"num": 16, "type": "برج تعليق", "type_code": "S"}, {"num": 17, "type": "برج تعليق", "type_code": "S"}, {"num": 18, "type": "برج تعليق", "type_code": "S"}, {"num": 19, "type": "برج تعليق", "type_code": "S"}, {"num": 20, "type": "برج تعليق", "type_code": "S"}, {"num": 21, "type": "برج تعليق", "type_code": "S"}, {"num": 22, "type": "برج شد", "type_code": "T"}, {"num": 23, "type": "برج تعليق", "type_code": "S"}, {"num": 24, "type": "برج تعليق", "type_code": "S"}, {"num": 25, "type": "برج تعليق", "type_code": "S"}, {"num": 26, "type": "برج تعليق", "type_code": "S"}, {"num": 27, "type": "برج تعليق", "type_code": "S"}, {"num": 28, "type": "برج تعليق", "type_code": "S"}, {"num": 29, "type": "برج تعليق", "type_code": "S"}, {"num": 30, "type": "برج تعليق", "type_code": "S"}, {"num": 31, "type": "برج شد", "type_code": "T"}, {"num": 32, "type": "برج شد", "type_code": "T"}, {"num": 33, "type": "برج تعليق", "type_code": "S"}, {"num": 34, "type": "برج تعليق", "type_code": "S"}, {"num": 35, "type": "برج تعليق", "type_code": "S"}, {"num": 36, "type": "برج تعليق", "type_code": "S"}, {"num": 37, "type": "برج تعليق", "type_code": "S"}, {"num": 38, "type": "برج تعليق", "type_code": "S"}, {"num": 39, "type": "برج تعليق", "type_code": "S"}, {"num": 40, "type": "برج تعليق", "type_code": "S"}, {"num": 41, "type": "برج شد", "type_code": "T"}, {"num": 42, "type": "برج تعليق", "type_code": "S"}, {"num": 43, "type": "برج تعليق", "type_code": "S"}, {"num": 44, "type": "برج تعليق", "type_code": "S"}, {"num": 45, "type": "برج تعليق", "type_code": "S"}, {"num": 46, "type": "برج تعليق", "type_code": "S"}, {"num": 47, "type": "برج تعليق", "type_code": "S"}, {"num": 48, "type": "برج تعليق", "type_code": "S"}, {"num": 49, "type": "برج تعليق", "type_code": "S"}, {"num": 50, "type": "برج تعليق", "type_code": "S"}, {"num": 51, "type": "برج شد", "type_code": "T"}, {"num": 52, "type": "برج تعليق", "type_code": "S"}, {"num": 53, "type": "برج تعليق", "type_code": "S"}, {"num": 54, "type": "برج تعليق", "type_code": "S"}, {"num": 55, "type": "برج تعليق", "type_code": "S"}, {"num": 56, "type": "برج تعليق", "type_code": "S"}, {"num": 57, "type": "برج تعليق", "type_code": "S"}, {"num": 58, "type": "برج تعليق", "type_code": "S"}, {"num": 59, "type": "برج تعليق", "type_code": "S"}, {"num": 60, "type": "برج شد", "type_code": "T"}, {"num": 61, "type": "برج تعليق", "type_code": "S"}, {"num": 62, "type": "برج تعليق", "type_code": "S"}, {"num": 63, "type": "برج تعليق", "type_code": "S"}, {"num": 64, "type": "برج شد", "type_code": "T"}, {"num": 65, "type": "برج شد", "type_code": "T"}, {"num": 66, "type": "برج تعليق", "type_code": "S"}, {"num": 67, "type": "برج تعليق", "type_code": "S"}, {"num": 68, "type": "برج شد", "type_code": "T"}, {"num": 69, "type": "برج شد", "type_code": "T"}, {"num": 70, "type": "برج نهائي", "type_code": "E"}], "شمال الكوت - جنوب الكوت 132 ك.ف": [{"num": 1, "type": "برج نهائي", "type_code": "E"}, {"num": 2, "type": "برج تعليق", "type_code": "S"}, {"num": 3, "type": "برج تعليق", "type_code": "S"}, {"num": 4, "type": "برج تعليق", "type_code": "S"}, {"num": 5, "type": "برج تعليق", "type_code": "S"}, {"num": 6, "type": "برج شد", "type_code": "T"}, {"num": 7, "type": "برج شد", "type_code": "T"}, {"num": 8, "type": "برج تعليق", "type_code": "S"}, {"num": 9, "type": "برج تعليق", "type_code": "S"}, {"num": 10, "type": "برج تعليق", "type_code": "S"}, {"num": 11, "type": "برج تعليق", "type_code": "S"}, {"num": 12, "type": "برج تعليق", "type_code": "S"}, {"num": 13, "type": "برج تعليق", "type_code": "S"}, {"num": 14, "type": "برج تعليق", "type_code": "S"}, {"num": 15, "type": "برج تعليق", "type_code": "S"}, {"num": 16, "type": "برج تعليق", "type_code": "S"}, {"num": 17, "type": "برج تعليق", "type_code": "S"}, {"num": 18, "type": "برج تعليق", "type_code": "S"}, {"num": 19, "type": "برج شد", "type_code": "T"}, {"num": 20, "type": "برج تعليق", "type_code": "S"}, {"num": 21, "type": "برج تعليق", "type_code": "S"}, {"num": 22, "type": "برج تعليق", "type_code": "S"}, {"num": 23, "type": "برج تعليق", "type_code": "S"}, {"num": 24, "type": "برج تعليق", "type_code": "S"}, {"num": 25, "type": "برج تعليق", "type_code": "S"}, {"num": 26, "type": "برج تعليق", "type_code": "S"}, {"num": 27, "type": "برج تعليق", "type_code": "S"}, {"num": 28, "type": "برج تعليق", "type_code": "S"}, {"num": 29, "type": "برج تعليق", "type_code": "S"}, {"num": 30, "type": "برج تعليق", "type_code": "S"}, {"num": 31, "type": "برج تعليق", "type_code": "S"}, {"num": 32, "type": "برج تعليق", "type_code": "S"}, {"num": 33, "type": "برج تعليق", "type_code": "S"}, {"num": 34, "type": "برج عبور", "type_code": "R"}, {"num": 35, "type": "برج شد", "type_code": "T"}, {"num": 36, "type": "برج عبور", "type_code": "R"}, {"num": 37, "type": "برج عبور", "type_code": "R"}, {"num": 38, "type": "برج شد", "type_code": "T"}, {"num": 39, "type": "برج عبور", "type_code": "R"}, {"num": 40, "type": "برج عبور", "type_code": "R"}, {"num": 41, "type": "برج شد", "type_code": "T"}, {"num": 42, "type": "برج عبور", "type_code": "R"}, {"num": 43, "type": "برج شد", "type_code": "T"}, {"num": 44, "type": "برج تعليق", "type_code": "S"}, {"num": 45, "type": "برج شد", "type_code": "T"}, {"num": 46, "type": "برج تعليق", "type_code": "S"}, {"num": 47, "type": "برج تعليق", "type_code": "S"}, {"num": 48, "type": "برج تعليق", "type_code": "S"}, {"num": 49, "type": "برج تعليق", "type_code": "S"}, {"num": 50, "type": "برج تعليق", "type_code": "S"}, {"num": 51, "type": "برج تعليق", "type_code": "S"}, {"num": 52, "type": "برج تعليق", "type_code": "S"}, {"num": 53, "type": "برج تعليق", "type_code": "S"}, {"num": 54, "type": "برج تعليق", "type_code": "S"}, {"num": 55, "type": "برج تعليق", "type_code": "S"}, {"num": 56, "type": "برج شد", "type_code": "T"}, {"num": 57, "type": "برج نهائي", "type_code": "E"}]};
+const LINE_VOLTAGE = {"عزيزية - صويرة 132 ك.ف": 132, "واسط الحرارية - النعمانية 132 ك.ف": 132, "واسط - شطرة 400 ك.ف": 400, "واسط - شيخ سعد 132 ك.ف": 132, "واسط الحرارية - الامين رقم 2 400 ك.ف": 400, "واسط الحرارية - العزيزية 132 ك.ف": 132, "شمال الكوت - جنوب الكوت 132 ك.ف": 132};
+
+</script>
+<script>
+// ========================
+// SUPABASE CONFIG
+// ========================
+const SUPABASE_URL = 'https://zysdcvunkvdsjzpbixgu.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5c2RjdnVua3Zkc2p6cGJpeGd1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NTA2MTAsImV4cCI6MjA5NzEyNjYxMH0.xv0YyZJCC9USVVslXGgBGA6HHHG5qMrNXEqY2nUdV8k';
+
+async function sbFetch(path, options = {}) {
+  const url = `${SUPABASE_URL}/rest/v1/${path}`;
+  const headers = {
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    ...options.headers
+  };
+  const res = await fetch(url, { ...options, headers });
+  return res;
+}
+
+// ========================
+// SESSION STATE
+// ========================
+let currentUser = null;
+const SESSION_KEY = 'tower_session';
+
+const TOWER_TYPES = {
+  'برج تعليق':'برج تعليق — Suspension','برج شد':'برج شد — Tension',
+  'برج نهائي':'برج نهائي — End/Terminal','برج عبور':'برج عبور — River Crossing',
+  'برج خاص':'برج خاص — Special',
+  'XA':'Cat Head A (400kV)','XB':'Cat Head B (400kV)','XC':'Cat Head C (400kV)',
+  'XD':'Cat Head D (400kV)','XE':'Cat Head طرفي (400kV)'
+};
+
+const ROLE_LABELS = { admin: 'مدير', supervisor: 'مشرف', technician: 'فني', readonly: 'قراءة فقط' };
+
+let insulatorState = { R: [], S: [], T: [] };
+let currentVoltage = 0;
+let editId = null, deleteId = null, deleteUserId = null;
+let records = [], filteredRecords = [];
+let allUsers = [];
+
+const DB_KEY = 'tower_inspections_cache';
+const QUEUE_KEY = 'tower_queue';
+
+// ========================
+// INIT
+// ========================
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
+  window.addEventListener('online', () => { updateStatus(true); syncQueue(); });
+  window.addEventListener('offline', () => updateStatus(false));
+  updateStatus(navigator.onLine);
+
+  const sel = document.getElementById('f_line_name');
+  Object.keys(LINES_DATA).forEach(name => {
+    const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o);
+  });
+
+  // Try restore session
+  const saved = localStorage.getItem(SESSION_KEY);
+  if (saved) {
+    try {
+      currentUser = JSON.parse(saved);
+      enterApp();
+    } catch { showLogin(); }
+  } else {
+    showLogin();
+  }
+
+  document.getElementById('loginPassInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+});
+
+// ========================
+// AUTH
+// ========================
+function showLogin() {
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('appRoot').style.display = 'none';
+}
+
+async function doLogin() {
+  const username = document.getElementById('loginUserInput').value.trim();
+  const password = document.getElementById('loginPassInput').value;
+  const errBox = document.getElementById('loginError');
+  const btn = document.getElementById('loginBtn');
+
+  if (!username || !password) {
+    errBox.textContent = 'أدخل اسم المستخدم والباسورد';
+    errBox.classList.add('show');
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = '⏳ جاري التحقق...';
+  errBox.classList.remove('show');
+
+  try {
+    const res = await sbFetch(`users?username=eq.${encodeURIComponent(username)}&select=*`);
+    const data = await res.json();
+
+    if (!data.length) {
+      errBox.textContent = '❌ اسم المستخدم غير صحيح';
+      errBox.classList.add('show');
+      btn.disabled = false; btn.textContent = 'دخول'; return;
+    }
+
+    const user = data[0];
+    if (user.password !== password) {
+      errBox.textContent = '❌ الباسورد غير صحيح';
+      errBox.classList.add('show');
+      btn.disabled = false; btn.textContent = 'دخول'; return;
+    }
+
+    if (!user.is_active) {
+      errBox.textContent = '⚠️ هذا الحساب معطّل، تواصل مع المدير';
+      errBox.classList.add('show');
+      btn.disabled = false; btn.textContent = 'دخول'; return;
+    }
+
+    currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+
+    // Update last_login (fire and forget)
+    sbFetch(`users?id=eq.${user.id}`, { method: 'PATCH', body: JSON.stringify({ last_login: new Date().toISOString() }) });
+
+    enterApp();
+  } catch (e) {
+    errBox.textContent = '⚠️ خطأ بالاتصال. تحقق من الإنترنت';
+    errBox.classList.add('show');
+    btn.disabled = false; btn.textContent = 'دخول';
+  }
+}
+
+function enterApp() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appRoot').style.display = 'block';
+  document.getElementById('loginUserInput').value = '';
+  document.getElementById('loginPassInput').value = '';
+  document.getElementById('loginBtn').disabled = false;
+  document.getElementById('loginBtn').textContent = 'دخول';
+
+  // Set user pill
+  const initials = currentUser.full_name ? currentUser.full_name.charAt(0) : '?';
+  document.getElementById('userAvatar').textContent = initials;
+  document.getElementById('userNameDisplay').textContent = currentUser.full_name + ' (' + (ROLE_LABELS[currentUser.role]||currentUser.role) + ')';
+
+  applyRolePermissions();
+  loadRecords();
+}
+
+function logout() {
+  localStorage.removeItem(SESSION_KEY);
+  currentUser = null;
+  showPage('home', document.querySelectorAll('nav button')[0]);
+  showLogin();
+}
+
+function applyRolePermissions() {
+  const adminBtn = document.querySelectorAll('nav button')[3]; // admin tab
+  if (currentUser.role !== 'admin') {
+    adminBtn.style.display = 'none';
+  } else {
+    adminBtn.style.display = '';
+  }
+  // readonly users cannot add/edit
+  const formBtn = document.querySelectorAll('nav button')[1];
+  if (currentUser.role === 'readonly') {
+    formBtn.disabled = true;
+    formBtn.title = 'صلاحية القراءة فقط';
+  } else {
+    formBtn.disabled = false;
+  }
+}
+
+// ========================
+// NAVIGATION
+// ========================
+function showPage(id, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  if (btn) btn.classList.add('active');
+  if (id === 'admin') loadMembers();
+}
+
+function updateStatus(online) {
+  document.getElementById('statusDot').className = 'dot ' + (online ? 'green' : 'red');
+  document.getElementById('statusText').textContent = online ? 'متصل' : 'غير متصل';
+}
+
+let toastTimer;
+function showToast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'show ' + type;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', 3500);
+}
+
+// ========================
+// LINE / TOWER SELECTS
+// ========================
+function onLineChange() {
+  const name = document.getElementById('f_line_name').value;
+  const tSel = document.getElementById('f_tower_number');
+  const lineInfo = document.getElementById('lineInfoStrip');
+  tSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
+  document.getElementById('f_tower_type').value = '';
+  document.getElementById('towerInfoBox').style.display = 'none';
+  document.getElementById('insulatorSection').style.display = 'none';
+  if (!name) { tSel.disabled = true; lineInfo.style.display = 'none'; return; }
+  const towers = LINES_DATA[name];
+  towers.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; tSel.appendChild(o);
+  });
+  tSel.disabled = false;
+  const v = LINE_VOLTAGE[name];
+  lineInfo.style.display = 'block';
+  lineInfo.textContent = '📡 عدد الأبراج: '+towers.length+' برج | '+v+' ك.ف';
+  currentVoltage = v;
+}
+
+function onTowerChange() {
+  const sel = document.getElementById('f_tower_number');
+  const opt = sel.selectedOptions[0];
+  if (!opt || !opt.dataset.type) { document.getElementById('towerInfoBox').style.display='none'; document.getElementById('insulatorSection').style.display='none'; return; }
+  const type = opt.dataset.type;
+  document.getElementById('f_tower_type').value = type;
+  document.getElementById('towerTypeValue').textContent = type;
+  document.getElementById('towerTypeDesc').textContent = TOWER_TYPES[type]||type;
+  document.getElementById('towerInfoBox').style.display = 'block';
+  buildInsulatorUI(currentVoltage);
+}
+
+// ========================
+// INSULATOR UI
+// ========================
+function buildInsulatorUI(voltage, savedState) {
+  const sec = document.getElementById('insulatorSection');
+  const wrap = document.getElementById('phasesWrap');
+  sec.style.display = 'block';
+  wrap.innerHTML = '';
+
+  if (savedState) {
+    insulatorState = JSON.parse(JSON.stringify(savedState));
+  } else {
+    if (voltage === 400) insulatorState = { R: Array(56).fill(false), S: Array(56).fill(false), T: Array(56).fill(false) };
+    else insulatorState = { R: Array(24).fill(false), S: Array(24).fill(false), T: Array(24).fill(false) };
+  }
+
+  ['R','S','T'].forEach(phase => {
+    const block = document.createElement('div');
+    block.className = 'phase-block';
+    const lbl = document.createElement('div'); lbl.className = 'phase-label'; lbl.textContent = 'الفيز '+phase;
+    block.appendChild(lbl);
+    block.appendChild(voltage === 400 ? buildVShape(phase) : buildChain(phase));
+    wrap.appendChild(block);
+  });
+}
+
+function buildVShape(phase) {
+  const N = 28, svgW = 140, svgH = 110;
+  const tipX = svgW/2, tipY = svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('width', svgW); svg.setAttribute('height', svgH);
+  svg.setAttribute('viewBox', '0 0 '+svgW+' '+svgH);
+
+  function addRect(cx, cy, angle, idx) {
+    const ca=Math.cos(angle), sa=Math.sin(angle);
+    const corners=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]];
+    const pts=corners.map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)]);
+    const rect=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    rect.setAttribute('points', pts.map(p=>p.join(',')).join(' '));
+    rect.setAttribute('fill', insulatorState[phase][idx]?'#FC4444':'white');
+    rect.setAttribute('stroke', insulatorState[phase][idx]?'#9B0000':'#555');
+    rect.setAttribute('stroke-width','0.8'); rect.style.cursor='pointer';
+    if (currentUser.role !== 'readonly') {
+      rect.addEventListener('click', () => {
+        insulatorState[phase][idx] = !insulatorState[phase][idx];
+        rect.setAttribute('fill', insulatorState[phase][idx]?'#FC4444':'white');
+        rect.setAttribute('stroke', insulatorState[phase][idx]?'#9B0000':'#555');
+      });
+    }
+    svg.appendChild(rect);
+  }
+
+  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
+  for(let i=0;i<N;i++){
+    const t=i/(N-1);
+    addRect(tipX+(tlX-tipX)*t, tipY+(tlY-tipY)*t, angL, i);
+    addRect(tipX+(trX-tipX)*t, tipY+(trY-tipY)*t, angR, N+i);
+  }
+  return svg;
+}
+
+function buildChain(phase) {
+  const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
+  for (let col=0;col<2;col++) {
+    const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
+    for (let row=0;row<12;row++) {
+      const idx = col*12+row;
+      const rect = document.createElement('div');
+      rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
+      if (currentUser.role !== 'readonly') {
+        rect.addEventListener('click', () => {
+          insulatorState[phase][idx] = !insulatorState[phase][idx];
+          rect.classList.toggle('damaged', insulatorState[phase][idx]);
+        });
+      }
+      colDiv.appendChild(rect);
+    }
+    wrap.appendChild(colDiv);
+  }
+  return wrap;
+}
+
+function generateVShapeSVG(state) {
+  const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  let rects='';
+  function makeRect(cx,cy,angle,idx){
+    const ca=Math.cos(angle),sa=Math.sin(angle);
+    const corners=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]];
+    const pts=corners.map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)].join(',')).join(' ');
+    const fill=state[idx]?'#FC4444':'white', stroke=state[idx]?'#9B0000':'#555';
+    return `<polygon points="${pts}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`;
+  }
+  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
+  for(let i=0;i<N;i++){
+    const t=i/(N-1);
+    rects+=makeRect(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i);
+    rects+=makeRect(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
+}
+
+function generateChainSVG(state) {
+  let rects=''; const w=18,h=14,gap=2,colGap=6;
+  for(let col=0;col<2;col++) for(let row=0;row<12;row++){
+    const idx=col*12+row, x=col*(w+colGap), y=row*(h+gap);
+    const fill=state[idx]?'#FC4444':'white', stroke=state[idx]?'#9B0000':'#555';
+    rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
+  }
+  const svgW=2*w+colGap, svgH=12*(h+gap)-gap;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
+}
+
+function renderInsulatorSVG(svgStr) { return svgStr || '—'; }
+
+// ========================
+// FORM
+// ========================
+const FIELDS = ['iron_intersections','tower_foundations','tower_attachments',
+  'wires_r','wires_s','wires_t','ground_r','ground_s','ground_t','fire_causes','road_access','notes'];
+
+function getFormData() {
+  const d = {
+    line_name: document.getElementById('f_line_name').value,
+    inspection_date: document.getElementById('f_inspection_date').value,
+    tower_number: document.getElementById('f_tower_number').value,
+    tower_type: document.getElementById('f_tower_type').value,
+    voltage: currentVoltage,
+    insulator_state: JSON.stringify(insulatorState),
+    insulator_svg_r: currentVoltage===400 ? generateVShapeSVG(insulatorState.R) : generateChainSVG(insulatorState.R),
+    insulator_svg_s: currentVoltage===400 ? generateVShapeSVG(insulatorState.S) : generateChainSVG(insulatorState.S),
+    insulator_svg_t: currentVoltage===400 ? generateVShapeSVG(insulatorState.T) : generateChainSVG(insulatorState.T),
+    created_by: currentUser.id,
+  };
+  FIELDS.forEach(f => d[f] = document.getElementById('f_'+f).value.trim());
+  return d;
+}
+
+function setFormData(d) {
+  document.getElementById('f_line_name').value = d.line_name||'';
+  onLineChange();
+  currentVoltage = d.voltage || (LINE_VOLTAGE[d.line_name]||132);
+  setTimeout(() => {
+    document.getElementById('f_tower_number').value = d.tower_number||'';
+    document.getElementById('f_tower_type').value = d.tower_type||'';
+    document.getElementById('f_inspection_date').value = d.inspection_date||'';
+    FIELDS.forEach(f => { const el=document.getElementById('f_'+f); if(el) el.value=d[f]||''; });
+    const saved = d.insulator_state ? JSON.parse(d.insulator_state) : null;
+    buildInsulatorUI(currentVoltage, saved);
+  }, 60);
+}
+
+function clearForm() {
+  document.getElementById('f_line_name').value='';
+  document.getElementById('f_tower_number').innerHTML='<option value="">-- اختر الخط أولاً --</option>';
+  document.getElementById('f_tower_number').disabled=true;
+  document.getElementById('f_tower_type').value='';
+  document.getElementById('f_inspection_date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('lineInfoStrip').style.display='none';
+  document.getElementById('towerInfoBox').style.display='none';
+  document.getElementById('insulatorSection').style.display='none';
+  FIELDS.forEach(f=>{ const el=document.getElementById('f_'+f); if(el) el.value=''; });
+  insulatorState={R:[],S:[],T:[]}; currentVoltage=0;
+}
+
+function cancelEdit() {
+  editId=null; clearForm();
+  document.getElementById('formTitle').textContent='➕ إضافة كشف جديد';
+  document.getElementById('saveBtn').textContent='💾 حفظ الكشف';
+  document.getElementById('cancelEditBtn').style.display='none';
+}
+
+async function saveRecord() {
+  const d = getFormData();
+  if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
+
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+
+  if (editId) {
+    try {
+      const res = await sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(d) });
+      if (res.ok) { showToast('✅ تم تحديث السجل'); cancelEdit(); loadRecords(); }
+      else throw new Error();
+    } catch { showToast('❌ خطأ بالتحديث', 'error'); }
+  } else {
+    if (navigator.onLine) {
+      try {
+        const res = await sbFetch('inspections', { method: 'POST', body: JSON.stringify(d) });
+        if (res.ok) { showToast('✅ تم حفظ الكشف بنجاح'); clearForm(); }
+        else throw new Error();
+      } catch {
+        addToQueue(d);
+        showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
+        clearForm();
+      }
+    } else {
+      addToQueue(d);
+      showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
+      clearForm();
+    }
+  }
+  btn.disabled = false;
+}
+
+function addToQueue(rec) {
+  const q = getQueue(); q.push(rec); localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+}
+function getQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY)||'[]'); } catch { return []; } }
+
+async function syncQueue() {
+  const q = getQueue();
+  if (!q.length) return;
+  let synced = 0;
+  const remaining = [];
+  for (const rec of q) {
+    try {
+      const res = await sbFetch('inspections', { method: 'POST', body: JSON.stringify(rec) });
+      if (res.ok) synced++; else remaining.push(rec);
+    } catch { remaining.push(rec); }
+  }
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
+  if (synced > 0) showToast(`✅ تم إرسال ${synced} سجل محفوظ أوف لاين`);
+}
+
+// ========================
+// RECORDS
+// ========================
+async function loadRecords() {
+  const tbody = document.getElementById('recordsBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="21" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  try {
+    const res = await sbFetch('inspections?select=*&order=created_at.desc');
+    const data = await res.json();
+    records = data;
+    localStorage.setItem(DB_KEY, JSON.stringify(data));
+  } catch {
+    records = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+    showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
+  }
+  filteredRecords = [...records];
+  renderTable();
+  updateAdminStats();
+}
+
+function filterRecords() {
+  const q = document.getElementById('searchBox').value.toLowerCase();
+  filteredRecords = records.filter(r =>
+    (r.tower_number||'').toString().includes(q) ||
+    (r.line_name||'').toLowerCase().includes(q) ||
+    (r.inspection_date||'').includes(q)
+  );
+  renderTable();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('recordsBody');
+  if (!filteredRecords.length) {
+    tbody.innerHTML = '<tr><td colspan="21" class="empty-state">لا توجد سجلات</td></tr>';
+    document.getElementById('recordsFooter').textContent = '';
+    return;
+  }
+  const canEdit = currentUser.role !== 'readonly';
+  const canDelete = currentUser.role === 'admin' || currentUser.role === 'supervisor';
+
+  tbody.innerHTML = filteredRecords.map((r,i) => `
+    <tr>
+      <td>${i+1}</td><td>${r.line_name||''}</td><td>${r.inspection_date||''}</td>
+      <td><strong>${r.tower_number||''}</strong></td>
+      <td><span class="badge badge-gray">${r.tower_type||''}</span></td>
+      <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_r)}</td>
+      <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_s)}</td>
+      <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_t)}</td>
+      <td>${badge(r.iron_intersections)}</td>
+      <td>${badge(r.tower_foundations)}</td>
+      <td>${r.tower_attachments||''}</td>
+      <td>${r.wires_r||''}</td><td>${r.wires_s||''}</td><td>${r.wires_t||''}</td>
+      <td>${r.ground_r||''}</td><td>${r.ground_s||''}</td><td>${r.ground_t||''}</td>
+      <td>${r.fire_causes||''}</td><td>${r.road_access||''}</td>
+      <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.notes||''}</td>
+      <td>
+        ${canEdit ? `<button class="btn-sm btn-edit" onclick="editRecord('${r.id}')">✏️</button>` : ''}
+        ${canDelete ? `<button class="btn-sm btn-del" onclick="openDeleteModal('${r.id}')" style="margin-right:4px">🗑️</button>` : ''}
+      </td>
+    </tr>`).join('');
+  document.getElementById('recordsFooter').textContent = 'إجمالي: ' + filteredRecords.length + ' سجل';
+}
+
+function badge(val) {
+  if (!val) return '';
+  let cls = 'badge-gray';
+  if (val.includes('سليم')||val.includes('مكتمل')||val.includes('متاح')||val.includes('لا يوجد')) cls='badge-green';
+  else if (val.includes('بسيط')||val.includes('صعب')||val.includes('ناقص')) cls='badge-yellow';
+  else if (val.includes('شديد')||val.includes('انهيار')||val.includes('مفقود')||val.includes('مسروق')||val.includes('تلف')||val.includes('منقطع')) cls='badge-red';
+  return `<span class="badge ${cls}">${val}</span>`;
+}
+
+function editRecord(id) {
+  const r = records.find(x => x.id === id);
+  if (!r) return;
+  editId = id; setFormData(r);
+  document.getElementById('formTitle').textContent = '✏️ تعديل السجل';
+  document.getElementById('saveBtn').textContent = '💾 حفظ التعديل';
+  document.getElementById('cancelEditBtn').style.display = 'inline-block';
+  showPage('form', document.querySelectorAll('nav button')[1]);
+  window.scrollTo(0,0);
+}
+
+function openDeleteModal(id) { deleteId = id; document.getElementById('deleteModal').classList.add('show'); }
+function closeModal() { document.getElementById('deleteModal').classList.remove('show'); deleteId = null; }
+async function confirmDelete() {
+  if (!deleteId) return;
+  try {
+    const res = await sbFetch(`inspections?id=eq.${deleteId}`, { method: 'DELETE' });
+    if (res.ok) { showToast('🗑️ تم حذف السجل'); loadRecords(); }
+  } catch { showToast('❌ خطأ بالحذف', 'error'); }
+  closeModal();
+}
+
+function exportExcel() {
+  if (!records.length) { showToast('لا توجد بيانات للتصدير', 'error'); return; }
+  const rows = records.map(r => ({
+    'اسم الخط': r.line_name, 'تاريخ الكشف': r.inspection_date, 'رقم البرج': r.tower_number,
+    'نوع البرج': r.tower_type, 'الجهد': r.voltage+'kV',
+    'تقاطعات الحديد': r.iron_intersections, 'قواعد البرج': r.tower_foundations,
+    'ملحقات البرج': r.tower_attachments,
+    'الأسلاك R': r.wires_r, 'الأسلاك S': r.wires_s, 'الأسلاك T': r.wires_t,
+    'الأرضي R': r.ground_r, 'الأرضي S': r.ground_s, 'الأرضي T': r.ground_t,
+    'مسببات الحرائق': r.fire_causes, 'وجود طريق': r.road_access, 'ملاحظات': r.notes
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'كشف الأبراج');
+  XLSX.writeFile(wb, 'كشف_الأبراج_' + new Date().toLocaleDateString('ar-IQ') + '.xlsx');
+  showToast('✅ تم تصدير الملف');
+}
+
+function updateAdminStats() {
+  const c = document.getElementById('totalCount'); if (c) c.textContent = records.length;
+}
+
+// ========================
+// ADMIN: MEMBER MANAGEMENT
+// ========================
+async function loadMembers() {
+  const tbody = document.getElementById('membersBody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  try {
+    const res = await sbFetch('users?select=*&order=created_at.desc');
+    allUsers = await res.json();
+    renderMembers();
+    document.getElementById('totalMembers').textContent = allUsers.length;
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⚠️ تعذر تحميل الأعضاء</td></tr>';
+  }
+}
+
+function renderMembers() {
+  const tbody = document.getElementById('membersBody');
+  if (!allUsers.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">لا يوجد أعضاء</td></tr>'; return; }
+  tbody.innerHTML = allUsers.map(u => `
+    <tr>
+      <td>${u.full_name}</td>
+      <td><code>${u.username||'—'}</code></td>
+      <td><span class="role-badge role-${u.role}">${ROLE_LABELS[u.role]||u.role}</span></td>
+      <td>${u.department||'—'}</td>
+      <td>${u.is_active ? '🟢 فعّال' : '🔴 معطّل'}</td>
+      <td>
+        <button class="btn-sm btn-edit" onclick="toggleUserActive('${u.id}', ${u.is_active})">${u.is_active?'⏸️':'▶️'}</button>
+        <button class="btn-sm btn-del" onclick="openDeleteUserModal('${u.id}')" style="margin-right:4px">🗑️</button>
+      </td>
+    </tr>`).join('');
+}
+
+function genUsername(fullName) {
+  const base = fullName.trim().split(' ')[0].toLowerCase()
+    .replace(/[^a-zA-Z0-9ء-ي]/g, '');
+  const translit = transliterateArabic(base);
+  return translit + Math.floor(100 + Math.random()*900);
+}
+
+function transliterateArabic(str) {
+  const map = {'ا':'a','ب':'b','ت':'t','ث':'th','ج':'j','ح':'h','خ':'kh','د':'d','ذ':'dh','ر':'r','ز':'z','س':'s','ش':'sh','ص':'s','ض':'d','ط':'t','ظ':'z','ع':'a','غ':'gh','ف':'f','ق':'q','ك':'k','ل':'l','م':'m','ن':'n','ه':'h','و':'w','ي':'y','ى':'a','ة':'a','ؤ':'o','ئ':'e','إ':'i','أ':'a','آ':'a'};
+  return str.split('').map(c => map[c] || c).join('');
+}
+
+function genPassword() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let pass = '';
+  for (let i=0;i<6;i++) pass += chars[Math.floor(Math.random()*chars.length)];
+  return pass;
+}
+
+function openAddMemberModal() {
+  document.getElementById('newMemberForm').reset();
+  document.getElementById('newUserResult').style.display = 'none';
+  document.getElementById('addMemberModal').classList.add('show');
+}
+function closeAddMemberModal() { document.getElementById('addMemberModal').classList.remove('show'); }
+
+async function createMember() {
+  const fullName = document.getElementById('newMemberName').value.trim();
+  const role = document.getElementById('newMemberRole').value;
+  const department = document.getElementById('newMemberDept').value.trim();
+
+  if (!fullName) { showToast('⚠️ أدخل اسم العضو', 'error'); return; }
+
+  const username = genUsername(fullName);
+  const password = genPassword();
+
+  try {
+    const res = await sbFetch('users', {
+      method: 'POST',
+      headers: { 'Prefer': 'return=representation' },
+      body: JSON.stringify({ full_name: fullName, username, password, role, department, email: username+'@local.app' })
+    });
+    if (!res.ok) throw new Error();
+
+    document.getElementById('resultUsername').textContent = username;
+    document.getElementById('resultPassword').textContent = password;
+    document.getElementById('resultName').textContent = fullName;
+    document.getElementById('newUserResult').style.display = 'block';
+    showToast('✅ تم إنشاء العضو بنجاح');
+    loadMembers();
+  } catch {
+    showToast('❌ خطأ، حاول مرة أخرى (تأكد الاسم غير مكرر)', 'error');
+  }
+}
+
+async function toggleUserActive(id, currentActive) {
+  try {
+    await sbFetch(`users?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: !currentActive }) });
+    showToast(currentActive ? '⏸️ تم تعطيل الحساب' : '▶️ تم تفعيل الحساب');
+    loadMembers();
+  } catch { showToast('❌ خطأ', 'error'); }
+}
+
+function openDeleteUserModal(id) { deleteUserId = id; document.getElementById('deleteUserModal').classList.add('show'); }
+function closeDeleteUserModal() { document.getElementById('deleteUserModal').classList.remove('show'); deleteUserId = null; }
+async function confirmDeleteUser() {
+  if (!deleteUserId) return;
+  try {
+    await sbFetch(`users?id=eq.${deleteUserId}`, { method: 'DELETE' });
+    showToast('🗑️ تم حذف العضو'); loadMembers();
+  } catch { showToast('❌ خطأ بالحذف', 'error'); }
+  closeDeleteUserModal();
+}
+
+</script>
+</body>
+</html>
