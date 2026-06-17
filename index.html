@@ -591,7 +591,7 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
       <div class="field">
         <label>العنوان الوظيفي</label>
-        <input id="acc_jobtitle" readonly style="background:#F7FAFC;color:#4A5568;">
+        <input id="acc_jobtitle" placeholder="مثال: مهندس خطوط نقل">
       </div>
     </div>
     <div class="form-actions">
@@ -1557,7 +1557,7 @@ function loadAccountPage() {
   document.getElementById('acc_fullname_input').value = currentUser.full_name || '';
   document.getElementById('acc_username').value = currentUser.username || '';
   document.getElementById('acc_phone').value = currentUser.phone || '';
-  document.getElementById('acc_jobtitle').value = currentUser.department || '—';
+  document.getElementById('acc_jobtitle').value = currentUser.department || '';
   document.getElementById('acc_newpass').value = '';
 
   // فقط المدير يقدر يعدّل اسم المستخدم؛ باقي الصلاحيات يضل ثابت
@@ -1579,12 +1579,14 @@ function loadAccountPage() {
 async function saveAccountInfo() {
   const fullName = document.getElementById('acc_fullname_input').value.trim();
   const phone = document.getElementById('acc_phone').value.trim();
+  const jobtitle = document.getElementById('acc_jobtitle').value.trim();
   if (!fullName) { showToast('⚠️ الاسم الكامل لا يمكن أن يكون فاضي', 'error'); return; }
   try {
-    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ full_name: fullName, phone }) });
+    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ full_name: fullName, phone, department: jobtitle }) });
     if (!res.ok) throw new Error();
     currentUser.full_name = fullName;
     currentUser.phone = phone;
+    currentUser.department = jobtitle;
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
     // تحديث العرض بالحال بكل مكان يظهر فيه الاسم
     const initials = fullName.charAt(0) || '?';
