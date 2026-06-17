@@ -44,6 +44,7 @@ body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #
 .user-pill { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.12); padding: 6px 12px; border-radius: 20px; font-size: 0.8rem; cursor: pointer; }
 .user-pill .avatar { width: 24px; height: 24px; border-radius: 50%; background: #63B3ED; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.75rem; }
 .status-pill { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.12); padding: 5px 12px; border-radius: 20px; font-size: 0.78rem; }
+.header-username { color: white; font-size: 0.8rem; font-weight: 600; opacity: 0.92; white-space: nowrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.green { background: #48BB78; box-shadow: 0 0 6px #48BB78; }
 .dot.red { background: #FC8181; }
@@ -64,7 +65,7 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .home-hero { background: white; border-radius: 14px; padding: 28px 24px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.06); text-align: center; }
 .home-hero h2 { font-size: 1.5rem; color: #1a2e4a; margin-bottom: 8px; }
 .home-hero p { color: #718096; }
-.cards-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+.cards-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 14px; }
 .card { background: white; border-radius: 12px; padding: 24px 16px; text-align: center; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .card:hover { transform: translateY(-4px); box-shadow: 0 8px 28px rgba(0,0,0,0.13); }
 .card .icon { font-size: 2.2rem; }
@@ -113,6 +114,17 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .legend-box.dmg { background: #FC4444; border-color: #9B0000; }
 
 .records-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+.filters-bar { background: white; border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; display: flex; gap: 14px; flex-wrap: wrap; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.filters-bar .field { min-width: 150px; flex: 1; }
+.filters-bar select, .filters-bar input { padding: 8px 10px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.85rem; width: 100%; }
+.filters-bar label { font-size: 0.78rem; font-weight: 600; color: #4A5568; margin-bottom: 4px; display: block; }
+.records-footer-bar { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; flex-wrap: wrap; gap: 10px; }
+.pagination { display: flex; gap: 6px; align-items: center; }
+.pagination button { padding: 6px 12px; border: 1.5px solid #E2E8F0; background: white; border-radius: 8px; font-family: inherit; font-size: 0.82rem; cursor: pointer; color: #2E4057; font-weight: 600; }
+.pagination button:hover:not(:disabled) { background: #EBF0F5; }
+.pagination button.active { background: #2E4057; color: white; border-color: #2E4057; }
+.pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+.pagination .page-info { font-size: 0.82rem; color: #718096; margin: 0 8px; }
 .toolbar-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .search-box { padding: 9px 14px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.88rem; min-width: 200px; }
 .table-wrap { overflow-x: auto; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.07); }
@@ -154,6 +166,29 @@ tbody tr:hover { background: #F7FAFC; }
 .role-technician { background: #C6F6D5; color: #22543D; }
 .role-readonly { background: #E2E8F0; color: #4A5568; }
 
+/* THERMAL INSPECTION */
+.thermal-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 700px; margin: 0 auto; }
+.thermal-session-summary { background: #EBF8FF; border: 1.5px solid #90CDF4; border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.85rem; color: #1a365d; display: flex; gap: 18px; flex-wrap: wrap; }
+.thermal-session-summary b { color: #1a2e4a; }
+.thermal-points-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-top: 6px; }
+.thermal-phase-col { background: #FAFBFC; border: 1.5px solid #E2E8F0; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.thermal-phase-col .phase-title { font-weight: 700; color: #2E4057; text-align: center; font-size: 0.88rem; background: #EBF0F5; border-radius: 8px; padding: 4px; }
+.thermal-archive-group { background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 16px; overflow: hidden; }
+.thermal-date-header { background: #2E4057; color: white; padding: 10px 16px; font-weight: 700; font-size: 0.9rem; }
+.thermal-line-header { background: #EBF0F5; color: #1a2e4a; padding: 8px 16px; font-weight: 700; font-size: 0.82rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.thermal-points-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.thermal-points-table th { background: #F7FAFC; color: #4A5568; padding: 7px; font-size: 0.74rem; }
+.thermal-points-table td { padding: 7px; text-align: center; border-bottom: 1px solid #EDF2F7; }
+.hot-flag { color: #C53030; font-weight: 700; }
+.hot-val { color: #C53030; font-weight: 800; }
+@media (max-width: 700px) { .thermal-points-grid { grid-template-columns: 1fr; } .thermal-cards { grid-template-columns: 1fr; } }
+
+/* ACCOUNT PAGE */
+.account-profile-card { background: white; border-radius: 14px; padding: 22px 24px; margin-bottom: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.06); display: flex; align-items: center; gap: 16px; }
+.account-avatar { width: 56px; height: 56px; border-radius: 50%; background: linear-gradient(135deg,#2E4057,#63B3ED); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.3rem; flex-shrink: 0; }
+.account-name { font-size: 1.15rem; font-weight: 700; color: #1a2e4a; }
+.account-role { font-size: 0.85rem; color: #718096; margin-top: 2px; }
+
 @media (max-width: 900px) { .cards-grid { grid-template-columns: 1fr 1fr; } .admin-grid { grid-template-columns: 1fr; } .phases-wrap { gap: 12px; } }
 @media (max-width: 600px) { .grid-2,.grid-3 { grid-template-columns: 1fr; } .cards-grid { grid-template-columns: 1fr 1fr; } nav button { font-size: 0.7rem; padding: 8px 3px; } .page { padding: 10px; } }
 
@@ -165,8 +200,8 @@ tbody tr:hover { background: #F7FAFC; }
 <div id="loginScreen">
   <div class="login-box">
     <div class="logo">⚡</div>
-    <h1>نظام كشف أبراج النقل الكهربائي</h1>
-    <p>محافظة واسط — شبكة الضغط العالي</p>
+    <h1>الشركة العامة لنقل الطاقة الكهربائية</h1>
+    <p>قسم الخطوط - فرع شبكة واسط</p>
     <div class="login-field">
       <label>اسم المستخدم</label>
       <input id="loginUserInput" placeholder="مثال: admin">
@@ -187,22 +222,20 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="header-top">
     <div class="header-brand">
       <span class="logo">⚡</span>
-      <div><h1>نظام كشف أبراج النقل الكهربائي</h1><p>محافظة واسط — شبكة الضغط العالي</p></div>
+      <div><h1>الشركة العامة لنقل الطاقة الكهربائية</h1><p>قسم الخطوط - فرع شبكة واسط</p></div>
     </div>
     <div class="header-right">
       <div class="status-pill"><span class="dot green" id="statusDot"></span><span id="statusText">متصل</span></div>
-      <div class="user-pill" onclick="logout()" title="تسجيل خروج">
-        <span class="avatar" id="userAvatar">؟</span>
-        <span id="userNameDisplay">—</span>
-        <span>🚪</span>
-      </div>
+      <span class="header-username" id="headerUserName">—</span>
     </div>
   </div>
   <nav>
     <button class="active" onclick="showPage('home',this)">🏠 الرئيسية</button>
     <button onclick="showPage('form',this)">➕ كشف جديد</button>
     <button onclick="showPage('records',this);loadRecords();">📋 السجلات</button>
+    <button onclick="showPage('thermal',this);showThermalHome();">🌡️ الكشف الحراري</button>
     <button onclick="showPage('admin',this)">⚙️ الإدارة</button>
+    <button onclick="showPage('account',this);loadAccountPage();">👤 الحساب</button>
   </nav>
 </div>
 <div id="toast"></div>
@@ -273,8 +306,9 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="cards-grid">
     <div class="card" onclick="showPage('form',document.querySelectorAll('nav button')[1])"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" onclick="showPage('records',document.querySelectorAll('nav button')[2]);loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span><span class="sublabel">عرض جميع البيانات</span></div>
+    <div class="card" onclick="showPage('thermal',document.querySelectorAll('nav button')[3]);showThermalHome();"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" onclick="exportExcel()"><span class="icon">📊</span><span class="label">تصدير Excel</span><span class="sublabel">تحميل التقرير</span></div>
-    <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[3])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
+    <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[4])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
   </div>
 </div>
 
@@ -369,20 +403,145 @@ tbody tr:hover { background: #F7FAFC; }
       <button class="btn btn-primary" onclick="loadRecords()" style="padding:9px 18px">🔄 تحديث</button>
     </div>
   </div>
+
+  <div class="filters-bar">
+    <div class="field">
+      <label>📡 تصفية بالخط</label>
+      <select id="filterLine" onchange="filterRecords()">
+        <option value="">-- كل الخطوط --</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>📅 من تاريخ</label>
+      <input type="date" id="filterDateFrom" onchange="filterRecords()">
+    </div>
+    <div class="field">
+      <label>📅 إلى تاريخ</label>
+      <input type="date" id="filterDateTo" onchange="filterRecords()">
+    </div>
+    <div class="field" style="justify-content:flex-end">
+      <label>&nbsp;</label>
+      <button class="btn btn-secondary" onclick="clearFilters()">🔄 مسح التصفية</button>
+    </div>
+  </div>
+
   <div class="table-wrap">
+
     <table>
       <thead><tr>
         <th>#</th><th>اسم الخط</th><th>التاريخ</th><th>رقم البرج</th><th>نوع البرج</th>
+        <th>الموظف</th>
         <th>عوازل R</th><th>عوازل S</th><th>عوازل T</th>
         <th>تقاطعات الحديد</th><th>قواعد البرج</th><th>ملحقات البرج</th>
         <th>R أسلاك</th><th>S أسلاك</th><th>T أسلاك</th>
         <th>R أرضي</th><th>S أرضي</th><th>T أرضي</th>
         <th>حرائق</th><th>طريق</th><th>ملاحظات</th><th>إجراءات</th>
       </tr></thead>
-      <tbody id="recordsBody"><tr><td colspan="21" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+      <tbody id="recordsBody"><tr><td colspan="22" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
     </table>
   </div>
-  <div class="records-footer" id="recordsFooter"></div>
+  <div class="records-footer-bar">
+    <div class="records-footer" id="recordsFooter"></div>
+    <div class="pagination" id="paginationControls"></div>
+  </div>
+</div>
+
+<!-- THERMAL INSPECTION -->
+<div class="page" id="page-thermal">
+
+  <!-- Thermal: home (choose new vs archive) -->
+  <div id="thermalHomeView">
+    <div class="page-title">🌡️ الكشف الحراري</div>
+    <div class="thermal-cards">
+      <div class="card" onclick="showThermalNew()"><span class="icon">➕</span><span class="label">الكشف الجديد</span><span class="sublabel">تسجيل قياسات حرارة</span></div>
+      <div class="card" onclick="showThermalArchive()"><span class="icon">📂</span><span class="label">الكشوفات السابقة</span><span class="sublabel">أرشيف القياسات</span></div>
+    </div>
+  </div>
+
+  <!-- Thermal: new inspection -->
+  <div id="thermalNewView" style="display:none">
+    <div class="page-title">➕ الكشف الحراري الجديد <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
+
+    <!-- step 1: session setup -->
+    <div class="form-card" id="thermalSessionForm">
+      <h3>📌 بيانات الجلسة</h3>
+      <div class="grid-3">
+        <div class="field">
+          <label>اسم الخط *</label>
+          <select id="th_line_name"><option value="">-- اختر الخط --</option></select>
+        </div>
+        <div class="field"><label>تاريخ الكشف *</label><input type="date" id="th_date"></div>
+        <div class="field"><label>درجة حرارة الجو °C *</label><input type="number" step="0.1" id="th_ambient" placeholder="مثال: 38"></div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" onclick="startThermalSession()">▶️ بدء الكشف</button>
+      </div>
+    </div>
+
+    <!-- step 2: per-point readings -->
+    <div id="thermalPointForm" style="display:none">
+      <div class="thermal-session-summary">
+        <span>📡 الخط: <b id="thSumLine"></b></span>
+        <span>📅 التاريخ: <b id="thSumDate"></b></span>
+        <span>🌤️ حرارة الجو: <b id="thSumAmbient"></b>°C</span>
+        <button class="btn-sm btn-secondary" style="margin-right:auto" onclick="finishThermalSession()">⏹️ إنهاء الكشف</button>
+      </div>
+      <div class="form-card">
+        <h3>📍 نقطة القياس</h3>
+        <div class="field">
+          <label>اختر البرج / المحطة *</label>
+          <select id="th_point" onchange="onThermalPointChange()"><option value="">-- اختر --</option></select>
+        </div>
+      </div>
+      <div class="insulator-section" id="thermalReadingsBox" style="display:none">
+        <h3>🌡️ القياسات (°C)</h3>
+        <div class="thermal-points-grid">
+          <div class="thermal-phase-col">
+            <div class="phase-title">الفيز R</div>
+            <div class="field"><label>نقطة 1</label><input type="number" step="0.1" id="th_r1"></div>
+            <div class="field"><label>نقطة 2</label><input type="number" step="0.1" id="th_r2"></div>
+          </div>
+          <div class="thermal-phase-col">
+            <div class="phase-title">الفيز S</div>
+            <div class="field"><label>نقطة 1</label><input type="number" step="0.1" id="th_s1"></div>
+            <div class="field"><label>نقطة 2</label><input type="number" step="0.1" id="th_s2"></div>
+          </div>
+          <div class="thermal-phase-col">
+            <div class="phase-title">الفيز T</div>
+            <div class="field"><label>نقطة 1</label><input type="number" step="0.1" id="th_t1"></div>
+            <div class="field"><label>نقطة 2</label><input type="number" step="0.1" id="th_t2"></div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" id="thSaveBtn" onclick="saveThermalPoint()">✅ تم</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thermal: archive -->
+  <div id="thermalArchiveView" style="display:none">
+    <div class="records-toolbar">
+      <div class="page-title" style="margin:0">📂 أرشيف الكشف الحراري <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
+      <div class="toolbar-right">
+        <button class="btn btn-primary" onclick="loadThermalArchive()" style="padding:9px 18px">🔄 تحديث</button>
+      </div>
+    </div>
+    <div class="filters-bar">
+      <div class="field">
+        <label>📡 تصفية بالخط</label>
+        <select id="thFilterLine" onchange="renderThermalArchive()"><option value="">-- كل الخطوط --</option></select>
+      </div>
+      <div class="field"><label>📅 من تاريخ</label><input type="date" id="thFilterDateFrom" onchange="renderThermalArchive()"></div>
+      <div class="field"><label>📅 إلى تاريخ</label><input type="date" id="thFilterDateTo" onchange="renderThermalArchive()"></div>
+      <div class="field" style="justify-content:flex-end">
+        <label>&nbsp;</label>
+        <button class="btn btn-secondary" onclick="document.getElementById('thFilterLine').value='';document.getElementById('thFilterDateFrom').value='';document.getElementById('thFilterDateTo').value='';renderThermalArchive();">🔄 مسح التصفية</button>
+      </div>
+    </div>
+    <div id="thermalArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
+  </div>
+
 </div>
 
 <!-- ADMIN -->
@@ -404,6 +563,57 @@ tbody tr:hover { background: #F7FAFC; }
         <tbody id="membersBody"><tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<!-- ACCOUNT -->
+<div class="page" id="page-account">
+  <div class="page-title">👤 الحساب</div>
+
+  <div class="account-profile-card">
+    <span class="account-avatar" id="userAvatar">؟</span>
+    <div>
+      <div class="account-name" id="acc_fullName">—</div>
+      <div class="account-role" id="userNameDisplay">—</div>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3>📋 بيانات الحساب</h3>
+    <div class="grid-2">
+      <div class="field">
+        <label>رقم الهاتف</label>
+        <input id="acc_phone" placeholder="مثال: 07xxxxxxxxx">
+      </div>
+      <div class="field">
+        <label>العنوان الوظيفي</label>
+        <input id="acc_jobtitle" readonly style="background:#F7FAFC;color:#4A5568;">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="saveAccountInfo()">💾 حفظ</button>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <h3>🔑 تفاصيل الحساب</h3>
+    <div class="grid-2">
+      <div class="field">
+        <label>اسم المستخدم</label>
+        <input id="acc_username" readonly style="background:#F7FAFC;color:#4A5568;">
+      </div>
+      <div class="field">
+        <label>كلمة مرور جديدة</label>
+        <input id="acc_newpass" type="password" placeholder="اتركه فاضي إذا ما تريد تغييره">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="changeAccountPassword()">🔑 تحديث كلمة المرور</button>
+    </div>
+  </div>
+
+  <div class="form-card">
+    <button class="btn btn-secondary" style="width:100%" onclick="logout()">🚪 تسجيل خروج</button>
   </div>
 </div>
 
@@ -464,13 +674,19 @@ const QUEUE_KEY = 'tower_queue';
 // ========================
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
-  window.addEventListener('online', () => { updateStatus(true); syncQueue(); });
+  document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
+  window.addEventListener('online', () => { updateStatus(true); syncQueue(); syncThermalQueue(); });
   window.addEventListener('offline', () => updateStatus(false));
   updateStatus(navigator.onLine);
 
   const sel = document.getElementById('f_line_name');
   Object.keys(LINES_DATA).forEach(name => {
     const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o);
+  });
+
+  const thSel = document.getElementById('th_line_name');
+  Object.keys(LINES_DATA).forEach(name => {
+    const o = document.createElement('option'); o.value = name; o.textContent = name; thSel.appendChild(o);
   });
 
   // Try restore session
@@ -535,7 +751,7 @@ async function doLogin() {
       btn.disabled = false; btn.textContent = 'دخول'; return;
     }
 
-    currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department };
+    currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department, phone: user.phone };
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
 
     // Update last_login (fire and forget)
@@ -557,10 +773,12 @@ function enterApp() {
   document.getElementById('loginBtn').disabled = false;
   document.getElementById('loginBtn').textContent = 'دخول';
 
-  // Set user pill
+  // Set account profile display
   const initials = currentUser.full_name ? currentUser.full_name.charAt(0) : '?';
   document.getElementById('userAvatar').textContent = initials;
-  document.getElementById('userNameDisplay').textContent = currentUser.full_name + ' (' + (ROLE_LABELS[currentUser.role]||currentUser.role) + ')';
+  document.getElementById('acc_fullName').textContent = currentUser.full_name || '—';
+  document.getElementById('userNameDisplay').textContent = ROLE_LABELS[currentUser.role] || currentUser.role;
+  document.getElementById('headerUserName').textContent = currentUser.full_name || '';
 
   applyRolePermissions();
   loadRecords();
@@ -574,7 +792,7 @@ function logout() {
 }
 
 function applyRolePermissions() {
-  const adminBtn = document.querySelectorAll('nav button')[3]; // admin tab
+  const adminBtn = document.querySelectorAll('nav button')[4]; // admin tab
   if (currentUser.role !== 'admin') {
     adminBtn.style.display = 'none';
   } else {
@@ -781,6 +999,7 @@ function getFormData() {
     insulator_svg_s: currentVoltage===400 ? generateVShapeSVG(insulatorState.S) : generateChainSVG(insulatorState.S),
     insulator_svg_t: currentVoltage===400 ? generateVShapeSVG(insulatorState.T) : generateChainSVG(insulatorState.T),
     created_by: currentUser.id,
+    created_by_name: currentUser.full_name,
   };
   FIELDS.forEach(f => d[f] = document.getElementById('f_'+f).value.trim());
   return d;
@@ -876,48 +1095,129 @@ async function syncQueue() {
 // ========================
 // RECORDS
 // ========================
+let currentPage = 1;
+const PAGE_SIZE = 50;
+
 async function loadRecords() {
   const tbody = document.getElementById('recordsBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="21" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="22" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
     const res = await sbFetch('inspections?select=*&order=created_at.desc');
     const data = await res.json();
     records = data;
-    localStorage.setItem(DB_KEY, JSON.stringify(data));
+    localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 200))); // cache only most recent 200 to avoid storage bloat
   } catch {
     records = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
     showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
   }
-  filteredRecords = [...records];
-  renderTable();
+  populateLineFilter();
+  currentPage = 1;
+  filterRecords();
   updateAdminStats();
+}
+
+function populateLineFilter() {
+  const sel = document.getElementById('filterLine');
+  if (!sel) return;
+  const currentVal = sel.value;
+  const uniqueLines = [...new Set(records.map(r => r.line_name).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
+    uniqueLines.map(name => `<option value="${name}">${name}</option>`).join('');
+  if (uniqueLines.includes(currentVal)) sel.value = currentVal;
+}
+
+function clearFilters() {
+  document.getElementById('searchBox').value = '';
+  document.getElementById('filterLine').value = '';
+  document.getElementById('filterDateFrom').value = '';
+  document.getElementById('filterDateTo').value = '';
+  filterRecords();
 }
 
 function filterRecords() {
   const q = document.getElementById('searchBox').value.toLowerCase();
-  filteredRecords = records.filter(r =>
-    (r.tower_number||'').toString().includes(q) ||
-    (r.line_name||'').toLowerCase().includes(q) ||
-    (r.inspection_date||'').includes(q)
-  );
+  const lineFilter = document.getElementById('filterLine').value;
+  const dateFrom = document.getElementById('filterDateFrom').value;
+  const dateTo = document.getElementById('filterDateTo').value;
+
+  filteredRecords = records.filter(r => {
+    const matchesSearch = (r.tower_number||'').toString().includes(q) ||
+      (r.line_name||'').toLowerCase().includes(q) ||
+      (r.inspection_date||'').includes(q) ||
+      (r.created_by_name||'').toLowerCase().includes(q);
+    const matchesLine = !lineFilter || r.line_name === lineFilter;
+    const matchesDateFrom = !dateFrom || (r.inspection_date && r.inspection_date >= dateFrom);
+    const matchesDateTo = !dateTo || (r.inspection_date && r.inspection_date <= dateTo);
+    return matchesSearch && matchesLine && matchesDateFrom && matchesDateTo;
+  });
+
+  // Sort by line name then date for clean archive-style grouping
+  filteredRecords.sort((a, b) => {
+    const lineCompare = (a.line_name||'').localeCompare(b.line_name||'', 'ar');
+    if (lineCompare !== 0) return lineCompare;
+    return (b.inspection_date||'').localeCompare(a.inspection_date||'');
+  });
+
+  currentPage = 1;
   renderTable();
+}
+
+function getTotalPages() {
+  return Math.max(1, Math.ceil(filteredRecords.length / PAGE_SIZE));
+}
+
+function goToPage(p) {
+  const totalPages = getTotalPages();
+  if (p < 1 || p > totalPages) return;
+  currentPage = p;
+  renderTable();
+}
+
+function renderPagination() {
+  const container = document.getElementById('paginationControls');
+  if (!container) return;
+  const totalPages = getTotalPages();
+  if (filteredRecords.length === 0) { container.innerHTML = ''; return; }
+
+  let html = '';
+  html += `<button onclick="goToPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹ السابق</button>`;
+
+  const maxButtons = 5;
+  let startPage = Math.max(1, currentPage - 2);
+  let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+  if (endPage - startPage < maxButtons - 1) startPage = Math.max(1, endPage - maxButtons + 1);
+
+  if (startPage > 1) html += `<button onclick="goToPage(1)">1</button>` + (startPage > 2 ? `<span class="page-info">...</span>` : '');
+  for (let p = startPage; p <= endPage; p++) {
+    html += `<button class="${p===currentPage?'active':''}" onclick="goToPage(${p})">${p}</button>`;
+  }
+  if (endPage < totalPages) html += (endPage < totalPages-1 ? `<span class="page-info">...</span>` : '') + `<button onclick="goToPage(${totalPages})">${totalPages}</button>`;
+
+  html += `<button onclick="goToPage(${currentPage+1})" ${currentPage===totalPages?'disabled':''}>التالي ›</button>`;
+  html += `<span class="page-info">صفحة ${currentPage} من ${totalPages}</span>`;
+  container.innerHTML = html;
 }
 
 function renderTable() {
   const tbody = document.getElementById('recordsBody');
   if (!filteredRecords.length) {
-    tbody.innerHTML = '<tr><td colspan="21" class="empty-state">لا توجد سجلات</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="22" class="empty-state">لا توجد سجلات</td></tr>';
     document.getElementById('recordsFooter').textContent = '';
+    document.getElementById('paginationControls').innerHTML = '';
     return;
   }
   const canEdit = currentUser.role !== 'readonly';
   const canDelete = currentUser.role === 'admin' || currentUser.role === 'supervisor';
 
-  tbody.innerHTML = filteredRecords.map((r,i) => `
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const pageRecords = filteredRecords.slice(startIdx, startIdx + PAGE_SIZE);
+
+  tbody.innerHTML = pageRecords.map((r,i) => `
     <tr>
-      <td>${i+1}</td><td>${r.line_name||''}</td><td>${r.inspection_date||''}</td>
+      <td>${startIdx + i + 1}</td><td>${r.line_name||''}</td><td>${r.inspection_date||''}</td>
       <td><strong>${r.tower_number||''}</strong></td>
       <td><span class="badge badge-gray">${r.tower_type||''}</span></td>
+      <td>${r.created_by_name||'—'}</td>
       <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_r)}</td>
       <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_s)}</td>
       <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_t)}</td>
@@ -933,7 +1233,8 @@ function renderTable() {
         ${canDelete ? `<button class="btn-sm btn-del" onclick="openDeleteModal('${r.id}')" style="margin-right:4px">🗑️</button>` : ''}
       </td>
     </tr>`).join('');
-  document.getElementById('recordsFooter').textContent = 'إجمالي: ' + filteredRecords.length + ' سجل';
+  document.getElementById('recordsFooter').textContent = 'إجمالي: ' + filteredRecords.length + ' سجل (يُعرض ' + (startIdx+1) + '-' + Math.min(startIdx+PAGE_SIZE, filteredRecords.length) + ')';
+  renderPagination();
 }
 
 function badge(val) {
@@ -968,10 +1269,10 @@ async function confirmDelete() {
 }
 
 function exportExcel() {
-  if (!records.length) { showToast('لا توجد بيانات للتصدير', 'error'); return; }
-  const rows = records.map(r => ({
+  if (!filteredRecords.length) { showToast('لا توجد بيانات للتصدير', 'error'); return; }
+  const rows = filteredRecords.map(r => ({
     'اسم الخط': r.line_name, 'تاريخ الكشف': r.inspection_date, 'رقم البرج': r.tower_number,
-    'نوع البرج': r.tower_type, 'الجهد': r.voltage+'kV',
+    'نوع البرج': r.tower_type, 'الجهد': r.voltage+'kV', 'الموظف': r.created_by_name||'',
     'تقاطعات الحديد': r.iron_intersections, 'قواعد البرج': r.tower_foundations,
     'ملحقات البرج': r.tower_attachments,
     'الأسلاك R': r.wires_r, 'الأسلاك S': r.wires_s, 'الأسلاك T': r.wires_t,
@@ -982,12 +1283,301 @@ function exportExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'كشف الأبراج');
   XLSX.writeFile(wb, 'كشف_الأبراج_' + new Date().toLocaleDateString('ar-IQ') + '.xlsx');
-  showToast('✅ تم تصدير الملف');
+  showToast('✅ تم تصدير الملف (' + filteredRecords.length + ' سجل)');
 }
 
 function updateAdminStats() {
   const c = document.getElementById('totalCount'); if (c) c.textContent = records.length;
 }
+
+// ========================
+// THERMAL INSPECTION
+// ========================
+const THERMAL_DB_KEY = 'thermal_inspections_cache';
+const THERMAL_QUEUE_KEY = 'thermal_queue';
+const HOT_THRESHOLD = 70;
+
+let thermalSession = null;   // { line_name, inspection_date, ambient_temp }
+let thermalRecords = [];
+let filteredThermal = [];
+
+function showThermalHome() {
+  document.getElementById('thermalHomeView').style.display = 'block';
+  document.getElementById('thermalNewView').style.display = 'none';
+  document.getElementById('thermalArchiveView').style.display = 'none';
+}
+function showThermalNew() {
+  document.getElementById('thermalHomeView').style.display = 'none';
+  document.getElementById('thermalNewView').style.display = 'block';
+  document.getElementById('thermalArchiveView').style.display = 'none';
+  // reset to step 1 unless a session is already active
+  if (!thermalSession) {
+    document.getElementById('thermalSessionForm').style.display = 'block';
+    document.getElementById('thermalPointForm').style.display = 'none';
+  }
+}
+function showThermalArchive() {
+  document.getElementById('thermalHomeView').style.display = 'none';
+  document.getElementById('thermalNewView').style.display = 'none';
+  document.getElementById('thermalArchiveView').style.display = 'block';
+  loadThermalArchive();
+}
+
+// Parse the two station names from a line name like "عزيزية - صويرة 132 ك.ف"
+function lineEndpoints(lineName) {
+  const parts = lineName.split(' - ');
+  if (parts.length < 2) return [lineName, lineName];
+  const first = parts[0].trim();
+  const rest = parts.slice(1).join(' - ').trim();
+  const second = rest.replace(/\d+\s*ك\.?ف\.?\s*$/, '').trim();
+  return [first, second || rest];
+}
+
+// Decide which towers count as "تستحق فحص حراري" (شد/نهائي لـ132، وما يعادلها لـ400)
+function isThermalRelevantTower(t, voltage) {
+  if (voltage === 400) {
+    return t.type !== 'XA'; // استبعاد أبراج التعليق العادية (الأغلبية)؛ XB/XC/XD تعتبر مكافئ "شد"، XE نهائي
+  }
+  return t.type_code === 'T' || t.type_code === 'E';
+}
+
+function buildThermalPointOptions(lineName) {
+  const towers = LINES_DATA[lineName] || [];
+  const voltage = LINE_VOLTAGE[lineName];
+  const [stA, stB] = lineEndpoints(lineName);
+  const filtered = towers.filter(t => isThermalRelevantTower(t, voltage));
+  const opts = [];
+  opts.push({ value: 'STATION::' + stA, label: '🏭 مدخل محطة ' + stA });
+  filtered.forEach(t => opts.push({ value: 'TOWER::' + t.num, label: 'برج ' + t.num + ' — ' + (TOWER_TYPES[t.type] || t.type) }));
+  opts.push({ value: 'STATION::' + stB, label: '🏭 مدخل محطة ' + stB });
+  return opts;
+}
+
+function startThermalSession() {
+  const line = document.getElementById('th_line_name').value;
+  const date = document.getElementById('th_date').value;
+  const ambient = document.getElementById('th_ambient').value;
+  if (!line || !date || ambient === '') { showToast('⚠️ عبّي كل الحقول (الخط، التاريخ، حرارة الجو)', 'error'); return; }
+
+  thermalSession = { line_name: line, inspection_date: date, ambient_temp: parseFloat(ambient) };
+
+  document.getElementById('thSumLine').textContent = line;
+  document.getElementById('thSumDate').textContent = date;
+  document.getElementById('thSumAmbient').textContent = ambient;
+
+  const ptSel = document.getElementById('th_point');
+  ptSel.innerHTML = '<option value="">-- اختر --</option>' +
+    buildThermalPointOptions(line).map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+
+  document.getElementById('thermalSessionForm').style.display = 'none';
+  document.getElementById('thermalPointForm').style.display = 'block';
+  resetThermalReadingInputs();
+}
+
+function onThermalPointChange() {
+  const v = document.getElementById('th_point').value;
+  document.getElementById('thermalReadingsBox').style.display = v ? 'block' : 'none';
+}
+
+function resetThermalReadingInputs() {
+  ['th_r1','th_r2','th_s1','th_s2','th_t1','th_t2'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.getElementById('th_point').value = '';
+  document.getElementById('thermalReadingsBox').style.display = 'none';
+}
+
+async function saveThermalPoint() {
+  const ptVal = document.getElementById('th_point').value;
+  if (!ptVal) { showToast('⚠️ اختر البرج أو المحطة أولاً', 'error'); return; }
+
+  const [kind, label] = ptVal.split('::');
+  const readings = {
+    r1: document.getElementById('th_r1').value, r2: document.getElementById('th_r2').value,
+    s1: document.getElementById('th_s1').value, s2: document.getElementById('th_s2').value,
+    t1: document.getElementById('th_t1').value, t2: document.getElementById('th_t2').value,
+  };
+  const nums = Object.values(readings).filter(v => v !== '').map(parseFloat);
+  if (!nums.length) { showToast('⚠️ أدخل قياس واحد على الأقل', 'error'); return; }
+  const maxTemp = Math.max(...nums);
+
+  const rec = {
+    line_name: thermalSession.line_name,
+    inspection_date: thermalSession.inspection_date,
+    ambient_temp: thermalSession.ambient_temp,
+    point_type: kind === 'STATION' ? 'station' : 'tower',
+    point_label: kind === 'STATION' ? ('مدخل محطة ' + label) : ('برج ' + label),
+    tower_number: kind === 'TOWER' ? parseInt(label) : null,
+    r1: readings.r1 === '' ? null : parseFloat(readings.r1),
+    r2: readings.r2 === '' ? null : parseFloat(readings.r2),
+    s1: readings.s1 === '' ? null : parseFloat(readings.s1),
+    s2: readings.s2 === '' ? null : parseFloat(readings.s2),
+    t1: readings.t1 === '' ? null : parseFloat(readings.t1),
+    t2: readings.t2 === '' ? null : parseFloat(readings.t2),
+    max_temp: maxTemp,
+    created_by_name: currentUser.full_name,
+  };
+
+  const btn = document.getElementById('thSaveBtn');
+  btn.disabled = true;
+  if (navigator.onLine) {
+    try {
+      const res = await sbFetch('thermal_inspections', { method: 'POST', body: JSON.stringify(rec) });
+      if (res.ok) showToast('✅ تم حفظ القياس — ' + rec.point_label);
+      else throw new Error();
+    } catch {
+      addToThermalQueue(rec);
+      showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
+    }
+  } else {
+    addToThermalQueue(rec);
+    showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
+  }
+  btn.disabled = false;
+  resetThermalReadingInputs();
+}
+
+function finishThermalSession() {
+  thermalSession = null;
+  document.getElementById('thermalPointForm').style.display = 'none';
+  document.getElementById('thermalSessionForm').style.display = 'block';
+  document.getElementById('th_ambient').value = '';
+  document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
+  showThermalHome();
+}
+
+function addToThermalQueue(rec) {
+  const q = getThermalQueue(); q.push(rec); localStorage.setItem(THERMAL_QUEUE_KEY, JSON.stringify(q));
+}
+function getThermalQueue() { try { return JSON.parse(localStorage.getItem(THERMAL_QUEUE_KEY) || '[]'); } catch { return []; } }
+
+async function syncThermalQueue() {
+  const q = getThermalQueue();
+  if (!q.length) return;
+  let synced = 0;
+  const remaining = [];
+  for (const rec of q) {
+    try {
+      const res = await sbFetch('thermal_inspections', { method: 'POST', body: JSON.stringify(rec) });
+      if (res.ok) synced++; else remaining.push(rec);
+    } catch { remaining.push(rec); }
+  }
+  localStorage.setItem(THERMAL_QUEUE_KEY, JSON.stringify(remaining));
+  if (synced > 0) showToast(`✅ تم إرسال ${synced} قياس حراري محفوظ أوف لاين`);
+}
+
+async function loadThermalArchive() {
+  const body = document.getElementById('thermalArchiveBody');
+  body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  try {
+    const res = await sbFetch('thermal_inspections?select=*&order=inspection_date.desc,line_name.asc');
+    thermalRecords = await res.json();
+    localStorage.setItem(THERMAL_DB_KEY, JSON.stringify(thermalRecords.slice(0, 500)));
+  } catch {
+    thermalRecords = JSON.parse(localStorage.getItem(THERMAL_DB_KEY) || '[]');
+    showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
+  }
+  const lineSel = document.getElementById('thFilterLine');
+  const uniqueLines = [...new Set(thermalRecords.map(r => r.line_name).filter(Boolean))].sort();
+  const currentVal = lineSel.value;
+  lineSel.innerHTML = '<option value="">-- كل الخطوط --</option>' + uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
+  if (uniqueLines.includes(currentVal)) lineSel.value = currentVal;
+  renderThermalArchive();
+}
+
+function isHotRecord(r) {
+  return [r.r1,r.r2,r.s1,r.s2,r.t1,r.t2].some(v => v !== null && v !== undefined && parseFloat(v) > HOT_THRESHOLD);
+}
+function fmtTemp(r, val) {
+  if (val === null || val === undefined || val === '') return '—';
+  const cls = parseFloat(val) > HOT_THRESHOLD ? 'hot-val' : '';
+  return `<span class="${cls}">${val}</span>`;
+}
+
+function renderThermalArchive() {
+  const lineFilter = document.getElementById('thFilterLine').value;
+  const dateFrom = document.getElementById('thFilterDateFrom').value;
+  const dateTo = document.getElementById('thFilterDateTo').value;
+
+  filteredThermal = thermalRecords.filter(r => {
+    const mLine = !lineFilter || r.line_name === lineFilter;
+    const mFrom = !dateFrom || (r.inspection_date && r.inspection_date >= dateFrom);
+    const mTo = !dateTo || (r.inspection_date && r.inspection_date <= dateTo);
+    return mLine && mFrom && mTo;
+  });
+
+  const body = document.getElementById('thermalArchiveBody');
+  if (!filteredThermal.length) { body.innerHTML = '<div class="empty-state">لا توجد قياسات</div>'; return; }
+
+  // group by date, then by line
+  const byDate = {};
+  filteredThermal.forEach(r => {
+    byDate[r.inspection_date] = byDate[r.inspection_date] || {};
+    byDate[r.inspection_date][r.line_name] = byDate[r.inspection_date][r.line_name] || [];
+    byDate[r.inspection_date][r.line_name].push(r);
+  });
+
+  const dates = Object.keys(byDate).sort((a,b) => b.localeCompare(a));
+  let html = '';
+  dates.forEach(date => {
+    html += `<div class="thermal-archive-group"><div class="thermal-date-header">📅 ${date}</div>`;
+    const lines = Object.keys(byDate[date]).sort((a,b) => a.localeCompare(b,'ar'));
+    lines.forEach(line => {
+      const rows = byDate[date][line];
+      const ambient = rows[0].ambient_temp ?? '—';
+      html += `<div class="thermal-line-header"><span>📡 ${line}</span><span>🌤️ حرارة الجو: ${ambient}°C — عدد النقاط: ${rows.length}</span></div>`;
+      html += `<table class="thermal-points-table"><thead><tr>
+        <th>النقطة</th><th>R1</th><th>R2</th><th>S1</th><th>S2</th><th>T1</th><th>T2</th><th>الموظف</th>
+      </tr></thead><tbody>`;
+      rows.sort((a,b) => (a.tower_number||0) - (b.tower_number||0));
+      rows.forEach(r => {
+        const flag = isHotRecord(r) ? '<span class="hot-flag">🔴 </span>' : '';
+        html += `<tr>
+          <td>${flag}${r.point_label||''}</td>
+          <td>${fmtTemp(r, r.r1)}</td><td>${fmtTemp(r, r.r2)}</td>
+          <td>${fmtTemp(r, r.s1)}</td><td>${fmtTemp(r, r.s2)}</td>
+          <td>${fmtTemp(r, r.t1)}</td><td>${fmtTemp(r, r.t2)}</td>
+          <td>${r.created_by_name||'—'}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    });
+    html += `</div>`;
+  });
+  body.innerHTML = html;
+}
+
+// ========================
+// ACCOUNT PAGE
+// ========================
+function loadAccountPage() {
+  document.getElementById('acc_username').value = currentUser.username || '';
+  document.getElementById('acc_phone').value = currentUser.phone || '';
+  document.getElementById('acc_jobtitle').value = currentUser.department || '—';
+  document.getElementById('acc_newpass').value = '';
+}
+
+async function saveAccountInfo() {
+  const phone = document.getElementById('acc_phone').value.trim();
+  try {
+    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ phone }) });
+    if (!res.ok) throw new Error();
+    currentUser.phone = phone;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    showToast('✅ تم حفظ رقم الهاتف');
+  } catch { showToast('❌ تعذر الحفظ، حاول مرة أخرى', 'error'); }
+}
+
+async function changeAccountPassword() {
+  const newpass = document.getElementById('acc_newpass').value.trim();
+  if (!newpass) { showToast('⚠️ أدخل كلمة مرور جديدة أولاً', 'error'); return; }
+  if (newpass.length < 4) { showToast('⚠️ كلمة المرور قصيرة جداً', 'error'); return; }
+  try {
+    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ password: newpass }) });
+    if (!res.ok) throw new Error();
+    document.getElementById('acc_newpass').value = '';
+    showToast('✅ تم تحديث كلمة المرور');
+  } catch { showToast('❌ تعذر التحديث، حاول مرة أخرى', 'error'); }
+}
+
 
 // ========================
 // ADMIN: MEMBER MANAGEMENT
