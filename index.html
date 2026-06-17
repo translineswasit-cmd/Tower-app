@@ -600,7 +600,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="grid-2">
       <div class="field">
         <label>اسم المستخدم</label>
-        <input id="acc_username" readonly style="background:#F7FAFC;color:#4A5568;">
+        <input id="acc_username" placeholder="اسم المستخدم">
       </div>
       <div class="field">
         <label>كلمة مرور جديدة</label>
@@ -608,6 +608,7 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
     </div>
     <div class="form-actions">
+      <button class="btn btn-secondary" id="btnUpdateUsername" onclick="updateUsername()">💾 تحديث اسم المستخدم</button>
       <button class="btn btn-primary" onclick="changeAccountPassword()">🔑 تحديث كلمة المرور</button>
     </div>
   </div>
@@ -1553,6 +1554,21 @@ function loadAccountPage() {
   document.getElementById('acc_phone').value = currentUser.phone || '';
   document.getElementById('acc_jobtitle').value = currentUser.department || '—';
   document.getElementById('acc_newpass').value = '';
+
+  // فقط المدير يقدر يعدّل اسم المستخدم؛ باقي الصلاحيات يضل ثابت
+  const usernameInput = document.getElementById('acc_username');
+  const usernameBtn = document.getElementById('btnUpdateUsername');
+  if (currentUser.role === 'admin') {
+    usernameInput.readOnly = false;
+    usernameInput.style.background = '';
+    usernameInput.style.color = '';
+    usernameBtn.style.display = 'inline-block';
+  } else {
+    usernameInput.readOnly = true;
+    usernameInput.style.background = '#F7FAFC';
+    usernameInput.style.color = '#4A5568';
+    usernameBtn.style.display = 'none';
+  }
 }
 
 async function saveAccountInfo() {
@@ -1564,6 +1580,24 @@ async function saveAccountInfo() {
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
     showToast('✅ تم حفظ رقم الهاتف');
   } catch { showToast('❌ تعذر الحفظ، حاول مرة أخرى', 'error'); }
+}
+
+async function updateUsername() {
+  if (currentUser.role !== 'admin') { showToast('⛔ هذا الإجراء للمدير فقط', 'error'); return; }
+  const newUsername = document.getElementById('acc_username').value.trim();
+  if (!newUsername) { showToast('⚠️ اسم المستخدم لا يمكن أن يكون فاضي', 'error'); return; }
+  if (newUsername === currentUser.username) { showToast('ℹ️ هذا هو اسم المستخدم الحالي'); return; }
+  try {
+    const checkRes = await sbFetch(`users?username=eq.${encodeURIComponent(newUsername)}&select=id`);
+    const existing = await checkRes.json();
+    if (existing.length) { showToast('❌ اسم المستخدم هذا مستخدم من قبل', 'error'); return; }
+
+    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ username: newUsername }) });
+    if (!res.ok) throw new Error();
+    currentUser.username = newUsername;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    showToast('✅ تم تحديث اسم المستخدم — استخدمه بالدخول القادم');
+  } catch { showToast('❌ تعذر التحديث، حاول مرة أخرى', 'error'); }
 }
 
 async function changeAccountPassword() {
