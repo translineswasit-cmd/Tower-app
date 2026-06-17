@@ -343,36 +343,47 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
   <div class="form-card">
     <h3>🔩 تقاطعات الحديد</h3>
-    <div class="field"><label>الحالة</label>
-      <select id="f_iron_intersections"><option value="">-- اختر --</option><option>سليم</option><option>صدأ بسيط</option><option>صدأ شديد</option><option>تلف</option><option>مفقود</option></select>
+    <div class="field"><label>ملاحظات</label>
+      <textarea id="f_iron_intersections" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
     </div>
   </div>
   <div class="form-card">
     <h3>🏗️ قواعد البرج</h3>
-    <div class="field"><label>الحالة</label>
-      <select id="f_tower_foundations"><option value="">-- اختر --</option><option>سليم</option><option>تشققات بسيطة</option><option>تشققات شديدة</option><option>انهيار جزئي</option><option>يحتاج تدعيم</option></select>
+    <div class="field"><label>ملاحظات</label>
+      <textarea id="f_tower_foundations" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
     </div>
   </div>
   <div class="form-card">
     <h3>🔧 ملحقات البرج</h3>
-    <div class="field"><label>الحالة</label>
-      <select id="f_tower_attachments"><option value="">-- اختر --</option><option>مكتملة وسليمة</option><option>ناقصة</option><option>تالفة</option><option>مسروقة</option></select>
+    <div class="field"><label>ملاحظات</label>
+      <textarea id="f_tower_attachments" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
     </div>
   </div>
   <div class="form-card">
     <h3>⚡ الأسلاك</h3>
+    <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد جهتي الفقرة</p>
     <div class="grid-3">
-      <div class="field"><label>الطور R</label><select id="f_wires_r"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
-      <div class="field"><label>الطور S</label><select id="f_wires_s"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
-      <div class="field"><label>الطور T</label><select id="f_wires_t"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label id="wireLbl_r1">الطور R</label><select id="f_wires_r1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label id="wireLbl_s1">الطور S</label><select id="f_wires_s1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label id="wireLbl_t1">الطور T</label><select id="f_wires_t1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+    </div>
+    <div class="grid-3" style="margin-top:14px">
+      <div class="field"><label id="wireLbl_r2">الطور R</label><select id="f_wires_r2"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label id="wireLbl_s2">الطور S</label><select id="f_wires_s2"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label id="wireLbl_t2">الطور T</label><select id="f_wires_t2"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
     </div>
   </div>
   <div class="form-card">
     <h3>🌍 الأرضي</h3>
-    <div class="grid-3">
-      <div class="field"><label>الطور R</label><select id="f_ground_r"><option value="">-- اختر --</option><option>سليم</option><option>تلف</option><option>مفقود</option><option>غير متصل</option></select></div>
-      <div class="field"><label>الطور S</label><select id="f_ground_s"><option value="">-- اختر --</option><option>سليم</option><option>تلف</option><option>مفقود</option><option>غير متصل</option></select></div>
-      <div class="field"><label>الطور T</label><select id="f_ground_t"><option value="">-- اختر --</option><option>سليم</option><option>تلف</option><option>مفقود</option><option>غير متصل</option></select></div>
+    <div class="grid-2">
+      <div class="field">
+        <label id="groundLbl1">الأرضي</label>
+        <textarea id="f_ground_1" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
+      </div>
+      <div class="field" id="groundBlock2" style="display:none">
+        <label>الأرضي 2</label>
+        <textarea id="f_ground_2" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
+      </div>
     </div>
   </div>
   <div class="form-card">
@@ -433,11 +444,13 @@ tbody tr:hover { background: #F7FAFC; }
         <th>الموظف</th>
         <th>عوازل R</th><th>عوازل S</th><th>عوازل T</th>
         <th>تقاطعات الحديد</th><th>قواعد البرج</th><th>ملحقات البرج</th>
-        <th>R أسلاك</th><th>S أسلاك</th><th>T أسلاك</th>
-        <th>R أرضي</th><th>S أرضي</th><th>T أرضي</th>
+        <th>R نحو السابق</th><th>R نحو التالي</th>
+        <th>S نحو السابق</th><th>S نحو التالي</th>
+        <th>T نحو السابق</th><th>T نحو التالي</th>
+        <th>الأرضي 1</th><th>الأرضي 2</th>
         <th>حرائق</th><th>طريق</th><th>ملاحظات</th><th>إجراءات</th>
       </tr></thead>
-      <tbody id="recordsBody"><tr><td colspan="22" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+      <tbody id="recordsBody"><tr><td colspan="24" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
     </table>
   </div>
   <div class="records-footer-bar">
@@ -847,7 +860,7 @@ function onLineChange() {
   document.getElementById('f_tower_type').value = '';
   document.getElementById('towerInfoBox').style.display = 'none';
   document.getElementById('insulatorSection').style.display = 'none';
-  if (!name) { tSel.disabled = true; lineInfo.style.display = 'none'; return; }
+  if (!name) { tSel.disabled = true; lineInfo.style.display = 'none'; currentVoltage = 0; updateWiresGroundUI(); return; }
   const towers = LINES_DATA[name];
   towers.forEach(t => {
     const o = document.createElement('option');
@@ -858,19 +871,65 @@ function onLineChange() {
   lineInfo.style.display = 'block';
   lineInfo.textContent = '📡 عدد الأبراج: '+towers.length+' برج | '+v+' ك.ف';
   currentVoltage = v;
+  updateWiresGroundUI();
 }
 
 function onTowerChange() {
   const sel = document.getElementById('f_tower_number');
   const opt = sel.selectedOptions[0];
-  if (!opt || !opt.dataset.type) { document.getElementById('towerInfoBox').style.display='none'; document.getElementById('insulatorSection').style.display='none'; return; }
+  if (!opt || !opt.dataset.type) { document.getElementById('towerInfoBox').style.display='none'; document.getElementById('insulatorSection').style.display='none'; updateWiresGroundUI(); return; }
   const type = opt.dataset.type;
   document.getElementById('f_tower_type').value = type;
   document.getElementById('towerTypeValue').textContent = type;
   document.getElementById('towerTypeDesc').textContent = TOWER_TYPES[type]||type;
   document.getElementById('towerInfoBox').style.display = 'block';
   buildInsulatorUI(currentVoltage);
+  updateWiresGroundUI();
 }
+
+// ========================
+// WIRES / GROUND DYNAMIC LABELS
+// ========================
+function getNeighborLabels(lineName, towerNum) {
+  const towers = LINES_DATA[lineName] || [];
+  const idx = towers.findIndex(t => t.num === towerNum);
+  const [stA, stB] = lineEndpoints(lineName);
+  const prevLabel = (idx <= 0) ? ('مدخل محطة ' + stA) : ('برج ' + towers[idx-1].num);
+  const nextLabel = (idx === -1 || idx >= towers.length-1) ? ('مدخل محطة ' + stB) : ('برج ' + towers[idx+1].num);
+  return [prevLabel, nextLabel];
+}
+
+function updateWiresGroundUI() {
+  const lineName = document.getElementById('f_line_name').value;
+  const towerNum = parseInt(document.getElementById('f_tower_number').value);
+  const hint = document.getElementById('wiresSpanHint');
+
+  if (lineName && !isNaN(towerNum)) {
+    const [prevLabel, nextLabel] = getNeighborLabels(lineName, towerNum);
+    hint.textContent = '📍 الفقرة الأولى نحو: ' + prevLabel + '   |   الفقرة الثانية نحو: ' + nextLabel;
+    ['r','s','t'].forEach(p => {
+      document.getElementById('wireLbl_'+p+'1').textContent = 'الطور ' + p.toUpperCase() + ' (نحو ' + prevLabel + ')';
+      document.getElementById('wireLbl_'+p+'2').textContent = 'الطور ' + p.toUpperCase() + ' (نحو ' + nextLabel + ')';
+    });
+  } else {
+    hint.textContent = 'اختر البرج أولاً لتحديد جهتي الفقرة';
+    ['r','s','t'].forEach(p => {
+      document.getElementById('wireLbl_'+p+'1').textContent = 'الطور ' + p.toUpperCase();
+      document.getElementById('wireLbl_'+p+'2').textContent = 'الطور ' + p.toUpperCase();
+    });
+  }
+
+  const groundLbl1 = document.getElementById('groundLbl1');
+  const groundBlock2 = document.getElementById('groundBlock2');
+  if (currentVoltage === 400) {
+    groundLbl1.textContent = 'الأرضي 1';
+    groundBlock2.style.display = 'block';
+  } else {
+    groundLbl1.textContent = 'الأرضي';
+    groundBlock2.style.display = 'none';
+  }
+}
+
 
 // ========================
 // INSULATOR UI
@@ -990,7 +1049,8 @@ function renderInsulatorSVG(svgStr) { return svgStr || '—'; }
 // FORM
 // ========================
 const FIELDS = ['iron_intersections','tower_foundations','tower_attachments',
-  'wires_r','wires_s','wires_t','ground_r','ground_s','ground_t','fire_causes','road_access','notes'];
+  'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
+  'ground_1','ground_2','fire_causes','road_access','notes'];
 
 function getFormData() {
   const d = {
@@ -1021,6 +1081,7 @@ function setFormData(d) {
     FIELDS.forEach(f => { const el=document.getElementById('f_'+f); if(el) el.value=d[f]||''; });
     const saved = d.insulator_state ? JSON.parse(d.insulator_state) : null;
     buildInsulatorUI(currentVoltage, saved);
+    updateWiresGroundUI();
   }, 60);
 }
 
@@ -1035,6 +1096,7 @@ function clearForm() {
   document.getElementById('insulatorSection').style.display='none';
   FIELDS.forEach(f=>{ const el=document.getElementById('f_'+f); if(el) el.value=''; });
   insulatorState={R:[],S:[],T:[]}; currentVoltage=0;
+  updateWiresGroundUI();
 }
 
 function cancelEdit() {
@@ -1105,7 +1167,7 @@ const PAGE_SIZE = 50;
 
 async function loadRecords() {
   const tbody = document.getElementById('recordsBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="22" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="24" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
     const res = await sbFetch('inspections?select=*&order=created_at.desc');
     const data = await res.json();
@@ -1206,7 +1268,7 @@ function renderPagination() {
 function renderTable() {
   const tbody = document.getElementById('recordsBody');
   if (!filteredRecords.length) {
-    tbody.innerHTML = '<tr><td colspan="22" class="empty-state">لا توجد سجلات</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="24" class="empty-state">لا توجد سجلات</td></tr>';
     document.getElementById('recordsFooter').textContent = '';
     document.getElementById('paginationControls').innerHTML = '';
     return;
@@ -1226,11 +1288,14 @@ function renderTable() {
       <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_r)}</td>
       <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_s)}</td>
       <td class="ins-svg-cell">${renderInsulatorSVG(r.insulator_svg_t)}</td>
-      <td>${badge(r.iron_intersections)}</td>
-      <td>${badge(r.tower_foundations)}</td>
-      <td>${r.tower_attachments||''}</td>
-      <td>${r.wires_r||''}</td><td>${r.wires_s||''}</td><td>${r.wires_t||''}</td>
-      <td>${r.ground_r||''}</td><td>${r.ground_s||''}</td><td>${r.ground_t||''}</td>
+      <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.iron_intersections||''}">${r.iron_intersections||'—'}</td>
+      <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.tower_foundations||''}">${r.tower_foundations||'—'}</td>
+      <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.tower_attachments||''}">${r.tower_attachments||'—'}</td>
+      <td>${r.wires_r1||'—'}</td><td>${r.wires_r2||'—'}</td>
+      <td>${r.wires_s1||'—'}</td><td>${r.wires_s2||'—'}</td>
+      <td>${r.wires_t1||'—'}</td><td>${r.wires_t2||'—'}</td>
+      <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.ground_1||''}">${r.ground_1||'—'}</td>
+      <td style="max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.ground_2||''}">${r.ground_2||'—'}</td>
       <td>${r.fire_causes||''}</td><td>${r.road_access||''}</td>
       <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.notes||''}</td>
       <td>
@@ -1280,8 +1345,10 @@ function exportExcel() {
     'نوع البرج': r.tower_type, 'الجهد': r.voltage+'kV', 'الموظف': r.created_by_name||'',
     'تقاطعات الحديد': r.iron_intersections, 'قواعد البرج': r.tower_foundations,
     'ملحقات البرج': r.tower_attachments,
-    'الأسلاك R': r.wires_r, 'الأسلاك S': r.wires_s, 'الأسلاك T': r.wires_t,
-    'الأرضي R': r.ground_r, 'الأرضي S': r.ground_s, 'الأرضي T': r.ground_t,
+    'أسلاك R نحو السابق': r.wires_r1, 'أسلاك R نحو التالي': r.wires_r2,
+    'أسلاك S نحو السابق': r.wires_s1, 'أسلاك S نحو التالي': r.wires_s2,
+    'أسلاك T نحو السابق': r.wires_t1, 'أسلاك T نحو التالي': r.wires_t2,
+    'الأرضي 1': r.ground_1, 'الأرضي 2': r.ground_2,
     'مسببات الحرائق': r.fire_causes, 'وجود طريق': r.road_access, 'ملاحظات': r.notes
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
