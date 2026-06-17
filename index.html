@@ -669,12 +669,16 @@ let currentUser = null;
 const SESSION_KEY = 'tower_session';
 
 const TOWER_TYPES = {
-  'برج تعليق':'برج تعليق — Suspension','برج شد':'برج شد — Tension',
-  'برج نهائي':'برج نهائي — End/Terminal','برج عبور':'برج عبور — River Crossing',
-  'برج خاص':'برج خاص — Special',
-  'XA':'Cat Head A (400kV)','XB':'Cat Head B (400kV)','XC':'Cat Head C (400kV)',
-  'XD':'Cat Head D (400kV)','XE':'Cat Head طرفي (400kV)'
+  'برج تعليق':'برج تعليق (تعليق)','برج شد':'برج شد (شد)',
+  'برج نهائي':'برج نهائي (شد)','برج عبور':'برج عبور (تعليق)',
+  'برج خاص':'برج خاص (شد)',
+  'XA':'برج تعليق (تعليق)','XB':'برج عبور (تعليق)','XC':'برج شد (شد)',
+  'XD':'برج نهائي (شد)','XE':'برج تبادل أطوار (تعليق)'
 };
+
+// تصنيف الأبراج حسب الوظيفة الإنشائية (تعليق / شد) — مرجع موحّد يستخدمه الكشف الحراري
+const TOWER_CATEGORY_132 = { S:'تعليق', T:'شد', SP:'شد', R:'تعليق', E:'شد', K:'شد' };
+const TOWER_CATEGORY_400 = { XA:'تعليق', XB:'تعليق', XC:'شد', XD:'شد', XE:'تعليق' };
 
 const ROLE_LABELS = { admin: 'مدير', supervisor: 'مشرف', technician: 'فني', readonly: 'قراءة فقط' };
 
@@ -883,7 +887,7 @@ function onTowerChange() {
   document.getElementById('towerTypeValue').textContent = type;
   document.getElementById('towerTypeDesc').textContent = TOWER_TYPES[type]||type;
   document.getElementById('towerInfoBox').style.display = 'block';
-  buildInsulatorUI(currentVoltage);
+  buildInsulatorUI(currentVoltage, type);
   updateWiresGroundUI();
 }
 
@@ -934,17 +938,31 @@ function updateWiresGroundUI() {
 // ========================
 // INSULATOR UI
 // ========================
-function buildInsulatorUI(voltage, savedState) {
+function getInsulatorMode(voltage, towerType) {
+  if (voltage === 400) {
+    return TOWER_CATEGORY_400[towerType] === 'شد' ? 'quad' : 'v';
+  }
+  return 'chain';
+}
+function getInsulatorCount(mode) {
+  if (mode === 'v') return 56;
+  if (mode === 'quad') return 128;
+  return 24;
+}
+
+function buildInsulatorUI(voltage, towerType, savedState) {
   const sec = document.getElementById('insulatorSection');
   const wrap = document.getElementById('phasesWrap');
   sec.style.display = 'block';
   wrap.innerHTML = '';
 
+  const mode = getInsulatorMode(voltage, towerType);
+  const count = getInsulatorCount(mode);
+
   if (savedState) {
     insulatorState = JSON.parse(JSON.stringify(savedState));
   } else {
-    if (voltage === 400) insulatorState = { R: Array(56).fill(false), S: Array(56).fill(false), T: Array(56).fill(false) };
-    else insulatorState = { R: Array(24).fill(false), S: Array(24).fill(false), T: Array(24).fill(false) };
+    insulatorState = { R: Array(count).fill(false), S: Array(count).fill(false), T: Array(count).fill(false) };
   }
 
   ['R','S','T'].forEach(phase => {
@@ -952,7 +970,11 @@ function buildInsulatorUI(voltage, savedState) {
     block.className = 'phase-block';
     const lbl = document.createElement('div'); lbl.className = 'phase-label'; lbl.textContent = 'الفيز '+phase;
     block.appendChild(lbl);
-    block.appendChild(voltage === 400 ? buildVShape(phase) : buildChain(phase));
+    let el;
+    if (mode === 'v') el = buildVShape(phase);
+    else if (mode === 'quad') el = buildQuadChain(phase);
+    else el = buildChain(phase);
+    block.appendChild(el);
     wrap.appendChild(block);
   });
 }
@@ -1013,6 +1035,27 @@ function buildChain(phase) {
   return wrap;
 }
 
+function buildQuadChain(phase) {
+  const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
+  for (let col=0;col<4;col++) {
+    const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
+    for (let row=0;row<32;row++) {
+      const idx = col*32+row;
+      const rect = document.createElement('div');
+      rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
+      if (currentUser.role !== 'readonly') {
+        rect.addEventListener('click', () => {
+          insulatorState[phase][idx] = !insulatorState[phase][idx];
+          rect.classList.toggle('damaged', insulatorState[phase][idx]);
+        });
+      }
+      colDiv.appendChild(rect);
+    }
+    wrap.appendChild(colDiv);
+  }
+  return wrap;
+}
+
 function generateVShapeSVG(state) {
   const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   let rects='';
@@ -1043,6 +1086,17 @@ function generateChainSVG(state) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
+function generateQuadChainSVG(state) {
+  let rects=''; const w=11,h=8,gap=1.2,colGap=3.5;
+  for(let col=0;col<4;col++) for(let row=0;row<32;row++){
+    const idx=col*32+row, x=col*(w+colGap), y=row*(h+gap);
+    const fill=state[idx]?'#FC4444':'white', stroke=state[idx]?'#9B0000':'#555';
+    rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.5" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
+  }
+  const svgW=4*w+3*colGap, svgH=32*(h+gap)-gap;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
+}
+
 function renderInsulatorSVG(svgStr) { return svgStr || '—'; }
 
 // ========================
@@ -1053,16 +1107,19 @@ const FIELDS = ['iron_intersections','tower_foundations','tower_attachments',
   'ground_1','ground_2','fire_causes','road_access','notes'];
 
 function getFormData() {
+  const towerType = document.getElementById('f_tower_type').value;
+  const insMode = getInsulatorMode(currentVoltage, towerType);
+  const svgFn = insMode === 'v' ? generateVShapeSVG : insMode === 'quad' ? generateQuadChainSVG : generateChainSVG;
   const d = {
     line_name: document.getElementById('f_line_name').value,
     inspection_date: document.getElementById('f_inspection_date').value,
     tower_number: document.getElementById('f_tower_number').value,
-    tower_type: document.getElementById('f_tower_type').value,
+    tower_type: towerType,
     voltage: currentVoltage,
     insulator_state: JSON.stringify(insulatorState),
-    insulator_svg_r: currentVoltage===400 ? generateVShapeSVG(insulatorState.R) : generateChainSVG(insulatorState.R),
-    insulator_svg_s: currentVoltage===400 ? generateVShapeSVG(insulatorState.S) : generateChainSVG(insulatorState.S),
-    insulator_svg_t: currentVoltage===400 ? generateVShapeSVG(insulatorState.T) : generateChainSVG(insulatorState.T),
+    insulator_svg_r: svgFn(insulatorState.R),
+    insulator_svg_s: svgFn(insulatorState.S),
+    insulator_svg_t: svgFn(insulatorState.T),
     created_by: currentUser.id,
     created_by_name: currentUser.full_name,
   };
@@ -1080,7 +1137,7 @@ function setFormData(d) {
     document.getElementById('f_inspection_date').value = d.inspection_date||'';
     FIELDS.forEach(f => { const el=document.getElementById('f_'+f); if(el) el.value=d[f]||''; });
     const saved = d.insulator_state ? JSON.parse(d.insulator_state) : null;
-    buildInsulatorUI(currentVoltage, saved);
+    buildInsulatorUI(currentVoltage, d.tower_type, saved);
     updateWiresGroundUI();
   }, 60);
 }
@@ -1407,10 +1464,8 @@ function lineEndpoints(lineName) {
 
 // Decide which towers count as "تستحق فحص حراري" (شد/نهائي لـ132، وما يعادلها لـ400)
 function isThermalRelevantTower(t, voltage) {
-  if (voltage === 400) {
-    return t.type !== 'XA'; // استبعاد أبراج التعليق العادية (الأغلبية)؛ XB/XC/XD تعتبر مكافئ "شد"، XE نهائي
-  }
-  return t.type_code === 'T' || t.type_code === 'E';
+  if (voltage === 400) return TOWER_CATEGORY_400[t.type] === 'شد';
+  return TOWER_CATEGORY_132[(t.type_code||'').toUpperCase()] === 'شد';
 }
 
 function buildThermalPointOptions(lineName) {
