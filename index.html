@@ -2367,15 +2367,33 @@ function onTowerChange() {
 }
 
 // ========================
-// DEPARTURES MODULE
+// DEPARTURES MODULE v2 (Supabase + Interactive Insulators)
 // ========================
-const TREAT_LOG_KEY = 'dep_treatment_log';
 
-function loadDepartures() {
-  // ملء قوائم الفلترة
+let treatmentsCache = [];
+let treatInsulatorState = { R: [], S: [], T: [] };
+let currentTreatRecord = null;
+let otherDepTreatState = {};
+
+async function loadTreatments() {
+  try {
+    const res = await sbFetch('treatments?select=*&order=created_at.desc');
+    treatmentsCache = await res.json();
+  } catch { treatmentsCache = []; }
+}
+
+function isTreatedInDB(inspectionId, key) {
+  return treatmentsCache.some(t => t.inspection_id === inspectionId && Array.isArray(t.items_treated) && t.items_treated.some(i => i.key === key));
+}
+
+function isFullyTreated(inspectionId, deps) {
+  return deps.every(d => isTreatedInDB(inspectionId, d.key));
+}
+
+async function loadDepartures() {
+  await loadTreatments();
   populateDepFilters();
   renderDepList();
-  // ملء قوائم المعالجة
   populateTreatLines();
 }
 
@@ -2391,11 +2409,14 @@ function populateTreatLines() {
   sel.innerHTML = '<option value="">-- اختر الخط --</option>';
   const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
   const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
-  Object.keys(LINES_DATA).forEach(name => {
+  const linesWithDeps = [...new Set(
+    records.filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
+           .map(r => r.line_name).filter(Boolean)
+  )].sort();
+  linesWithDeps.forEach(name => {
     const opt = document.createElement('option');
     opt.value = name; opt.textContent = name;
-    if (name.includes('400')) g400.appendChild(opt);
-    else g132.appendChild(opt);
+    if (name.includes('400')) g400.appendChild(opt); else g132.appendChild(opt);
   });
   sel.appendChild(g400); sel.appendChild(g132);
 }
@@ -2406,19 +2427,12 @@ function onTreatLineChange() {
   towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
   document.getElementById('treatItemsCard').style.display = 'none';
   if (!lineName) { towerSel.disabled = true; return; }
-  // فقط الأبراج اللي عندها مغادرات
-  const deps = getDepsByLine(lineName);
-  const towersWithDeps = [...new Set(deps.map(d => d.tower_number))].sort((a,b) => parseInt(a)-parseInt(b));
-  if (!towersWithDeps.length) {
-    towerSel.innerHTML = '<option value="">-- لا توجد مغادرات --</option>';
-    towerSel.disabled = true;
-    return;
-  }
-  towersWithDeps.forEach(tn => {
-    const opt = document.createElement('option');
-    opt.value = tn; opt.textContent = 'برج ' + tn;
-    towerSel.appendChild(opt);
-  });
+  const towersWithDeps = [...new Set(
+    records.filter(r => r.line_name === lineName && extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
+           .map(r => r.tower_number)
+  )].sort((a,b) => parseInt(a)-parseInt(b));
+  if (!towersWithDeps.length) { towerSel.innerHTML = '<option value="">-- لا توجد مغادرات --</option>'; towerSel.disabled = true; return; }
+  towersWithDeps.forEach(tn => { const o = document.createElement('option'); o.value = tn; o.textContent = 'برج ' + tn; towerSel.appendChild(o); });
   towerSel.disabled = false;
 }
 
@@ -2427,128 +2441,227 @@ function onTreatTowerChange() {
   const towerNum = document.getElementById('treatTower').value;
   const card = document.getElementById('treatItemsCard');
   if (!lineName || !towerNum) { card.style.display = 'none'; return; }
+  const recs = records.filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNum));
+  if (!recs.length) { card.style.display = 'none'; return; }
+  recs.sort((a,b) => (b.inspection_date||'').localeCompare(a.inspection_date||''));
+  currentTreatRecord = recs[0];
+  otherDepTreatState = {};
   card.style.display = 'block';
-  renderTreatItems(lineName, towerNum);
+  renderTreatItems();
 }
 
-// استخراج المغادرات من سجل كشف واحد
 function extractDepsFromRecord(r) {
   const deps = [];
-  // العوازل
-  ['R','S','T'].forEach(phase => {
-    const svgKey = 'insulator_svg_' + phase.toLowerCase();
-    const stateKey = 'insulator_state';
-    if (r[stateKey]) {
-      try {
-        const state = JSON.parse(r[stateKey]);
-        const phaseState = state[phase] || [];
-        const damagedCount = phaseState.filter(Boolean).length;
-        if (damagedCount > 0) {
-          deps.push({ type: 'insulator', label: `عوازل الفيز ${phase} — ${damagedCount} متضرر`, key: `ins_${phase}` });
-        }
-      } catch(e) {}
-    }
-  });
-  // تقاطعات الحديد
-  if (r.iron_intersections && r.iron_intersections.trim()) deps.push({ type: 'iron', label: 'تقاطعات الحديد: ' + r.iron_intersections, key: 'iron' });
-  // قواعد البرج
-  if (r.tower_foundations && r.tower_foundations.trim()) deps.push({ type: 'foundation', label: 'قواعد البرج: ' + r.tower_foundations, key: 'foundation' });
-  // ملحقات البرج
-  if (r.tower_attachments && r.tower_attachments.trim()) deps.push({ type: 'attachment', label: 'ملحقات البرج: ' + r.tower_attachments, key: 'attachment' });
-  // الأسلاك
-  ['r1','s1','t1'].forEach(f => {
-    const v = r['wires_' + f];
-    if (v && v !== 'سليم' && v !== '') deps.push({ type: 'wire', label: `أسلاك ${f.toUpperCase().replace('1','')}: ${v}`, key: 'wire_' + f });
-  });
-  // الأرضي
-  if (r.ground_1 && r.ground_1.trim()) deps.push({ type: 'ground', label: 'الأرضي 1: ' + r.ground_1, key: 'ground_1' });
-  if (r.ground_2 && r.ground_2.trim()) deps.push({ type: 'ground', label: 'الأرضي 2: ' + r.ground_2, key: 'ground_2' });
-  // مسببات الحرائق
-  if (r.fire_causes && r.fire_causes !== 'لا يوجد' && r.fire_causes !== '') deps.push({ type: 'fire', label: 'مسببات حرائق: ' + r.fire_causes, key: 'fire' });
+  if (r.insulator_state) {
+    try {
+      const state = JSON.parse(r.insulator_state);
+      ['R','S','T'].forEach(phase => {
+        const cnt = (state[phase]||[]).filter(Boolean).length;
+        if (cnt > 0) deps.push({ type:'insulator', label:`عوازل الفيز ${phase} — ${cnt} متضرر`, key:`ins_${phase}` });
+      });
+    } catch(e) {}
+  }
+  if (r.iron_intersections && r.iron_intersections.trim()) deps.push({ type:'iron', label:'تقاطعات الحديد: '+r.iron_intersections, key:'iron' });
+  if (r.tower_foundations && r.tower_foundations.trim()) deps.push({ type:'foundation', label:'قواعد البرج: '+r.tower_foundations, key:'foundation' });
+  if (r.tower_attachments && r.tower_attachments.trim()) deps.push({ type:'attachment', label:'ملحقات البرج: '+r.tower_attachments, key:'attachment' });
+  ['r1','s1','t1'].forEach(f => { const v=r['wires_'+f]; if(v&&v!=='سليم'&&v!=='') deps.push({type:'wire',label:`أسلاك ${f.replace('1','').toUpperCase()}: ${v}`,key:'wire_'+f}); });
+  if (r.ground_1&&r.ground_1.trim()) deps.push({type:'ground',label:'الأرضي 1: '+r.ground_1,key:'ground_1'});
+  if (r.ground_2&&r.ground_2.trim()) deps.push({type:'ground',label:'الأرضي 2: '+r.ground_2,key:'ground_2'});
+  if (r.fire_causes&&r.fire_causes!=='لا يوجد'&&r.fire_causes!=='') deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes,key:'fire'});
   return deps;
 }
 
-function getDepsByLine(lineName) {
-  return records.filter(r => r.line_name === lineName).flatMap(r =>
-    extractDepsFromRecord(r).map(d => ({ ...d, tower_number: r.tower_number, inspection_date: r.inspection_date, record_id: r.id, created_by_name: r.created_by_name }))
-  );
-}
-
-function getTreatLog() {
-  try { return JSON.parse(localStorage.getItem(TREAT_LOG_KEY) || '[]'); } catch { return []; }
-}
-function saveTreatLog(log) { localStorage.setItem(TREAT_LOG_KEY, JSON.stringify(log)); }
-
-function isTreated(recordId, key) {
-  const log = getTreatLog();
-  return log.some(e => e.record_id === recordId && e.key === key);
-}
-
-// حالة المعالجة المؤقتة (في modal المعالجة)
-let treatState = {};
-
-function renderTreatItems(lineName, towerNum) {
+function renderTreatItems() {
   const body = document.getElementById('treatItemsBody');
-  const deps = getDepsByLine(lineName).filter(d => String(d.tower_number) === String(towerNum));
-  if (!deps.length) { body.innerHTML = '<div class="empty-state">لا توجد مغادرات مسجلة لهذا البرج</div>'; return; }
-  treatState = {};
-  deps.forEach(d => { treatState[d.record_id + '_' + d.key] = isTreated(d.record_id, d.key); });
-  let html = '<div class="treat-items-grid">';
-  deps.forEach(d => {
-    const stateKey = d.record_id + '_' + d.key;
-    const fixed = treatState[stateKey];
-    html += `<button class="treat-item-btn ${fixed ? 'fixed' : 'damaged'}" onclick="toggleTreatItem('${stateKey}')" id="tib_${stateKey}">
-      ${fixed ? '✅' : '🔴'} ${d.label}
-    </button>`;
-  });
-  html += '</div>';
-  body.innerHTML = html;
-}
+  if (!currentTreatRecord) return;
+  const r = currentTreatRecord;
+  const deps = extractDepsFromRecord(r);
+  if (!deps.length) { body.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات</div>'; return; }
 
-function toggleTreatItem(stateKey) {
-  treatState[stateKey] = !treatState[stateKey];
-  const btn = document.getElementById('tib_' + stateKey);
-  if (btn) {
-    btn.className = 'treat-item-btn ' + (treatState[stateKey] ? 'fixed' : 'damaged');
-    btn.innerHTML = (treatState[stateKey] ? '✅' : '🔴') + ' ' + btn.innerHTML.split(' ').slice(1).join(' ');
+  if (r.insulator_state) {
+    try { treatInsulatorState = JSON.parse(JSON.stringify(JSON.parse(r.insulator_state))); }
+    catch(e) { treatInsulatorState = {R:[],S:[],T:[]}; }
+  } else { treatInsulatorState = {R:[],S:[],T:[]}; }
+
+  let html = '';
+  const insulatorDeps = deps.filter(d => d.type === 'insulator');
+  if (insulatorDeps.length) {
+    html += `<div style="margin-bottom:16px">
+      <div style="font-weight:700;color:#2E4057;margin-bottom:8px;font-size:0.9rem">🔘 العوازل — اضغط على المتضرر (أحمر) ليتحول أخضر بعد المعالجة</div>
+      <div class="phases-wrap" id="treatPhasesWrap"></div>
+      <div class="insulator-legend" style="margin-top:8px">
+        <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
+        <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
+        <div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">تمت المعالجة</span></div>
+      </div></div>`;
   }
+  const otherDeps = deps.filter(d => d.type !== 'insulator');
+  if (otherDeps.length) {
+    html += `<div style="margin-top:16px"><div style="font-weight:700;color:#2E4057;margin-bottom:10px;font-size:0.9rem">🔧 مغادرات أخرى</div><div class="treat-items-grid">`;
+    otherDeps.forEach(d => {
+      const treated = isTreatedInDB(r.id, d.key);
+      html += `<button class="treat-item-btn ${treated?'fixed':'damaged'}" onclick="toggleOtherDep('${d.key}',this)" data-key="${d.key}" data-treated="${treated}">${treated?'✅':'🔴'} ${d.label}</button>`;
+    });
+    html += '</div></div>';
+  }
+  body.innerHTML = html;
+  if (insulatorDeps.length) buildTreatInsulatorUI(r.voltage||132, r.tower_type||'');
 }
 
-function saveTreatment() {
-  const lineName = document.getElementById('treatLine').value;
-  const towerNum = document.getElementById('treatTower').value;
-  if (!lineName || !towerNum) return;
-  const log = getTreatLog();
+function toggleOtherDep(key, btn) {
+  const newState = btn.dataset.treated !== 'true';
+  btn.dataset.treated = String(newState);
+  btn.className = 'treat-item-btn ' + (newState?'fixed':'damaged');
+  const label = btn.textContent.trim().replace(/^[✅🔴]\s*/,'');
+  btn.textContent = (newState?'✅ ':'🔴 ') + label;
+  otherDepTreatState[key] = newState;
+}
+
+function buildTreatInsulatorUI(voltage, towerType) {
+  const wrap = document.getElementById('treatPhasesWrap');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const mode = getInsulatorMode(voltage||132, towerType||'');
+  const count = getInsulatorCount(mode);
+  ['R','S','T'].forEach(phase => {
+    if (!treatInsulatorState[phase]||!treatInsulatorState[phase].length)
+      treatInsulatorState[phase] = Array(count).fill(false);
+    const block = document.createElement('div'); block.className = 'phase-block';
+    const lbl = document.createElement('div'); lbl.className = 'phase-label'; lbl.textContent = 'الفيز '+phase;
+    block.appendChild(lbl);
+    block.appendChild(buildTreatVisual(phase, mode));
+    wrap.appendChild(block);
+  });
+}
+
+function buildTreatVisual(phase, mode) {
+  if (mode === 'v') {
+    const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('width',svgW); svg.setAttribute('height',svgH); svg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
+    function addP(cx,cy,angle,idx) {
+      const ca=Math.cos(angle),sa=Math.sin(angle);
+      const pts=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]].map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)]);
+      const el=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      el.setAttribute('points',pts.map(p=>p.join(',')).join(' '));
+      const dmg=treatInsulatorState[phase][idx];
+      el.setAttribute('fill',dmg?'#FC4444':'white'); el.setAttribute('stroke',dmg?'#9B0000':'#555'); el.setAttribute('stroke-width','0.8');
+      el.style.cursor=dmg?'pointer':'default';
+      if(dmg) el.addEventListener('click',()=>{
+        const fixed=el.getAttribute('fill')==='#48BB78';
+        el.setAttribute('fill',fixed?'#FC4444':'#48BB78'); el.setAttribute('stroke',fixed?'#9B0000':'#276749');
+      });
+      svg.appendChild(el);
+    }
+    const angL=Math.atan2(tlY-tipY,tlX-tipX),angR=Math.atan2(trY-tipY,trX-tipX);
+    for(let i=0;i<N;i++){const t=i/(N-1); addP(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);}
+    return svg;
+  }
+  const cols=mode==='quad'?4:2, rows=mode==='quad'?32:12;
+  const wrap=document.createElement('div'); wrap.className='chain-wrap';
+  for(let col=0;col<cols;col++){
+    const colDiv=document.createElement('div'); colDiv.className='chain-col';
+    for(let row=0;row<rows;row++){
+      const idx=col*rows+row, rect=document.createElement('div');
+      const dmg=treatInsulatorState[phase][idx];
+      rect.className='ins-rect'+(dmg?' damaged':'');
+      rect.style.cursor=dmg?'pointer':'default';
+      if(dmg) rect.addEventListener('click',()=>{
+        const fixed=rect.style.background==='rgb(72, 187, 120)';
+        rect.style.background=fixed?'#FC4444':'#48BB78'; rect.style.borderColor=fixed?'#9B0000':'#276749';
+      });
+      colDiv.appendChild(rect);
+    }
+    wrap.appendChild(colDiv);
+  }
+  return wrap;
+}
+
+async function saveTreatment() {
+  if (!currentTreatRecord) return;
+  const r = currentTreatRecord;
   const now = new Date().toISOString().split('T')[0];
-  Object.entries(treatState).forEach(([stateKey, fixed]) => {
-    if (fixed) {
-      const [record_id, ...keyParts] = stateKey.split('_');
-      const key = keyParts.join('_');
-      if (!log.some(e => e.record_id === record_id && e.key === key)) {
-        log.push({ record_id, key, line_name: lineName, tower_number: towerNum, treated_by: currentUser.full_name, treated_date: now });
+  const mode = getInsulatorMode(r.voltage||132, r.tower_type||'');
+  const stateAfter = JSON.parse(JSON.stringify(treatInsulatorState));
+  const items_treated = [];
+
+  // اقرأ العوازل المعالجة (الأخضر)
+  const wrap = document.getElementById('treatPhasesWrap');
+  if (wrap) {
+    const blocks = wrap.querySelectorAll('.phase-block');
+    blocks.forEach((block, pi) => {
+      const phase = ['R','S','T'][pi]; if (!phase) return;
+      let treatedCount = 0;
+      if (mode === 'v') {
+        block.querySelectorAll('polygon').forEach((el,i) => { if(el.getAttribute('fill')==='#48BB78'){stateAfter[phase][i]=false; treatedCount++;} });
+      } else {
+        const rows=mode==='quad'?32:12;
+        block.querySelectorAll('.ins-rect').forEach((el,i) => { if(el.style.background==='rgb(72, 187, 120)'){stateAfter[phase][i]=false; treatedCount++;} });
       }
+      if (treatedCount > 0) items_treated.push({key:`ins_${phase}`, label:`عوازل الفيز ${phase}`, count: treatedCount});
+    });
+  }
+
+  // المغادرات الأخرى
+  Object.entries(otherDepTreatState).forEach(([key, treated]) => {
+    if (treated) {
+      const dep = extractDepsFromRecord(r).find(d => d.key === key);
+      if (dep) items_treated.push({key, label: dep.label});
     }
   });
-  saveTreatLog(log);
-  showToast('✅ تم حفظ المعالجة');
-  renderTreatItems(lineName, towerNum);
+
+  if (!items_treated.length) { showToast('⚠️ لم تحدد أي عنصر للمعالجة', 'error'); return; }
+
+  const svgFn = mode==='v'?generateVShapeSVG:mode==='quad'?generateQuadChainSVG:generateChainSVG;
+  const treatment = {
+    inspection_id: r.id,
+    line_name: r.line_name,
+    tower_number: r.tower_number,
+    tower_type: r.tower_type,
+    voltage: r.voltage,
+    treated_by: currentUser.full_name,
+    treatment_date: now,
+    insulator_state_before: r.insulator_state,
+    insulator_state_after: JSON.stringify(stateAfter),
+    insulator_svg_r: svgFn(stateAfter.R||[]),
+    insulator_svg_s: svgFn(stateAfter.S||[]),
+    insulator_svg_t: svgFn(stateAfter.T||[]),
+    items_treated: items_treated,
+    notes: ''
+  };
+
+  const btn = document.querySelector('#treatItemsCard .btn-primary');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await sbFetch('treatments', {method:'POST', body:JSON.stringify(treatment)});
+    if (!res.ok) throw new Error();
+    await loadTreatments();
+    showToast('✅ تم حفظ المعالجة بقاعدة البيانات');
+    otherDepTreatState = {};
+    currentTreatRecord = null;
+    onTreatLineChange();
+    document.getElementById('treatTower').value = '';
+    document.getElementById('treatItemsCard').style.display = 'none';
+    renderDepList();
+  } catch { showToast('❌ تعذر الحفظ، حاول مرة أخرى', 'error'); }
+  if (btn) btn.disabled = false;
 }
 
 function clearDepFilters() {
-  document.getElementById('depFilterLine').value = '';
-  document.getElementById('depFilterFrom').value = '';
-  document.getElementById('depFilterTo').value = '';
+  document.getElementById('depFilterLine').value='';
+  document.getElementById('depFilterFrom').value='';
+  document.getElementById('depFilterTo').value='';
   renderDepList();
 }
 
 function switchDepTab(tab, btn) {
   document.querySelectorAll('.dep-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
-  document.getElementById('depListView').style.display = tab === 'list' ? '' : 'none';
-  document.getElementById('depTreatView').style.display = tab === 'treat' ? '' : 'none';
-  document.getElementById('depLogView').style.display = tab === 'log' ? '' : 'none';
-  if (tab === 'log') renderDepLog();
-  if (tab === 'treat') populateTreatLines();
+  document.getElementById('depListView').style.display = tab==='list'?'':'none';
+  document.getElementById('depTreatView').style.display = tab==='treat'?'':'none';
+  document.getElementById('depLogView').style.display = tab==='log'?'':'none';
+  if (tab==='log') renderDepLog();
+  if (tab==='treat') { populateTreatLines(); otherDepTreatState={}; }
 }
 
 function renderDepList() {
@@ -2556,54 +2669,70 @@ function renderDepList() {
   const lineFilter = document.getElementById('depFilterLine').value;
   const dateFrom = document.getElementById('depFilterFrom').value;
   const dateTo = document.getElementById('depFilterTo').value;
-
-  let filtered = records.filter(r => {
-    const mLine = !lineFilter || r.line_name === lineFilter;
-    const mFrom = !dateFrom || r.inspection_date >= dateFrom;
-    const mTo = !dateTo || r.inspection_date <= dateTo;
-    return mLine && mFrom && mTo;
-  });
-
-  // فقط السجلات اللي عندها مغادرات
-  const withDeps = filtered.map(r => ({ r, deps: extractDepsFromRecord(r) })).filter(x => x.deps.length > 0);
-
-  if (!withDeps.length) { body.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات</div>'; return; }
-
-  // مرتبة حسب الخط ثم التاريخ
-  withDeps.sort((a,b) => {
-    const lc = (a.r.line_name||'').localeCompare(b.r.line_name||'', 'ar');
-    return lc !== 0 ? lc : (b.r.inspection_date||'').localeCompare(a.r.inspection_date||'');
-  });
-
-  let html = '';
-  withDeps.forEach(({ r, deps }) => {
-    const allTreated = deps.every(d => isTreated(r.id, d.key));
-    html += `<div class="dep-card ${allTreated ? 'treated' : ''}">
+  const withDeps = records
+    .filter(r => (!lineFilter||r.line_name===lineFilter) && (!dateFrom||r.inspection_date>=dateFrom) && (!dateTo||r.inspection_date<=dateTo))
+    .map(r => ({r, deps: extractDepsFromRecord(r)}))
+    .filter(x => x.deps.length > 0 && !isFullyTreated(x.r.id, x.deps));
+  if (!withDeps.length) { body.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات نشطة</div>'; return; }
+  withDeps.sort((a,b) => { const lc=(a.r.line_name||'').localeCompare(b.r.line_name||'','ar'); return lc!==0?lc:(b.r.inspection_date||'').localeCompare(a.r.inspection_date||''); });
+  body.innerHTML = withDeps.map(({r, deps}) =>
+    `<div class="dep-card">
       <div class="dep-card-header">
         <div class="dep-card-title">📡 ${r.line_name} — برج ${r.tower_number}</div>
         <div class="dep-card-meta">📅 ${r.inspection_date} | 👤 ${r.created_by_name||'—'}</div>
       </div>
-      <div class="dep-items">`;
-    deps.forEach(d => {
-      const treated = isTreated(r.id, d.key);
-      html += `<span class="dep-item ${treated ? 'fixed' : 'damaged'}">${treated ? '✅' : '🔴'} ${d.label}</span>`;
-    });
-    html += `</div></div>`;
-  });
-  body.innerHTML = html;
+      <div class="dep-items">${deps.map(d=>`<span class="dep-item ${isTreatedInDB(r.id,d.key)?'fixed':'damaged'}">${isTreatedInDB(r.id,d.key)?'✅':'🔴'} ${d.label}</span>`).join('')}</div>
+    </div>`
+  ).join('');
 }
 
-function renderDepLog() {
+async function renderDepLog() {
   const body = document.getElementById('depLogBody');
-  const log = getTreatLog();
-  if (!log.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مسجلة بعد</div>'; return; }
-  const sorted = [...log].sort((a,b) => (b.treated_date||'').localeCompare(a.treated_date||''));
-  let html = '<div class="table-wrap"><table><thead><tr><th>الخط</th><th>البرج</th><th>المغادرة</th><th>المعالج</th><th>تاريخ المعالجة</th></tr></thead><tbody>';
-  sorted.forEach(e => {
-    html += `<tr><td>${e.line_name||'—'}</td><td>${e.tower_number||'—'}</td><td>${e.key||'—'}</td><td>${e.treated_by||'—'}</td><td>${e.treated_date||'—'}</td></tr>`;
+  body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  await loadTreatments();
+  if (!treatmentsCache.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مسجلة بعد</div>'; return; }
+  body.innerHTML = treatmentsCache.map(t => {
+    const items = t.items_treated||[];
+    return `<div class="dep-card" style="border-right-color:#48BB78">
+      <div class="dep-card-header">
+        <div class="dep-card-title">✅ ${t.line_name} — برج ${t.tower_number}</div>
+        <div class="dep-card-meta">📅 ${t.treatment_date} | 👤 ${t.treated_by||'—'}</div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap">
+        ${t.insulator_svg_r?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">R</div>${t.insulator_svg_r}</div>`:''}
+        ${t.insulator_svg_s?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">S</div>${t.insulator_svg_s}</div>`:''}
+        ${t.insulator_svg_t?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">T</div>${t.insulator_svg_t}</div>`:''}
+      </div>
+      ${items.length?`<div class="dep-items" style="margin-top:8px">${items.map(i=>`<span class="dep-item fixed">✅ ${i.label}</span>`).join('')}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function calcLineHealthWithTreatments(lineName) {
+  const rec = records.filter(r => r.line_name === lineName);
+  if (!rec.length) return null;
+  const towers = LINES_DATA[lineName]||[];
+  const coverage = towers.length>0 ? new Set(rec.map(r=>r.tower_number)).size/towers.length : 0;
+  let elIss=0, elTot=0, mIss=0, mTot=0;
+  rec.forEach(r => {
+    if (r.insulator_state) {
+      try {
+        const state = JSON.parse(r.insulator_state);
+        ['R','S','T'].forEach(phase => {
+          const ps = state[phase]||[];
+          elTot += ps.length;
+          if (!isTreatedInDB(r.id,`ins_${phase}`)) elIss += ps.filter(Boolean).length;
+        });
+      } catch(e) {}
+    }
+    ['wires_r1','wires_s1','wires_t1'].forEach(f => {
+      if (r[f]!=null&&r[f]!=='') { elTot++; if(!isTreatedInDB(r.id,'wire_'+f.replace('wires_',''))&&['تلف بسيط','تلف شديد','منقطع','ترهل'].includes(r[f])) elIss++; }
+    });
+    [['iron','iron_intersections'],['foundation','tower_foundations'],['attachment','tower_attachments']].forEach(([k,f]) => {
+      if (r[f]!=null&&r[f]!=='') { mTot++; if(!isTreatedInDB(r.id,k)&&r[f].trim()) mIss++; }
+    });
   });
-  html += '</tbody></table></div>';
-  body.innerHTML = html;
+  return { coverage, electricalScore: Math.min(100,Math.max(0,Math.round((elTot>0?(1-elIss/elTot)*100:70)*coverage+50*(1-coverage)))), mechanicalScore: Math.min(100,Math.max(0,Math.round((mTot>0?(1-mIss/mTot)*100:70)*coverage+50*(1-coverage)))) };
 }
 
 </script>
