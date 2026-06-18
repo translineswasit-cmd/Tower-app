@@ -202,6 +202,38 @@ tbody tr:hover { background: #F7FAFC; }
   .form-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
 }
 
+/* INCOMPLETE INSPECTION BANNER */
+.incomplete-banner { background: #FFF3CD; border: 2px solid #F6C23E; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; display: none; }
+.incomplete-banner h4 { color: #856404; margin-bottom: 8px; font-size: 0.95rem; }
+.incomplete-banner p { color: #856404; font-size: 0.85rem; margin-bottom: 12px; }
+.incomplete-banner .btn-load-prev { background: #F6C23E; color: #1a202c; border: none; border-radius: 8px; padding: 8px 18px; font-family: inherit; font-size: 0.85rem; font-weight: 700; cursor: pointer; }
+
+/* DEPARTURES PAGE */
+.dep-tabs { display: flex; gap: 0; margin-bottom: 20px; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.dep-tab { flex: 1; padding: 12px 8px; background: #EDF2F7; border: none; font-family: inherit; font-size: 0.88rem; font-weight: 600; color: #4A5568; cursor: pointer; transition: all 0.2s; }
+.dep-tab.active { background: #2E4057; color: white; }
+.dep-tab:hover:not(.active) { background: #E2E8F0; }
+.dep-card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-right: 4px solid #FC4444; }
+.dep-card.treated { border-right-color: #48BB78; opacity: 0.7; }
+.dep-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
+.dep-card-title { font-weight: 700; color: #1a2e4a; font-size: 0.95rem; }
+.dep-card-meta { font-size: 0.78rem; color: #718096; }
+.dep-items { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.dep-item { padding: 4px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: all 0.2s; border: 2px solid transparent; }
+.dep-item.damaged { background: #FED7D7; color: #822727; border-color: #FC4444; }
+.dep-item.fixed { background: #C6F6D5; color: #22543D; border-color: #48BB78; }
+.dep-item.insulator-dmg { background: #FED7D7; color: #822727; }
+.dep-filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.dep-filters select, .dep-filters input { padding: 8px 12px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.85rem; }
+.treat-modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 600; align-items: center; justify-content: center; padding: 16px; }
+.treat-modal-bg.show { display: flex; }
+.treat-modal { background: white; border-radius: 16px; padding: 24px; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; }
+.treat-modal h3 { color: #2E4057; margin-bottom: 16px; }
+.treat-items-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.treat-item-btn { padding: 8px 16px; border-radius: 20px; font-family: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer; border: 2px solid; transition: all 0.2s; }
+.treat-item-btn.damaged { background: #FED7D7; color: #822727; border-color: #FC4444; }
+.treat-item-btn.fixed { background: #C6F6D5; color: #22543D; border-color: #48BB78; }
+
 </style>
 </head>
 <body>
@@ -245,6 +277,7 @@ tbody tr:hover { background: #F7FAFC; }
     <button onclick="showPage('records',this);loadRecords();">📋 السجلات</button>
     <button onclick="showPage('lines',this);showLinesHome();">📊 الخطوط</button>
     <button onclick="showPage('thermal',this);showThermalHome();">🌡️ الكشف الحراري</button>
+    <button onclick="showPage('departures',this);loadDepartures();">🚨 المغادرات</button>
     <button onclick="showPage('admin',this)">⚙️ الإدارة</button>
     <button onclick="showPage('account',this);loadAccountPage();">👤 الحساب</button>
   </nav>
@@ -318,7 +351,8 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('form',document.querySelectorAll('nav button')[1])"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" onclick="showPage('records',document.querySelectorAll('nav button')[2]);loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span><span class="sublabel">عرض جميع البيانات</span></div>
     <div class="card" onclick="showPage('lines',document.querySelectorAll('nav button')[3]);showLinesHome();"><span class="icon">📊</span><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
-    <div class="card" onclick="showPage('thermal',document.querySelectorAll('nav button')[3]);showThermalHome();"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
+    <div class="card" onclick="showPage('thermal',document.querySelectorAll('nav button')[4]);showThermalHome();"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
+    <div class="card" onclick="showPage('departures',document.querySelectorAll('nav button')[5]);loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
     <div class="card" onclick="exportExcel()"><span class="icon">📊</span><span class="label">تصدير Excel</span><span class="sublabel">تحميل التقرير</span></div>
     <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[4])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
   </div>
@@ -327,6 +361,13 @@ tbody tr:hover { background: #F7FAFC; }
 <!-- FORM -->
 <div class="page" id="page-form">
   <div class="page-title" id="formTitle">➕ إضافة كشف جديد</div>
+
+  <!-- تنبيه الكشف الناقص -->
+  <div class="incomplete-banner" id="incompleteBanner">
+    <h4>⚠️ هذا البرج كُشف مسبقاً في نفس الدورة</h4>
+    <p id="incompleteBannerMsg">فلان كشف هذا البرج بتاريخ كذا — الكشف ناقص</p>
+    <button class="btn-load-prev" onclick="loadPreviousInspection()">📂 تحميل الكشف السابق للإكمال</button>
+  </div>
   <div class="form-card">
     <h3>📌 معلومات عامة</h3>
     <div class="grid-2">
@@ -467,6 +508,64 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="records-footer-bar">
     <div class="records-footer" id="recordsFooter"></div>
     <div class="pagination" id="paginationControls"></div>
+  </div>
+</div>
+
+<!-- DEPARTURES PAGE -->
+<div class="page" id="page-departures">
+  <div class="page-title">🚨 المغادرات</div>
+  <div class="dep-tabs">
+    <button class="dep-tab active" onclick="switchDepTab('list',this)">📋 المغادرات</button>
+    <button class="dep-tab" onclick="switchDepTab('treat',this)">🔧 معالجة المغادرات</button>
+    <button class="dep-tab" onclick="switchDepTab('log',this)">✅ سجل المعالجات</button>
+  </div>
+
+  <!-- قائمة المغادرات -->
+  <div id="depListView">
+    <div class="dep-filters">
+      <select id="depFilterLine" onchange="renderDepList()">
+        <option value="">-- كل الخطوط --</option>
+      </select>
+      <input type="date" id="depFilterFrom" onchange="renderDepList()">
+      <input type="date" id="depFilterTo" onchange="renderDepList()">
+      <button class="btn btn-secondary" onclick="clearDepFilters()" style="padding:8px 14px">🔄 مسح</button>
+    </div>
+    <div id="depListBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
+  </div>
+
+  <!-- معالجة المغادرات -->
+  <div id="depTreatView" style="display:none">
+    <div class="form-card">
+      <h3>🔧 اختر الخط والبرج</h3>
+      <div class="grid-2">
+        <div class="field">
+          <label>اسم الخط</label>
+          <select id="treatLine" onchange="onTreatLineChange()">
+            <option value="">-- اختر الخط --</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>رقم البرج</label>
+          <select id="treatTower" onchange="onTreatTowerChange()" disabled>
+            <option value="">-- اختر الخط أولاً --</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="treatItemsCard" style="display:none">
+      <div class="form-card">
+        <h3>🚨 المغادرات المسجلة على هذا البرج</h3>
+        <div id="treatItemsBody"></div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" onclick="saveTreatment()">💾 حفظ المعالجة</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- سجل المعالجات -->
+  <div id="depLogView" style="display:none">
+    <div id="depLogBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
 </div>
 
@@ -2205,6 +2304,306 @@ function saveLineModal() {
   if (editingLineIdx !== null) data[editingLineIdx] = entry; else data.push(entry);
   saveLinesInfoData(data); closeLineModal(); renderLinesInfo();
   showToast('تم حفظ بيانات الخط');
+}
+
+// ========================
+// INSPECTION CYCLE SYSTEM (60 days)
+// ========================
+const CYCLE_DAYS = 60;
+
+function isWithinCycle(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffDays = (now - d) / (1000 * 60 * 60 * 24);
+  return diffDays <= CYCLE_DAYS;
+}
+
+let previousInspectionForLoad = null;
+
+async function checkPreviousInspection(lineName, towerNumber) {
+  const banner = document.getElementById('incompleteBanner');
+  previousInspectionForLoad = null;
+  if (!lineName || !towerNumber) { banner.style.display = 'none'; return; }
+  try {
+    const res = await sbFetch(`inspections?line_name=eq.${encodeURIComponent(lineName)}&tower_number=eq.${encodeURIComponent(towerNumber)}&order=inspection_date.desc&limit=1`);
+    const data = await res.json();
+    if (!data.length) { banner.style.display = 'none'; return; }
+    const last = data[0];
+    // لو الكشف الأخير ضمن الدورة وناقص وهو مو نفس السجل اللي نعدله
+    if (isWithinCycle(last.inspection_date) && last.id !== editId) {
+      previousInspectionForLoad = last;
+      const msg = `الموظف ${last.created_by_name||'—'} كشف هذا البرج بتاريخ ${last.inspection_date} — يمكنك تحميل الكشف للإكمال أو الإضافة عليه`;
+      document.getElementById('incompleteBannerMsg').textContent = msg;
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch { banner.style.display = 'none'; }
+}
+
+function loadPreviousInspection() {
+  if (!previousInspectionForLoad) return;
+  const r = previousInspectionForLoad;
+  // نحمل بياناته بالفورم للإكمال — بدون تغيير editId (يُحفظ كسجل جديد)
+  setFormData(r);
+  // نضيف بالملاحظات أنه إكمال
+  const notesEl = document.getElementById('f_notes');
+  const existingNotes = notesEl.value.trim();
+  const addNote = `إكمال كشف — الكشف الأصلي بتاريخ ${r.inspection_date} من ${r.created_by_name||'—'}`;
+  notesEl.value = existingNotes ? existingNotes + '\n' + addNote : addNote;
+  document.getElementById('incompleteBanner').style.display = 'none';
+  showToast('✅ تم تحميل بيانات الكشف السابق — أكمل التعديل وحفظ');
+}
+
+// تعديل onTowerChange لتفعيل فحص الدورة
+const _origOnTowerChange = onTowerChange;
+function onTowerChange() {
+  _origOnTowerChange();
+  const lineName = document.getElementById('f_line_name').value;
+  const towerNum = document.getElementById('f_tower_number').value;
+  if (lineName && towerNum) checkPreviousInspection(lineName, towerNum);
+  else document.getElementById('incompleteBanner').style.display = 'none';
+}
+
+// ========================
+// DEPARTURES MODULE
+// ========================
+const TREAT_LOG_KEY = 'dep_treatment_log';
+
+function loadDepartures() {
+  // ملء قوائم الفلترة
+  populateDepFilters();
+  renderDepList();
+  // ملء قوائم المعالجة
+  populateTreatLines();
+}
+
+function populateDepFilters() {
+  const sel = document.getElementById('depFilterLine');
+  const uniqueLines = [...new Set(records.map(r => r.line_name).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
+    uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
+}
+
+function populateTreatLines() {
+  const sel = document.getElementById('treatLine');
+  sel.innerHTML = '<option value="">-- اختر الخط --</option>';
+  const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
+  const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
+  Object.keys(LINES_DATA).forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    if (name.includes('400')) g400.appendChild(opt);
+    else g132.appendChild(opt);
+  });
+  sel.appendChild(g400); sel.appendChild(g132);
+}
+
+function onTreatLineChange() {
+  const lineName = document.getElementById('treatLine').value;
+  const towerSel = document.getElementById('treatTower');
+  towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
+  document.getElementById('treatItemsCard').style.display = 'none';
+  if (!lineName) { towerSel.disabled = true; return; }
+  // فقط الأبراج اللي عندها مغادرات
+  const deps = getDepsByLine(lineName);
+  const towersWithDeps = [...new Set(deps.map(d => d.tower_number))].sort((a,b) => parseInt(a)-parseInt(b));
+  if (!towersWithDeps.length) {
+    towerSel.innerHTML = '<option value="">-- لا توجد مغادرات --</option>';
+    towerSel.disabled = true;
+    return;
+  }
+  towersWithDeps.forEach(tn => {
+    const opt = document.createElement('option');
+    opt.value = tn; opt.textContent = 'برج ' + tn;
+    towerSel.appendChild(opt);
+  });
+  towerSel.disabled = false;
+}
+
+function onTreatTowerChange() {
+  const lineName = document.getElementById('treatLine').value;
+  const towerNum = document.getElementById('treatTower').value;
+  const card = document.getElementById('treatItemsCard');
+  if (!lineName || !towerNum) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  renderTreatItems(lineName, towerNum);
+}
+
+// استخراج المغادرات من سجل كشف واحد
+function extractDepsFromRecord(r) {
+  const deps = [];
+  // العوازل
+  ['R','S','T'].forEach(phase => {
+    const svgKey = 'insulator_svg_' + phase.toLowerCase();
+    const stateKey = 'insulator_state';
+    if (r[stateKey]) {
+      try {
+        const state = JSON.parse(r[stateKey]);
+        const phaseState = state[phase] || [];
+        const damagedCount = phaseState.filter(Boolean).length;
+        if (damagedCount > 0) {
+          deps.push({ type: 'insulator', label: `عوازل الفيز ${phase} — ${damagedCount} متضرر`, key: `ins_${phase}` });
+        }
+      } catch(e) {}
+    }
+  });
+  // تقاطعات الحديد
+  if (r.iron_intersections && r.iron_intersections.trim()) deps.push({ type: 'iron', label: 'تقاطعات الحديد: ' + r.iron_intersections, key: 'iron' });
+  // قواعد البرج
+  if (r.tower_foundations && r.tower_foundations.trim()) deps.push({ type: 'foundation', label: 'قواعد البرج: ' + r.tower_foundations, key: 'foundation' });
+  // ملحقات البرج
+  if (r.tower_attachments && r.tower_attachments.trim()) deps.push({ type: 'attachment', label: 'ملحقات البرج: ' + r.tower_attachments, key: 'attachment' });
+  // الأسلاك
+  ['r1','s1','t1'].forEach(f => {
+    const v = r['wires_' + f];
+    if (v && v !== 'سليم' && v !== '') deps.push({ type: 'wire', label: `أسلاك ${f.toUpperCase().replace('1','')}: ${v}`, key: 'wire_' + f });
+  });
+  // الأرضي
+  if (r.ground_1 && r.ground_1.trim()) deps.push({ type: 'ground', label: 'الأرضي 1: ' + r.ground_1, key: 'ground_1' });
+  if (r.ground_2 && r.ground_2.trim()) deps.push({ type: 'ground', label: 'الأرضي 2: ' + r.ground_2, key: 'ground_2' });
+  // مسببات الحرائق
+  if (r.fire_causes && r.fire_causes !== 'لا يوجد' && r.fire_causes !== '') deps.push({ type: 'fire', label: 'مسببات حرائق: ' + r.fire_causes, key: 'fire' });
+  return deps;
+}
+
+function getDepsByLine(lineName) {
+  return records.filter(r => r.line_name === lineName).flatMap(r =>
+    extractDepsFromRecord(r).map(d => ({ ...d, tower_number: r.tower_number, inspection_date: r.inspection_date, record_id: r.id, created_by_name: r.created_by_name }))
+  );
+}
+
+function getTreatLog() {
+  try { return JSON.parse(localStorage.getItem(TREAT_LOG_KEY) || '[]'); } catch { return []; }
+}
+function saveTreatLog(log) { localStorage.setItem(TREAT_LOG_KEY, JSON.stringify(log)); }
+
+function isTreated(recordId, key) {
+  const log = getTreatLog();
+  return log.some(e => e.record_id === recordId && e.key === key);
+}
+
+// حالة المعالجة المؤقتة (في modal المعالجة)
+let treatState = {};
+
+function renderTreatItems(lineName, towerNum) {
+  const body = document.getElementById('treatItemsBody');
+  const deps = getDepsByLine(lineName).filter(d => String(d.tower_number) === String(towerNum));
+  if (!deps.length) { body.innerHTML = '<div class="empty-state">لا توجد مغادرات مسجلة لهذا البرج</div>'; return; }
+  treatState = {};
+  deps.forEach(d => { treatState[d.record_id + '_' + d.key] = isTreated(d.record_id, d.key); });
+  let html = '<div class="treat-items-grid">';
+  deps.forEach(d => {
+    const stateKey = d.record_id + '_' + d.key;
+    const fixed = treatState[stateKey];
+    html += `<button class="treat-item-btn ${fixed ? 'fixed' : 'damaged'}" onclick="toggleTreatItem('${stateKey}')" id="tib_${stateKey}">
+      ${fixed ? '✅' : '🔴'} ${d.label}
+    </button>`;
+  });
+  html += '</div>';
+  body.innerHTML = html;
+}
+
+function toggleTreatItem(stateKey) {
+  treatState[stateKey] = !treatState[stateKey];
+  const btn = document.getElementById('tib_' + stateKey);
+  if (btn) {
+    btn.className = 'treat-item-btn ' + (treatState[stateKey] ? 'fixed' : 'damaged');
+    btn.innerHTML = (treatState[stateKey] ? '✅' : '🔴') + ' ' + btn.innerHTML.split(' ').slice(1).join(' ');
+  }
+}
+
+function saveTreatment() {
+  const lineName = document.getElementById('treatLine').value;
+  const towerNum = document.getElementById('treatTower').value;
+  if (!lineName || !towerNum) return;
+  const log = getTreatLog();
+  const now = new Date().toISOString().split('T')[0];
+  Object.entries(treatState).forEach(([stateKey, fixed]) => {
+    if (fixed) {
+      const [record_id, ...keyParts] = stateKey.split('_');
+      const key = keyParts.join('_');
+      if (!log.some(e => e.record_id === record_id && e.key === key)) {
+        log.push({ record_id, key, line_name: lineName, tower_number: towerNum, treated_by: currentUser.full_name, treated_date: now });
+      }
+    }
+  });
+  saveTreatLog(log);
+  showToast('✅ تم حفظ المعالجة');
+  renderTreatItems(lineName, towerNum);
+}
+
+function clearDepFilters() {
+  document.getElementById('depFilterLine').value = '';
+  document.getElementById('depFilterFrom').value = '';
+  document.getElementById('depFilterTo').value = '';
+  renderDepList();
+}
+
+function switchDepTab(tab, btn) {
+  document.querySelectorAll('.dep-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('depListView').style.display = tab === 'list' ? '' : 'none';
+  document.getElementById('depTreatView').style.display = tab === 'treat' ? '' : 'none';
+  document.getElementById('depLogView').style.display = tab === 'log' ? '' : 'none';
+  if (tab === 'log') renderDepLog();
+  if (tab === 'treat') populateTreatLines();
+}
+
+function renderDepList() {
+  const body = document.getElementById('depListBody');
+  const lineFilter = document.getElementById('depFilterLine').value;
+  const dateFrom = document.getElementById('depFilterFrom').value;
+  const dateTo = document.getElementById('depFilterTo').value;
+
+  let filtered = records.filter(r => {
+    const mLine = !lineFilter || r.line_name === lineFilter;
+    const mFrom = !dateFrom || r.inspection_date >= dateFrom;
+    const mTo = !dateTo || r.inspection_date <= dateTo;
+    return mLine && mFrom && mTo;
+  });
+
+  // فقط السجلات اللي عندها مغادرات
+  const withDeps = filtered.map(r => ({ r, deps: extractDepsFromRecord(r) })).filter(x => x.deps.length > 0);
+
+  if (!withDeps.length) { body.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات</div>'; return; }
+
+  // مرتبة حسب الخط ثم التاريخ
+  withDeps.sort((a,b) => {
+    const lc = (a.r.line_name||'').localeCompare(b.r.line_name||'', 'ar');
+    return lc !== 0 ? lc : (b.r.inspection_date||'').localeCompare(a.r.inspection_date||'');
+  });
+
+  let html = '';
+  withDeps.forEach(({ r, deps }) => {
+    const allTreated = deps.every(d => isTreated(r.id, d.key));
+    html += `<div class="dep-card ${allTreated ? 'treated' : ''}">
+      <div class="dep-card-header">
+        <div class="dep-card-title">📡 ${r.line_name} — برج ${r.tower_number}</div>
+        <div class="dep-card-meta">📅 ${r.inspection_date} | 👤 ${r.created_by_name||'—'}</div>
+      </div>
+      <div class="dep-items">`;
+    deps.forEach(d => {
+      const treated = isTreated(r.id, d.key);
+      html += `<span class="dep-item ${treated ? 'fixed' : 'damaged'}">${treated ? '✅' : '🔴'} ${d.label}</span>`;
+    });
+    html += `</div></div>`;
+  });
+  body.innerHTML = html;
+}
+
+function renderDepLog() {
+  const body = document.getElementById('depLogBody');
+  const log = getTreatLog();
+  if (!log.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مسجلة بعد</div>'; return; }
+  const sorted = [...log].sort((a,b) => (b.treated_date||'').localeCompare(a.treated_date||''));
+  let html = '<div class="table-wrap"><table><thead><tr><th>الخط</th><th>البرج</th><th>المغادرة</th><th>المعالج</th><th>تاريخ المعالجة</th></tr></thead><tbody>';
+  sorted.forEach(e => {
+    html += `<tr><td>${e.line_name||'—'}</td><td>${e.tower_number||'—'}</td><td>${e.key||'—'}</td><td>${e.treated_by||'—'}</td><td>${e.treated_date||'—'}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  body.innerHTML = html;
 }
 
 </script>
