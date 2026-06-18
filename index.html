@@ -1205,13 +1205,13 @@ function updateWiresGroundUI() {
 // ========================
 function getInsulatorMode(voltage, towerType) {
   if (voltage === 400) {
-    return TOWER_CATEGORY_400[towerType] === 'شد' ? 'quad' : 'v';
+    return TOWER_CATEGORY_400[towerType] === 'شد' ? 'straight4' : 'v';
   }
   return 'chain';
 }
 function getInsulatorCount(mode) {
   if (mode === 'v') return 56;
-  if (mode === 'quad') return 128;
+  if (mode === 'straight4') return 128;
   return 24;
 }
 
@@ -1230,6 +1230,10 @@ function buildInsulatorUI(voltage, towerType, savedState) {
     insulatorState = { R: Array(count).fill(false), S: Array(count).fill(false), T: Array(count).fill(false) };
   }
 
+  // أسماء المحطتين لخطوط 400 (تظهر فوق كل مجموعة سلسلتين بنمط straight4)
+  const lineName = document.getElementById('f_line_name') ? document.getElementById('f_line_name').value : '';
+  const [stA, stB] = lineName ? lineEndpoints(lineName) : ['', ''];
+
   ['R','S','T'].forEach(phase => {
     const block = document.createElement('div');
     block.className = 'phase-block';
@@ -1237,7 +1241,7 @@ function buildInsulatorUI(voltage, towerType, savedState) {
     block.appendChild(lbl);
     let el;
     if (mode === 'v') el = buildVShape(phase);
-    else if (mode === 'quad') el = buildQuadChain(phase);
+    else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB);
     else el = buildChain(phase);
     block.appendChild(el);
     wrap.appendChild(block);
@@ -1300,25 +1304,47 @@ function buildChain(phase) {
   return wrap;
 }
 
-function buildQuadChain(phase) {
-  const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
-  for (let col=0;col<4;col++) {
-    const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
-    for (let row=0;row<32;row++) {
-      const idx = col*32+row;
-      const rect = document.createElement('div');
-      rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
-      if (currentUser.role !== 'readonly') {
-        rect.addEventListener('click', () => {
-          insulatorState[phase][idx] = !insulatorState[phase][idx];
-          rect.classList.toggle('damaged', insulatorState[phase][idx]);
-        });
+function buildStraight4Chain(phase, stationA, stationB) {
+  const outer = document.createElement('div');
+  outer.style.display = 'flex'; outer.style.flexDirection = 'column'; outer.style.alignItems = 'center'; outer.style.gap = '4px';
+
+  const groupsWrap = document.createElement('div');
+  groupsWrap.style.display = 'flex'; groupsWrap.style.gap = '16px'; // فراغ بسيط بين المجموعتين
+
+  function buildGroup(label, colOffset) {
+    const groupWrap = document.createElement('div');
+    groupWrap.style.display = 'flex'; groupWrap.style.flexDirection = 'column'; groupWrap.style.alignItems = 'center'; groupWrap.style.gap = '4px';
+    const lbl = document.createElement('div');
+    lbl.textContent = label;
+    lbl.style.fontSize = '0.68rem'; lbl.style.fontWeight = '700'; lbl.style.color = '#4A5568';
+    lbl.style.background = '#EBF0F5'; lbl.style.padding = '2px 8px'; lbl.style.borderRadius = '10px'; lbl.style.whiteSpace = 'nowrap';
+    groupWrap.appendChild(lbl);
+    const colsWrap = document.createElement('div'); colsWrap.style.display = 'flex'; colsWrap.style.gap = '6px';
+    for (let c = 0; c < 2; c++) {
+      const col = c + colOffset;
+      const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
+      for (let row = 0; row < 32; row++) {
+        const idx = col*32+row;
+        const rect = document.createElement('div');
+        rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
+        if (currentUser.role !== 'readonly') {
+          rect.addEventListener('click', () => {
+            insulatorState[phase][idx] = !insulatorState[phase][idx];
+            rect.classList.toggle('damaged', insulatorState[phase][idx]);
+          });
+        }
+        colDiv.appendChild(rect);
       }
-      colDiv.appendChild(rect);
+      colsWrap.appendChild(colDiv);
     }
-    wrap.appendChild(colDiv);
+    groupWrap.appendChild(colsWrap);
+    return groupWrap;
   }
-  return wrap;
+
+  groupsWrap.appendChild(buildGroup('🏭 ' + (stationA || 'محطة A'), 0));
+  groupsWrap.appendChild(buildGroup('🏭 ' + (stationB || 'محطة B'), 2));
+  outer.appendChild(groupsWrap);
+  return outer;
 }
 
 function generateVShapeSVG(state) {
@@ -1374,7 +1400,7 @@ const FIELDS = ['iron_intersections','tower_foundations','tower_attachments',
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
   const insMode = getInsulatorMode(currentVoltage, towerType);
-  const svgFn = insMode === 'v' ? generateVShapeSVG : insMode === 'quad' ? generateQuadChainSVG : generateChainSVG;
+  const svgFn = insMode === 'v' ? generateVShapeSVG : insMode === 'straight4' ? generateQuadChainSVG : generateChainSVG;
   // مزامنة r2/s2/t2 مع r1/s1/t1 (فقرة واحدة فقط تُعرض الآن)
   ['r','s','t'].forEach(p => {
     const v1 = document.getElementById('f_wires_'+p+'1').value;
@@ -2622,7 +2648,43 @@ function buildTreatVisual(phase, mode) {
     for(let i=0;i<N;i++){const t=i/(N-1); addP(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);}
     return svg;
   }
-  const cols=mode==='quad'?4:2, rows=mode==='quad'?32:12;
+  if (mode === 'straight4') {
+    const lineName = currentTreatRecord ? currentTreatRecord.line_name : '';
+    const [stA, stB] = lineName ? lineEndpoints(lineName) : ['محطة A','محطة B'];
+    const outer = document.createElement('div');
+    outer.style.display='flex'; outer.style.flexDirection='column'; outer.style.alignItems='center'; outer.style.gap='4px';
+    const groupsWrap = document.createElement('div'); groupsWrap.style.display='flex'; groupsWrap.style.gap='16px';
+    function buildGroup(label, colOffset) {
+      const gWrap=document.createElement('div'); gWrap.style.display='flex'; gWrap.style.flexDirection='column'; gWrap.style.alignItems='center'; gWrap.style.gap='4px';
+      const lbl=document.createElement('div'); lbl.textContent=label;
+      lbl.style.fontSize='0.68rem'; lbl.style.fontWeight='700'; lbl.style.color='#4A5568';
+      lbl.style.background='#EBF0F5'; lbl.style.padding='2px 8px'; lbl.style.borderRadius='10px'; lbl.style.whiteSpace='nowrap';
+      gWrap.appendChild(lbl);
+      const colsWrap=document.createElement('div'); colsWrap.style.display='flex'; colsWrap.style.gap='6px';
+      for(let c=0;c<2;c++){
+        const col=c+colOffset, colDiv=document.createElement('div'); colDiv.className='chain-col';
+        for(let row=0;row<32;row++){
+          const idx=col*32+row, rect=document.createElement('div');
+          const dmg=treatInsulatorState[phase][idx];
+          rect.className='ins-rect'+(dmg?' damaged':'');
+          rect.style.cursor=dmg?'pointer':'default';
+          if(dmg) rect.addEventListener('click',()=>{
+            const fixed=rect.style.background==='rgb(72, 187, 120)';
+            rect.style.background=fixed?'#FC4444':'#48BB78'; rect.style.borderColor=fixed?'#9B0000':'#276749';
+          });
+          colDiv.appendChild(rect);
+        }
+        colsWrap.appendChild(colDiv);
+      }
+      gWrap.appendChild(colsWrap);
+      return gWrap;
+    }
+    groupsWrap.appendChild(buildGroup('🏭 '+(stA||'محطة A'),0));
+    groupsWrap.appendChild(buildGroup('🏭 '+(stB||'محطة B'),2));
+    outer.appendChild(groupsWrap);
+    return outer;
+  }
+  const cols=mode==='straight4'?4:2, rows=mode==='straight4'?32:12;
   const wrap=document.createElement('div'); wrap.className='chain-wrap';
   for(let col=0;col<cols;col++){
     const colDiv=document.createElement('div'); colDiv.className='chain-col';
@@ -2660,7 +2722,7 @@ async function saveTreatment() {
       if (mode === 'v') {
         block.querySelectorAll('polygon').forEach((el,i) => { if(el.getAttribute('fill')==='#48BB78'){stateAfter[phase][i]=false; treatedCount++;} });
       } else {
-        const rows=mode==='quad'?32:12;
+        const rows=mode==='straight4'?32:12;
         block.querySelectorAll('.ins-rect').forEach((el,i) => { if(el.style.background==='rgb(72, 187, 120)'){stateAfter[phase][i]=false; treatedCount++;} });
       }
       if (treatedCount > 0) items_treated.push({key:`ins_${phase}`, label:`عوازل الفيز ${phase}`, count: treatedCount});
@@ -2677,7 +2739,7 @@ async function saveTreatment() {
 
   if (!items_treated.length) { showToast('⚠️ لم تحدد أي عنصر للمعالجة', 'error'); return; }
 
-  const svgFn = mode==='v'?generateVShapeSVG:mode==='quad'?generateQuadChainSVG:generateChainSVG;
+  const svgFn = mode==='v'?generateVShapeSVG:mode==='straight4'?generateQuadChainSVG:generateChainSVG;
   const treatment = {
     inspection_id: r.id,
     line_name: r.line_name,
