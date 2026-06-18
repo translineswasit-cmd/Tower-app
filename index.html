@@ -373,17 +373,16 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
   <div class="form-card">
     <h3>⚡ الأسلاك</h3>
-    <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد جهتي الفقرة</p>
+    <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد الفقرة</p>
     <div class="grid-3">
       <div class="field"><label id="wireLbl_r1">الطور R</label><select id="f_wires_r1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
       <div class="field"><label id="wireLbl_s1">الطور S</label><select id="f_wires_s1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
       <div class="field"><label id="wireLbl_t1">الطور T</label><select id="f_wires_t1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
     </div>
-    <div class="grid-3" style="margin-top:14px">
-      <div class="field"><label id="wireLbl_r2">الطور R</label><select id="f_wires_r2"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
-      <div class="field"><label id="wireLbl_s2">الطور S</label><select id="f_wires_s2"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
-      <div class="field"><label id="wireLbl_t2">الطور T</label><select id="f_wires_t2"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
-    </div>
+    <!-- حقول r2/s2/t2 مخفية — تُحفظ بنفس قيمة r1/s1/t1 تلقائياً -->
+    <select id="f_wires_r2" style="display:none"></select>
+    <select id="f_wires_s2" style="display:none"></select>
+    <select id="f_wires_t2" style="display:none"></select>
   </div>
   <div class="form-card">
     <h3>🌍 الأرضي</h3>
@@ -393,7 +392,7 @@ tbody tr:hover { background: #F7FAFC; }
         <textarea id="f_ground_1" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
       </div>
       <div class="field" id="groundBlock2" style="display:none">
-        <label>الأرضي 2</label>
+        <label id="groundLbl2">الأرضي 2</label>
         <textarea id="f_ground_2" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
       </div>
     </div>
@@ -1005,25 +1004,31 @@ function updateWiresGroundUI() {
 
   if (lineName && !isNaN(towerNum)) {
     const [prevLabel, nextLabel] = getNeighborLabels(lineName, towerNum);
-    hint.textContent = '📍 الفقرة الأولى نحو: ' + prevLabel + '   |   الفقرة الثانية نحو: ' + nextLabel;
+    // يظهر فقط الفقرة نحو البرج التالي (بعد)
+    hint.textContent = '📍 الفقرة: بين برج ' + towerNum + ' و ' + nextLabel;
     ['r','s','t'].forEach(p => {
-      document.getElementById('wireLbl_'+p+'1').textContent = 'الطور ' + p.toUpperCase() + ' (نحو ' + prevLabel + ')';
-      document.getElementById('wireLbl_'+p+'2').textContent = 'الطور ' + p.toUpperCase() + ' (نحو ' + nextLabel + ')';
+      document.getElementById('wireLbl_'+p+'1').textContent = 'الطور ' + p.toUpperCase() + ' (بين برج ' + towerNum + ' و ' + nextLabel + ')';
     });
+    // الأرضي — نفس التسمية
+    const spanLabel = 'بين برج ' + towerNum + ' و ' + nextLabel;
+    const groundLbl1 = document.getElementById('groundLbl1');
+    const groundLbl2 = document.getElementById('groundLbl2');
+    const groundBlock2 = document.getElementById('groundBlock2');
+    if (currentVoltage === 400) {
+      groundLbl1.textContent = 'الأرضي 1 (' + spanLabel + ')';
+      if (groundLbl2) groundLbl2.textContent = 'الأرضي 2 (' + spanLabel + ')';
+      groundBlock2.style.display = 'block';
+    } else {
+      groundLbl1.textContent = 'الأرضي (' + spanLabel + ')';
+      groundBlock2.style.display = 'none';
+    }
   } else {
-    hint.textContent = 'اختر البرج أولاً لتحديد جهتي الفقرة';
+    hint.textContent = 'اختر البرج أولاً لتحديد الفقرة';
     ['r','s','t'].forEach(p => {
       document.getElementById('wireLbl_'+p+'1').textContent = 'الطور ' + p.toUpperCase();
-      document.getElementById('wireLbl_'+p+'2').textContent = 'الطور ' + p.toUpperCase();
     });
-  }
-
-  const groundLbl1 = document.getElementById('groundLbl1');
-  const groundBlock2 = document.getElementById('groundBlock2');
-  if (currentVoltage === 400) {
-    groundLbl1.textContent = 'الأرضي 1';
-    groundBlock2.style.display = 'block';
-  } else {
+    const groundLbl1 = document.getElementById('groundLbl1');
+    const groundBlock2 = document.getElementById('groundBlock2');
     groundLbl1.textContent = 'الأرضي';
     groundBlock2.style.display = 'none';
   }
@@ -1205,6 +1210,11 @@ function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
   const insMode = getInsulatorMode(currentVoltage, towerType);
   const svgFn = insMode === 'v' ? generateVShapeSVG : insMode === 'quad' ? generateQuadChainSVG : generateChainSVG;
+  // مزامنة r2/s2/t2 مع r1/s1/t1 (فقرة واحدة فقط تُعرض الآن)
+  ['r','s','t'].forEach(p => {
+    const v1 = document.getElementById('f_wires_'+p+'1').value;
+    document.getElementById('f_wires_'+p+'2').value = v1;
+  });
   const d = {
     line_name: document.getElementById('f_line_name').value,
     inspection_date: document.getElementById('f_inspection_date').value,
