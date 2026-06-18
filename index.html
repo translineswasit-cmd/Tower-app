@@ -721,8 +721,16 @@ async function sbFetch(path, options = {}) {
     'Authorization': `Bearer ${SUPABASE_KEY}`,
     ...options.headers
   };
-  const res = await fetch(url, { ...options, headers });
-  return res;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await fetch(url, { ...options, headers, signal: controller.signal });
+    clearTimeout(timeout);
+    return res;
+  } catch(e) {
+    clearTimeout(timeout);
+    throw e;
+  }
 }
 
 // ========================
@@ -844,7 +852,8 @@ async function doLogin() {
 
     enterApp();
   } catch (e) {
-    errBox.textContent = '⚠️ خطأ بالاتصال. تحقق من الإنترنت';
+    const msg = e.name === 'AbortError' ? '⚠️ انتهت مهلة الاتصال. أعد المحاولة' : '⚠️ خطأ بالاتصال: ' + e.message;
+    errBox.textContent = msg;
     errBox.classList.add('show');
     btn.disabled = false; btn.textContent = 'دخول';
   }
