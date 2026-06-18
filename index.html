@@ -1137,7 +1137,7 @@ function onLineChange() {
   updateWiresGroundUI();
 }
 
-function onTowerChange() {
+function onTowerChangeOriginal() {
   const sel = document.getElementById('f_tower_number');
   const opt = sel.selectedOptions[0];
   if (!opt || !opt.dataset.type) { document.getElementById('towerInfoBox').style.display='none'; document.getElementById('insulatorSection').style.display='none'; updateWiresGroundUI(); return; }
@@ -2423,9 +2423,8 @@ function loadPreviousInspection() {
 }
 
 // تعديل onTowerChange لتفعيل فحص الدورة
-const _origOnTowerChange = onTowerChange;
 function onTowerChange() {
-  _origOnTowerChange();
+  onTowerChangeOriginal();
   const lineName = document.getElementById('f_line_name').value;
   const towerNum = document.getElementById('f_tower_number').value;
   if (lineName && towerNum) checkPreviousInspection(lineName, towerNum);
