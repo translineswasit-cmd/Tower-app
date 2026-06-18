@@ -1127,7 +1127,7 @@ function onLineChange() {
   const towers = LINES_DATA[name];
   towers.forEach(t => {
     const o = document.createElement('option');
-    o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; tSel.appendChild(o);
+    o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code||''; tSel.appendChild(o);
   });
   tSel.disabled = false;
   const v = LINE_VOLTAGE[name];
@@ -1141,8 +1141,9 @@ function onTowerChangeOriginal() {
   const sel = document.getElementById('f_tower_number');
   const opt = sel.selectedOptions[0];
   if (!opt || !opt.dataset.type) { document.getElementById('towerInfoBox').style.display='none'; document.getElementById('insulatorSection').style.display='none'; updateWiresGroundUI(); return; }
-  const type = opt.dataset.type;
-  document.getElementById('f_tower_type').value = type;
+  const type = opt.dataset.type;       // النص العربي للعرض فقط (مثل "برج شد")
+  const typeCode = opt.dataset.typeCode || type; // الكود الحقيقي (XC/XD/S/T...) لمنطق التصنيف
+  document.getElementById('f_tower_type').value = typeCode;
   document.getElementById('towerTypeValue').textContent = type;
   document.getElementById('towerTypeDesc').textContent = TOWER_TYPES[type]||type;
   document.getElementById('towerInfoBox').style.display = 'block';
@@ -1203,9 +1204,14 @@ function updateWiresGroundUI() {
 // ========================
 // INSULATOR UI
 // ========================
+// خريطة عكسية: نص عربي → كود (للتوافق مع سجلات قديمة مخزنة بالنص بدل الكود)
+const TYPE_TEXT_TO_CODE_400 = { 'برج تعليق':'XA','برج عبور':'XB','برج شد':'XC','برج نهائي':'XD','برج تبادل أطوار':'XE' };
+const TYPE_TEXT_TO_CODE_132 = { 'برج تعليق':'S','برج شد':'T','برج خاص':'SP','برج عبور':'R','برج نهائي':'E','برج عبور اسفل الخطوط':'K','برج عبور اسفل الخط':'K' };
+
 function getInsulatorMode(voltage, towerType) {
   if (voltage === 400) {
-    return TOWER_CATEGORY_400[towerType] === 'شد' ? 'straight4' : 'v';
+    const code = TOWER_CATEGORY_400[towerType] ? towerType : TYPE_TEXT_TO_CODE_400[towerType];
+    return TOWER_CATEGORY_400[code] === 'شد' ? 'straight4' : 'v';
   }
   return 'chain';
 }
@@ -1760,7 +1766,7 @@ function lineEndpoints(lineName) {
 
 // Decide which towers count as "تستحق فحص حراري" (شد/نهائي لـ132، وما يعادلها لـ400)
 function isThermalRelevantTower(t, voltage) {
-  if (voltage === 400) return TOWER_CATEGORY_400[t.type] === 'شد';
+  if (voltage === 400) return TOWER_CATEGORY_400[(t.type_code||'').toUpperCase()] === 'شد';
   return TOWER_CATEGORY_132[(t.type_code||'').toUpperCase()] === 'شد';
 }
 
