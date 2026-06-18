@@ -192,6 +192,18 @@ tbody tr:hover { background: #F7FAFC; }
 @media (max-width: 900px) { .cards-grid { grid-template-columns: 1fr 1fr; } .admin-grid { grid-template-columns: 1fr; } .phases-wrap { gap: 12px; } }
 @media (max-width: 600px) { .grid-2,.grid-3 { grid-template-columns: 1fr; } .cards-grid { grid-template-columns: 1fr 1fr; } nav button { font-size: 0.7rem; padding: 8px 3px; } .page { padding: 10px; } }
 
+
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  nav, .btn, button { display: none !important; }
+  .page { display: block !important; }
+  .page:not(.active) { display: none !important; }
+  body { background: white; }
+  .form-card { box-shadow: none; border: 1px solid #ddd; }
+  #printHeader { display: block !important; }
+}
+#printHeader { display: none; }
+
 </style>
 </head>
 <body>
@@ -233,7 +245,7 @@ tbody tr:hover { background: #F7FAFC; }
     <button class="active" onclick="showPage('home',this)">🏠 الرئيسية</button>
     <button onclick="showPage('form',this)">➕ كشف جديد</button>
     <button onclick="showPage('records',this);loadRecords();">📋 السجلات</button>
-    <button onclick="showPage('lines',this);showLinesHome();">📊 بيانات الخطوط</button>
+    <button onclick="showPage('lines',this);showLinesHome();">📊 الخطوط</button>
     <button onclick="showPage('thermal',this);showThermalHome();">🌡️ الكشف الحراري</button>
     <button onclick="showPage('admin',this)">⚙️ الإدارة</button>
     <button onclick="showPage('account',this);loadAccountPage();">👤 الحساب</button>
@@ -307,7 +319,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="cards-grid">
     <div class="card" onclick="showPage('form',document.querySelectorAll('nav button')[1])"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" onclick="showPage('records',document.querySelectorAll('nav button')[2]);loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span><span class="sublabel">عرض جميع البيانات</span></div>
-    <div class="card" onclick="showPage('lines',document.querySelectorAll('nav button')[3]);showLinesHome();"><span class="icon">📊</span><span class="label">بيانات الخطوط</span><span class="sublabel">معلومات الخطوط والأبراج</span></div>
+    <div class="card" onclick="showPage('lines',document.querySelectorAll('nav button')[3]);showLinesHome();"><span class="icon">📊</span><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
     <div class="card" onclick="showPage('thermal',document.querySelectorAll('nav button')[4]);showThermalHome();"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" onclick="exportExcel()"><span class="icon">📊</span><span class="label">تصدير Excel</span><span class="sublabel">تحميل التقرير</span></div>
     <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[4])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
@@ -563,11 +575,12 @@ tbody tr:hover { background: #F7FAFC; }
 
 <!-- LINES DATA PAGE -->
 <div class="page" id="page-lines">
-  <div class="page-title">📊 بيانات الخطوط</div>
+  <div class="page-title">📊 الخطوط</div>
   <div id="linesHomeView">
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="showLinesInfo()">📋 بيانات الخطوط</button>
       <button class="btn btn-secondary" onclick="showLinesTowers()">🗼 الخطوط والأبراج</button>
+      <button class="btn btn-secondary" onclick="showLinesStatus()">📡 حالة الخطوط</button>
     </div>
   </div>
 
@@ -575,7 +588,11 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="linesInfoView" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="page-title" style="margin:0">📋 بيانات الخطوط</div>
-      <button class="btn btn-secondary btn-sm" onclick="showLinesHome()">⬅ رجوع</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="printLinesInfo()">🖨️ طباعة</button>
+        <button id="btnAddLine" class="btn btn-primary btn-sm" onclick="openAddLineModal()" style="display:none">➕ إضافة خط</button>
+        <button class="btn btn-secondary btn-sm" onclick="showLinesHome()">⬅ رجوع</button>
+      </div>
     </div>
     <div style="margin-bottom:10px">
       <select id="linesInfoFilter" onchange="renderLinesInfo()" style="padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;font-size:14px">
@@ -1919,24 +1936,35 @@ if ('serviceWorker' in navigator) {
 
 // ==================== LINES DATA PAGE ====================
 
+const LINES_INFO_KEY = 'lines_info_custom';
+function getLinesInfoData() {
+  try { const s = localStorage.getItem(LINES_INFO_KEY); if (s) return JSON.parse(s); } catch(e) {}
+  return JSON.parse(JSON.stringify(LINES_INFO));
+}
+function saveLinesInfoData(data) { localStorage.setItem(LINES_INFO_KEY, JSON.stringify(data)); }
+
 function showLinesHome() {
-  document.getElementById('linesHomeView').style.display = '';
-  document.getElementById('linesInfoView').style.display = 'none';
-  document.getElementById('linesTowersView').style.display = 'none';
+  ['linesHomeView','linesInfoView','linesTowersView','linesStatusView'].forEach((id,i) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = i===0 ? '' : 'none';
+  });
 }
 
 function showLinesInfo() {
-  document.getElementById('linesHomeView').style.display = 'none';
-  document.getElementById('linesInfoView').style.display = '';
-  document.getElementById('linesTowersView').style.display = 'none';
+  ['linesHomeView','linesInfoView','linesTowersView','linesStatusView'].forEach((id,i) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = i===1 ? '' : 'none';
+  });
+  const addBtn = document.getElementById('btnAddLine');
+  if (addBtn) addBtn.style.display = currentUser && currentUser.role === 'admin' ? '' : 'none';
   renderLinesInfo();
 }
 
 function showLinesTowers() {
-  document.getElementById('linesHomeView').style.display = 'none';
-  document.getElementById('linesInfoView').style.display = 'none';
-  document.getElementById('linesTowersView').style.display = '';
-  // Populate select
+  ['linesHomeView','linesInfoView','linesTowersView','linesStatusView'].forEach((id,i) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = i===2 ? '' : 'none';
+  });
   const sel = document.getElementById('linesTowersSelect');
   sel.innerHTML = '<option value="">-- اختر خطاً --</option>';
   const grouped = {'400 ك.ف': [], '132 ك.ف': []};
@@ -1949,47 +1977,51 @@ function showLinesTowers() {
     og.label = grp;
     grouped[grp].forEach(name => {
       const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      og.appendChild(opt);
+      opt.value = name; opt.textContent = name; og.appendChild(opt);
     });
     sel.appendChild(og);
   });
   document.getElementById('linesTowersBody').innerHTML = '';
 }
 
+function showLinesStatus() {
+  ['linesHomeView','linesInfoView','linesTowersView','linesStatusView'].forEach((id,i) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = i===3 ? '' : 'none';
+  });
+  renderLinesStatus();
+}
+
 function renderLinesInfo() {
   const filter = document.getElementById('linesInfoFilter').value;
   const body = document.getElementById('linesInfoBody');
-  let filtered = LINES_INFO.filter(l => filter === 'all' || String(l.voltage) === filter);
-  
-  if (filtered.length === 0) {
-    body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>';
-    return;
-  }
-
-  let html = '';
-  filtered.forEach(l => {
+  const data = getLinesInfoData();
+  let filtered = data.filter(l => filter === 'all' || String(l.voltage) === filter);
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  if (filtered.length === 0) { body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>'; return; }
+  let html = '<div id="printHeader" style="display:none;text-align:center;margin-bottom:20px"><h2 style="color:#1a2e4a">شبكة واسط لنقل الكهرباء</h2><h3>بيانات خطوط النقل</h3></div>';
+  filtered.forEach((l) => {
+    const idx = data.indexOf(l);
     const voltColor = l.voltage === 400 ? '#c0392b' : '#1a5276';
     const notes = l.notes && l.notes !== 'None' ? l.notes : '';
+    const editBtns = isAdmin ? `<div style="display:flex;gap:6px"><button class="btn btn-secondary btn-sm" onclick="editLine(${idx})">✏️</button><button class="btn btn-sm" style="background:#e74c3c;color:white;border:none;border-radius:6px;padding:4px 10px;cursor:pointer" onclick="deleteLine(${idx})">🗑️</button></div>` : '';
     html += `<div class="form-card" style="margin-bottom:12px;padding:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
         <div style="font-weight:700;font-size:15px;color:#1a2e4a">${l.name}</div>
-        <span style="background:${voltColor};color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">${l.voltage} ك.ف</span>
+        <div style="display:flex;align-items:center;gap:8px">${'<span style="background:'+voltColor+';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">'+l.voltage+' ك.ف</span>'} ${editBtns}</div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
-        <div><span style="color:#777">الطول:</span> <strong>${l.length || '-'} كم</strong></div>
-        <div><span style="color:#777">عدد الأبراج:</span> <strong>${l.towers || '-'}</strong></div>
-        <div><span style="color:#777">أبراج الشد:</span> <strong>${l.tension_towers || '-'}</strong></div>
-        <div><span style="color:#777">السعة:</span> <strong>${l.capacity || '-'} MVA</strong></div>
-        <div><span style="color:#777">نوع السلك:</span> <strong>${l.wire_type || '-'}</strong></div>
-        <div><span style="color:#777">السلك الأرضي:</span> <strong>${l.ground_wire || '-'}</strong></div>
-        <div><span style="color:#777">حدود المسؤولية:</span> <strong>${l.responsibility || '-'}</strong></div>
-        <div><span style="color:#777">سنة الدخول:</span> <strong>${l.year || '-'}</strong></div>
-        <div><span style="color:#777">الحالة:</span> <strong style="color:${l.status==='بالعمل'?'#1e8449':'#c0392b'}">${l.status || '-'}</strong></div>
-        ${l.phase_swap ? `<div><span style="color:#777">تبادل الطور:</span> <strong>${l.phase_swap}</strong></div>` : ''}
+        <div><span style="color:#777">الطول:</span> <strong>${l.length||'-'} كم</strong></div>
+        <div><span style="color:#777">عدد الأبراج:</span> <strong>${l.towers||'-'}</strong></div>
+        <div><span style="color:#777">أبراج الشد:</span> <strong>${l.tension_towers||'-'}</strong></div>
+        <div><span style="color:#777">السعة:</span> <strong>${l.capacity||'-'} MVA</strong></div>
+        <div><span style="color:#777">نوع السلك:</span> <strong>${l.wire_type||'-'}</strong></div>
+        <div><span style="color:#777">السلك الأرضي:</span> <strong>${l.ground_wire||'-'}</strong></div>
+        <div><span style="color:#777">حدود المسؤولية:</span> <strong>${l.responsibility||'-'}</strong></div>
+        <div><span style="color:#777">سنة الدخول:</span> <strong>${l.year||'-'}</strong></div>
+        <div><span style="color:#777">الحالة:</span> <strong style="color:${l.status==='بالعمل'?'#1e8449':'#c0392b'}">${l.status||'-'}</strong></div>
       </div>
-      ${notes ? `<div style="margin-top:8px;padding:8px;background:#fef9e7;border-radius:6px;font-size:12px;color:#7d6608"><strong>ملاحظة:</strong> ${notes}</div>` : ''}
+      ${notes?`<div style="margin-top:8px;padding:8px;background:#fef9e7;border-radius:6px;font-size:12px;color:#7d6608"><strong>ملاحظة:</strong> ${notes}</div>`:''}
     </div>`;
   });
   body.innerHTML = html;
@@ -1999,31 +2031,153 @@ function renderLinesTowers() {
   const lineName = document.getElementById('linesTowersSelect').value;
   const body = document.getElementById('linesTowersBody');
   if (!lineName) { body.innerHTML = ''; return; }
-  
   const towers = LINES_DATA[lineName];
-  if (!towers || towers.length === 0) {
-    body.innerHTML = '<div class="empty-state">لا توجد أبراج</div>';
-    return;
-  }
-
-  const typeColors = {
-    'برج نهائي': '#922b21', 'برج شد': '#1a5276', 'برج تعليق': '#1e8449',
-    'برج عبور': '#7d6608', 'برج خاص': '#6c3483'
-  };
-
-  let html = `<div style="margin-bottom:10px;color:#555;font-size:13px">إجمالي الأبراج: <strong>${towers.length}</strong></div>`;
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">';
+  if (!towers || !towers.length) { body.innerHTML = '<div class="empty-state">لا توجد أبراج</div>'; return; }
+  const typeColors = {'برج نهائي':'#922b21','برج شد':'#1a5276','برج تعليق':'#1e8449','برج عبور':'#7d6608','برج خاص':'#6c3483'};
+  let html = `<div style="margin-bottom:10px;color:#555;font-size:13px">إجمالي الأبراج: <strong>${towers.length}</strong></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">`;
   towers.forEach(t => {
     const color = typeColors[t.type] || '#2c3e50';
-    html += `<div style="border:1px solid #e0e0e0;border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-weight:700;color:#1a2e4a">برج ${t.num}</span>
-      <span style="font-size:11px;color:${color};font-weight:600">${t.type}</span>
-    </div>`;
+    html += `<div style="border:1px solid #e0e0e0;border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center"><span style="font-weight:700;color:#1a2e4a">برج ${t.num}</span><span style="font-size:11px;color:${color};font-weight:600">${t.type}</span></div>`;
   });
   html += '</div>';
   body.innerHTML = html;
 }
 
-</script>
-</body>
-</html>
+// حالة الخطوط
+function calcLineHealth(lineName) {
+  const allRecords = JSON.parse(localStorage.getItem('inspections_cache') || '[]');
+  const lineRecords = allRecords.filter(r => r.line_name === lineName);
+  if (lineRecords.length === 0) return null;
+  const towers = LINES_DATA[lineName] || [];
+  const totalTowers = towers.length;
+  const inspectedTowers = new Set(lineRecords.map(r => r.tower_number)).size;
+  const coverage = totalTowers > 0 ? (inspectedTowers / totalTowers) : 0;
+  let elIssues = 0, elTotal = 0, mechIssues = 0, mechTotal = 0;
+  lineRecords.forEach(r => {
+    ['wires_r','wires_s','wires_t','ground_r','ground_s','ground_t'].forEach(f => {
+      if (r[f] != null && r[f] !== '') { elTotal++; if (['خلل','ضعيف','تالف'].includes(r[f])) elIssues++; }
+    });
+    ['iron_intersections','tower_foundations','tower_attachments'].forEach(f => {
+      if (r[f] != null && r[f] !== '') { mechTotal++; if (['خلل','ضعيف','تالف','يحتاج صيانة'].includes(r[f])) mechIssues++; }
+    });
+  });
+  const baseEl = elTotal > 0 ? (1 - elIssues/elTotal) * 100 : 70;
+  const baseMech = mechTotal > 0 ? (1 - mechIssues/mechTotal) * 100 : 70;
+  const electricalScore = Math.round(baseEl * coverage + 50 * (1-coverage));
+  const mechanicalScore = Math.round(baseMech * coverage + 50 * (1-coverage));
+  return { coverage, inspectedTowers, totalTowers, electricalScore, mechanicalScore };
+}
+
+function makeBar(percent, color, label, sublabel) {
+  return `<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;background:#ecf0f1;border-radius:10px;height:18px;overflow:hidden"><div style="width:${percent}%;background:${color};height:100%;border-radius:10px"></div></div><div style="min-width:90px;text-align:right;font-weight:700;color:${color};font-size:13px">${label}% — ${sublabel}</div></div>`;
+}
+
+function renderLinesStatus() {
+  const filter = document.getElementById('linesStatusFilter').value;
+  const body = document.getElementById('linesStatusBody');
+  const data = getLinesInfoData();
+  let filtered = data.filter(l => filter === 'all' || String(l.voltage) === filter);
+  let html = '';
+  filtered.forEach(l => {
+    const voltColor = l.voltage === 400 ? '#c0392b' : '#1a5276';
+    const lineName = LINES_DATA[l.name+' 400 ك.ف'] ? l.name+' 400 ك.ف' : (LINES_DATA[l.name+' 132 ك.ف'] ? l.name+' 132 ك.ف' : null);
+    const health = lineName ? calcLineHealth(lineName) : null;
+    let statusBadge, elBar, mechBar;
+    if (!health) {
+      statusBadge = '<span style="background:#95a5a6;color:white;padding:3px 10px;border-radius:20px;font-size:11px">لم يتم الكشف</span>';
+      elBar = makeBar(0, '#95a5a6', '0', 'لم يتم الكشف');
+      mechBar = makeBar(0, '#95a5a6', '0', 'لم يتم الكشف');
+    } else {
+      const cov = Math.round(health.coverage*100);
+      statusBadge = cov >= 95 
+        ? '<span style="background:#1e8449;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف بالكامل</span>'
+        : `<span style="background:#2980b9;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف (${cov}%)</span>`;
+      const getColor = s => s>=80?'#1e8449':s>=60?'#f39c12':'#c0392b';
+      const getLbl = s => s>=80?'جيد':s>=60?'متوسط':'ضعيف';
+      elBar = makeBar(health.electricalScore, getColor(health.electricalScore), health.electricalScore, getLbl(health.electricalScore));
+      mechBar = makeBar(health.mechanicalScore, getColor(health.mechanicalScore), health.mechanicalScore, getLbl(health.mechanicalScore));
+    }
+    html += `<div class="form-card" style="margin-bottom:12px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">
+        <div style="font-weight:700;font-size:14px;color:#1a2e4a">${l.name}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:${voltColor};color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">${l.voltage} ك.ف</span> ${statusBadge}</div>
+      </div>
+      <div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الكهربائية</div>${elBar}</div>
+      <div><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الميكانيكية</div>${mechBar}</div>
+    </div>`;
+  });
+  body.innerHTML = html || '<div class="empty-state">لا توجد بيانات</div>';
+}
+
+function printLinesInfo() {
+  const ph = document.getElementById('printHeader');
+  if (ph) ph.style.display = 'block';
+  window.print();
+  setTimeout(() => { if (ph) ph.style.display = 'none'; }, 1000);
+}
+
+// Admin CRUD for LINES_INFO
+let editingLineIdx = null;
+
+function openAddLineModal() {
+  editingLineIdx = null;
+  document.getElementById('lineModalTitle').textContent = '➕ إضافة خط جديد';
+  ['lm_name','lm_length','lm_towers','lm_tension','lm_capacity','lm_wire','lm_ground','lm_year','lm_notes'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('lm_voltage').value = '132';
+  document.getElementById('lm_resp').value = 'الخط بالكامل';
+  document.getElementById('lm_status').value = 'بالعمل';
+  document.getElementById('lineModal').style.display = '';
+}
+
+function editLine(idx) {
+  const data = getLinesInfoData(); const l = data[idx]; if (!l) return;
+  editingLineIdx = idx;
+  document.getElementById('lineModalTitle').textContent = '✏️ تعديل بيانات الخط';
+  document.getElementById('lm_name').value = l.name||'';
+  document.getElementById('lm_voltage').value = String(l.voltage||132);
+  document.getElementById('lm_length').value = l.length||'';
+  document.getElementById('lm_towers').value = l.towers||'';
+  document.getElementById('lm_tension').value = l.tension_towers||'';
+  document.getElementById('lm_capacity').value = l.capacity||'';
+  document.getElementById('lm_wire').value = l.wire_type||'';
+  document.getElementById('lm_ground').value = l.ground_wire||'';
+  document.getElementById('lm_resp').value = l.responsibility||'الخط بالكامل';
+  document.getElementById('lm_year').value = l.year||'';
+  document.getElementById('lm_status').value = l.status||'بالعمل';
+  document.getElementById('lm_notes').value = l.notes||'';
+  document.getElementById('lineModal').style.display = '';
+}
+
+function deleteLine(idx) {
+  if (!confirm('هل تريد حذف هذا الخط؟')) return;
+  const data = getLinesInfoData(); data.splice(idx,1); saveLinesInfoData(data); renderLinesInfo();
+}
+
+function closeLineModal() { document.getElementById('lineModal').style.display = 'none'; }
+
+function saveLineModal() {
+  const name = document.getElementById('lm_name').value.trim();
+  if (!name) { alert('يرجى إدخال اسم الخط'); return; }
+  const data = getLinesInfoData();
+  const entry = {
+    idx: editingLineIdx !== null ? data[editingLineIdx].idx : Date.now(),
+    voltage: parseInt(document.getElementById('lm_voltage').value),
+    name, phase_swap: null,
+    length: parseFloat(document.getElementById('lm_length').value)||null,
+    towers: parseInt(document.getElementById('lm_towers').value)||null,
+    tension_towers: parseInt(document.getElementById('lm_tension').value)||null,
+    capacity: parseInt(document.getElementById('lm_capacity').value)||null,
+    wire_type: document.getElementById('lm_wire').value.trim(),
+    ground_wire: document.getElementById('lm_ground').value.trim(),
+    responsibility: document.getElementById('lm_resp').value,
+    year: parseInt(document.getElementById('lm_year').value)||null,
+    status: document.getElementById('lm_status').value,
+    notes: document.getElementById('lm_notes').value.trim()
+  };
+  if (editingLineIdx !== null) data[editingLineIdx] = entry; else data.push(entry);
+  saveLinesInfoData(data); closeLineModal(); renderLinesInfo();
+  showToast('✅ تم حفظ بيانات الخط');
+}
+
