@@ -790,6 +790,24 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
     <div id="linesStatusBody"></div>
   </div>
+
+  <!-- تفاصيل أبراج الخط (الضغط على اسم الخط بحالة الخطوط) -->
+  <div id="lineTowerListView" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div class="page-title" id="lineTowerListTitle" style="margin:0">🗼 أبراج الخط</div>
+      <button class="btn btn-secondary btn-sm" onclick="backToLinesStatus()">⬅ رجوع</button>
+    </div>
+    <div id="lineTowerListBody"></div>
+  </div>
+
+  <!-- تفاصيل برج واحد (عوازل + وصف كامل) -->
+  <div id="towerDetailView" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div class="page-title" id="towerDetailTitle" style="margin:0">🗼 تفاصيل البرج</div>
+      <button class="btn btn-secondary btn-sm" onclick="backToTowerList()">⬅ رجوع</button>
+    </div>
+    <div id="towerDetailBody"></div>
+  </div>
 </div>
 
 <!-- Modal: Add/Edit Line -->
@@ -1423,6 +1441,29 @@ function generateVShapeSVG(state) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
+// نسخة ثلاثية الألوان من V-shape — لسجل المعالجات: أبيض=سليم، أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة
+function generateVShapeSVG3Color(state, treatedIdx) {
+  const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const treatedSet = new Set(treatedIdx||[]);
+  let rects='';
+  function makeRect(cx,cy,angle,idx){
+    const ca=Math.cos(angle),sa=Math.sin(angle);
+    const corners=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]];
+    const pts=corners.map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)].join(',')).join(' ');
+    let fill='white', stroke='#555';
+    if (treatedSet.has(idx)) { fill='#48BB78'; stroke='#276749'; }
+    else if (state[idx]) { fill='#FC4444'; stroke='#9B0000'; }
+    return `<polygon points="${pts}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`;
+  }
+  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
+  for(let i=0;i<N;i++){
+    const t=i/(N-1);
+    rects+=makeRect(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i);
+    rects+=makeRect(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
+}
+
 function generateChainSVG(state, cols, rows) {
   cols = cols || 2; rows = rows || 12;
   let rects=''; const w=18,h=14,gap=2,colGap=6;
@@ -1456,6 +1497,26 @@ function generateSingleChainSVG(state, rows) {
     rects+=`<rect x="0" y="${y}" width="${w}" height="${h}" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
   }
   const svgW=w, svgH=rows*(h+gap)-gap;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
+}
+
+// نسخة ثلاثية الألوان عامة (تدعم 1، 2، أو 4 أعمدة) — لسجل المعالجات
+// أبيض=سليم، أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة
+function generateChainSVG3Color(state, treatedIdx, cols, rows) {
+  cols = cols || 2; rows = rows || 12;
+  const treatedSet = new Set(treatedIdx||[]);
+  const isQuad = cols >= 4;
+  const w = isQuad ? 11 : 18, h = isQuad ? 8 : 14, gap = isQuad ? 1.2 : 2, colGap = isQuad ? 3.5 : 6;
+  let rects='';
+  for(let col=0;col<cols;col++) for(let row=0;row<rows;row++){
+    const idx=col*rows+row, x=col*(w+colGap), y=row*(h+gap);
+    let fill='white', stroke='#555';
+    if (treatedSet.has(idx)) { fill='#48BB78'; stroke='#276749'; }
+    else if (state[idx]) { fill='#FC4444'; stroke='#9B0000'; }
+    const rx = isQuad ? 1.5 : 2, sw = isQuad ? 1 : 1.5;
+    rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+  }
+  const svgW=cols*w+(cols-1)*colGap, svgH=rows*(h+gap)-gap;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
@@ -2307,11 +2368,13 @@ function showLinesTowers() {
   document.getElementById('linesTowersBody').innerHTML = '';
 }
 
-function showLinesStatus() {
+async function showLinesStatus() {
   document.getElementById('linesHomeView').style.display = 'none';
   document.getElementById('linesInfoView').style.display = 'none';
   document.getElementById('linesTowersView').style.display = 'none';
   document.getElementById('linesStatusView').style.display = '';
+  document.getElementById('linesStatusBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  if (!treatmentsCache || !treatmentsCache.length) await loadTreatments();
   renderLinesStatus();
 }
 
@@ -2399,7 +2462,7 @@ function renderLinesStatus() {
   filtered.forEach(l => {
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
     const lineName = LINES_DATA[l.name+' 400 ك.ف'] ? l.name+' 400 ك.ف' : (LINES_DATA[l.name+' 132 ك.ف'] ? l.name+' 132 ك.ف' : null);
-    const health = lineName ? calcLineHealth(lineName) : null;
+    const health = lineName ? calcLineHealthWithTreatments(lineName) : null;
     let badge, elBar, mBar;
     const getColor = s => s>=80?'#1e8449':s>=60?'#f39c12':'#c0392b';
     const getLbl = s => s>=80?'جيد':s>=60?'متوسط':'ضعيف';
@@ -2413,9 +2476,10 @@ function renderLinesStatus() {
       elBar = makeBar(health.electricalScore, getColor(health.electricalScore), getLbl(health.electricalScore));
       mBar = makeBar(health.mechanicalScore, getColor(health.mechanicalScore), getLbl(health.mechanicalScore));
     }
+    const clickAttr = lineName ? ` onclick="openLineTowerDetails('${lineName.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
     html += '<div class="form-card" style="margin-bottom:12px;padding:14px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">' +
-      '<div style="font-weight:700;font-size:14px;color:#1a2e4a">' + l.name + '</div>' +
+      '<div' + clickAttr + ' style="font-weight:700;font-size:14px;color:#1a5276;' + (lineName?'text-decoration:underline;':'') + '">' + l.name + (lineName?' 🔍':'') + '</div>' +
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:' + vc + ';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">' + l.voltage + ' ك.ف</span>' + badge + '</div></div>' +
       '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الكهربائية</div>' + elBar + '</div>' +
       '<div><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الميكانيكية</div>' + mBar + '</div></div>';
@@ -2424,6 +2488,278 @@ function renderLinesStatus() {
 }
 
 function printLinesInfo() { window.print(); }
+
+// ========================
+// تفاصيل أبراج الخط (الضغط على اسم الخط بحالة الخطوط)
+// ========================
+let currentDrilldownLine = null;
+
+async function openLineTowerDetails(lineName) {
+  currentDrilldownLine = lineName;
+  document.getElementById('linesStatusView').style.display = 'none';
+  document.getElementById('lineTowerListView').style.display = '';
+  document.getElementById('lineTowerListTitle').textContent = '🗼 أبراج خط ' + lineName;
+  document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  if (!treatmentsCache || !treatmentsCache.length) await loadTreatments();
+  renderLineTowerList(lineName);
+}
+
+function backToLinesStatus() {
+  document.getElementById('lineTowerListView').style.display = 'none';
+  document.getElementById('linesStatusView').style.display = '';
+}
+
+function backToTowerList() {
+  document.getElementById('towerDetailView').style.display = 'none';
+  document.getElementById('lineTowerListView').style.display = '';
+}
+
+function renderLineTowerList(lineName) {
+  const body = document.getElementById('lineTowerListBody');
+  const towers = LINES_DATA[lineName] || [];
+  const latestRecs = getLatestRecordsPerTower(lineName);
+  const recByTower = {}; latestRecs.forEach(r => { recByTower[r.tower_number] = r; });
+
+  if (!towers.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات أبراج لهذا الخط</div>'; return; }
+
+  let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
+  towers.forEach(t => {
+    const r = recByTower[t.num];
+    let statusBadge, borderColor;
+    if (!r) {
+      statusBadge = '⚪ لم يُكشف'; borderColor = '#BDC3C7';
+    } else {
+      const deps = extractDepsFromRecord(r);
+      const allTreated = deps.length > 0 && isFullyTreated(r.id, deps);
+      if (!deps.length) { statusBadge = '✅ سليم'; borderColor = '#48BB78'; }
+      else if (allTreated) { statusBadge = '✅ معالج'; borderColor = '#48BB78'; }
+      else { statusBadge = '🔴 مغادرات'; borderColor = '#FC4444'; }
+    }
+    html += `<div onclick="openTowerDetail('${lineName.replace(/'/g,"\\'")}','${t.num}')"
+      style="cursor:pointer;border:2px solid ${borderColor};border-radius:10px;padding:10px;text-align:center;background:white">
+      <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${t.num}</div>
+      <div style="font-size:0.72rem;color:#718096;margin:2px 0">${t.type||''}</div>
+      <div style="font-size:0.78rem;font-weight:700">${statusBadge}</div>
+    </div>`;
+  });
+  html += '</div>';
+  body.innerHTML = html;
+}
+
+// ========================
+// صفحة تفاصيل برج واحد (مزيج الكشف + المعالجات)
+// ========================
+async function openTowerDetail(lineName, towerNum) {
+  document.getElementById('lineTowerListView').style.display = 'none';
+  document.getElementById('towerDetailView').style.display = '';
+  document.getElementById('towerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
+  document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  if (!treatmentsCache || !treatmentsCache.length) await loadTreatments();
+  renderTowerDetail(lineName, towerNum);
+}
+
+function renderTowerDetail(lineName, towerNum) {
+  const body = document.getElementById('towerDetailBody');
+  const latestRecs = getLatestRecordsPerTower(lineName);
+  const r = latestRecs.find(x => String(x.tower_number) === String(towerNum));
+
+  if (!r) { body.innerHTML = '<div class="empty-state">لم يتم كشف هذا البرج بعد</div>'; return; }
+
+  const voltage = r.voltage || LINE_VOLTAGE[lineName] || 132;
+  const mode = getInsulatorMode(voltage, r.tower_type||'', lineName);
+  const [stA, stB] = lineEndpoints(lineName);
+
+  let html = `<div class="form-card" style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="font-weight:700;color:#1a2e4a">📋 آخر كشف</div>
+      <div style="font-size:0.78rem;color:#718096">📅 ${r.inspection_date} | 👤 ${r.created_by_name||'—'}</div>
+    </div>
+    <div style="font-size:0.85rem;color:#4A5568;margin-top:6px">نوع البرج: <strong>${TOWER_TYPES[r.tower_type]||r.tower_type||'—'}</strong> | الجهد: <strong>${voltage} ك.ف</strong></div>
+  </div>`;
+
+  // العوازل التفاعلية (للعرض فقط — readonly)
+  if (r.insulator_state) {
+    let state;
+    try { state = JSON.parse(r.insulator_state); } catch(e) { state = null; }
+    if (state) {
+      // نطرح المعالجات المرتبطة بهذا السجل
+      const towerTreatments = treatmentsCache.filter(t => t.inspection_id === r.id);
+      const treatedIdx = { R: [], S: [], T: [] };
+      towerTreatments.forEach(t => {
+        (t.items_treated||[]).forEach(item => {
+          const m = item.key && item.key.match(/^ins_([RST])$/);
+          if (m) {
+            // نحسب الفرق بين قبل وبعد لتحديد المؤشرات المعالجة بدقة
+            try {
+              const before = JSON.parse(t.insulator_state_before||'{}');
+              const after = JSON.parse(t.insulator_state_after||'{}');
+              const phase = m[1];
+              (before[phase]||[]).forEach((wasDamaged, i) => {
+                if (wasDamaged && after[phase] && !after[phase][i]) treatedIdx[phase].push(i);
+              });
+            } catch(e) {}
+          }
+        });
+      });
+
+      html += `<div class="form-card" style="margin-bottom:14px">
+        <h3>🔘 العوازل</h3>
+        <div class="insulator-legend" style="margin-bottom:10px">
+          <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
+          <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
+          <div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">تمت معالجته</span></div>
+        </div>
+        <div id="towerDetailInsulators" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>
+      </div>`;
+
+      setTimeout(() => renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB), 10);
+    }
+  }
+
+  // باقي عناصر الكشف (نص) مع حالة المعالجة
+  const textFields = [
+    ['iron_intersections', 'تقاطعات الحديد'],
+    ['tower_foundations', 'قواعد البرج'],
+    ['tower_attachments', 'ملحقات البرج'],
+    ['wires_r1', 'أسلاك R'], ['wires_s1', 'أسلاك S'], ['wires_t1', 'أسلاك T'],
+    ['ground_1', 'الأرضي 1'], ['ground_2', 'الأرضي 2'],
+    ['fire_causes', 'مسببات الحرائق'], ['road_access', 'الطريق'], ['notes', 'ملاحظات']
+  ];
+  html += `<div class="form-card"><h3>📝 تفاصيل الكشف</h3><div style="display:flex;flex-direction:column;gap:8px">`;
+  let hasAny = false;
+  textFields.forEach(([field, label]) => {
+    const val = r[field];
+    if (val == null || val === '' || val === 'سليم') return;
+    hasAny = true;
+    const key = field === 'iron_intersections' ? 'iron' : field === 'tower_foundations' ? 'foundation' : field === 'tower_attachments' ? 'attachment' :
+      field.startsWith('wires_') ? 'wire_' + field.replace('wires_','') : field;
+    const treated = isTreatedInDB(r.id, key);
+    const color = treated ? '#48BB78' : '#FC4444';
+    const icon = treated ? '✅' : '🔴';
+    html += `<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;padding:8px;background:#F8FAFC;border-radius:8px;border-right:3px solid ${color}">
+      <div><strong style="color:#2E4057">${label}:</strong> <span style="color:#4A5568">${val}</span></div>
+      <span style="font-size:0.78rem;font-weight:700;color:${color};white-space:nowrap">${icon} ${treated?'معالج':'قيد المعالجة'}</span>
+    </div>`;
+  });
+  if (!hasAny) html += '<div class="empty-state" style="padding:10px">✅ لا توجد ملاحظات — البرج بحالة سليمة</div>';
+  html += '</div></div>';
+
+  body.innerHTML = html;
+}
+
+// رسم عرض القراءة فقط (readonly) للعوازل بصفحة تفاصيل البرج
+function renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB) {
+  const wrap = document.getElementById('towerDetailInsulators');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  ['R','S','T'].forEach(phase => {
+    const block = document.createElement('div');
+    block.style.display = 'flex'; block.style.flexDirection = 'column'; block.style.alignItems = 'center'; block.style.gap = '4px';
+    const lbl = document.createElement('div'); lbl.textContent = 'الفيز ' + phase;
+    lbl.style.fontWeight = '700'; lbl.style.color = '#2E4057'; lbl.style.fontSize = '0.85rem';
+    block.appendChild(lbl);
+    const phaseState = state[phase] || [];
+    const phaseTreated = treatedIdx[phase] || [];
+    let el;
+    if (mode === 'v') el = renderReadonlyV(phaseState, phaseTreated);
+    else if (mode === 'straight4') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 32, stA, stB);
+    else if (mode === 'chain4_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 12, stA, stB);
+    else if (mode === 'chain2_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 2, 12, stA, stB);
+    else if (mode === 'chain1_10') el = renderReadonlySingle(phaseState, phaseTreated, 10);
+    else el = renderReadonlyChain(phaseState, phaseTreated, 2, mode==='chain2_10'?10:12);
+    block.appendChild(el);
+    wrap.appendChild(block);
+  });
+}
+
+function rectColor(damaged, treated) {
+  if (treated) return ['#48BB78','#276749'];
+  if (damaged) return ['#FC4444','#9B0000'];
+  return ['white','#555'];
+}
+
+function renderReadonlyChain(state, treatedIdx, cols, rows) {
+  const treatedSet = new Set(treatedIdx);
+  const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
+  for (let col=0; col<cols; col++) {
+    const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
+    for (let row=0; row<rows; row++) {
+      const idx = col*rows+row;
+      const rect = document.createElement('div'); rect.className = 'ins-rect';
+      const [bg, border] = rectColor(state[idx], treatedSet.has(idx));
+      rect.style.background = bg; rect.style.borderColor = border;
+      colDiv.appendChild(rect);
+    }
+    wrap.appendChild(colDiv);
+  }
+  return wrap;
+}
+
+function renderReadonlySingle(state, treatedIdx, rows) {
+  const treatedSet = new Set(treatedIdx);
+  const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
+  const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
+  for (let row=0; row<rows; row++) {
+    const rect = document.createElement('div'); rect.className = 'ins-rect';
+    const [bg, border] = rectColor(state[row], treatedSet.has(row));
+    rect.style.background = bg; rect.style.borderColor = border;
+    colDiv.appendChild(rect);
+  }
+  wrap.appendChild(colDiv);
+  return wrap;
+}
+
+function renderReadonlyGrouped(state, treatedIdx, totalCols, rows, stA, stB) {
+  const treatedSet = new Set(treatedIdx);
+  const colsPerGroup = totalCols / 2;
+  const outer = document.createElement('div');
+  outer.style.display = 'flex'; outer.style.flexDirection = 'column'; outer.style.alignItems = 'center'; outer.style.gap = '4px';
+  const groupsWrap = document.createElement('div'); groupsWrap.style.display = 'flex'; groupsWrap.style.gap = '16px';
+  function buildGroup(label, colOffset) {
+    const gWrap = document.createElement('div'); gWrap.style.display='flex'; gWrap.style.flexDirection='column'; gWrap.style.alignItems='center'; gWrap.style.gap='4px';
+    const lbl = document.createElement('div'); lbl.textContent = label;
+    lbl.style.fontSize='0.68rem'; lbl.style.fontWeight='700'; lbl.style.color='#4A5568';
+    lbl.style.background='#EBF0F5'; lbl.style.padding='2px 8px'; lbl.style.borderRadius='10px'; lbl.style.whiteSpace='nowrap';
+    gWrap.appendChild(lbl);
+    const colsWrap = document.createElement('div'); colsWrap.style.display='flex'; colsWrap.style.gap='6px';
+    for (let c=0; c<colsPerGroup; c++) {
+      const col = c+colOffset, colDiv = document.createElement('div'); colDiv.className='chain-col';
+      for (let row=0; row<rows; row++) {
+        const idx = col*rows+row;
+        const rect = document.createElement('div'); rect.className='ins-rect';
+        const [bg, border] = rectColor(state[idx], treatedSet.has(idx));
+        rect.style.background = bg; rect.style.borderColor = border;
+        colDiv.appendChild(rect);
+      }
+      colsWrap.appendChild(colDiv);
+    }
+    gWrap.appendChild(colsWrap);
+    return gWrap;
+  }
+  groupsWrap.appendChild(buildGroup('🏭 جهة ' + (stA||'محطة A'), 0));
+  groupsWrap.appendChild(buildGroup('🏭 جهة ' + (stB||'محطة B'), colsPerGroup));
+  outer.appendChild(groupsWrap);
+  return outer;
+}
+
+function renderReadonlyV(state, treatedIdx) {
+  const treatedSet = new Set(treatedIdx);
+  const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('width',svgW); svg.setAttribute('height',svgH); svg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
+  function addP(cx,cy,angle,idx) {
+    const ca=Math.cos(angle),sa=Math.sin(angle);
+    const pts=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]].map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)]);
+    const el=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    el.setAttribute('points',pts.map(p=>p.join(',')).join(' '));
+    const [fill, stroke] = rectColor(state[idx], treatedSet.has(idx));
+    el.setAttribute('fill',fill); el.setAttribute('stroke',stroke); el.setAttribute('stroke-width','0.8');
+    svg.appendChild(el);
+  }
+  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
+  for(let i=0;i<N;i++){const t=i/(N-1); addP(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);}
+  return svg;
+}
 
 let editingLineIdx = null;
 
@@ -2487,56 +2823,86 @@ function saveLineModal() {
 }
 
 // ========================
-// INSPECTION CYCLE SYSTEM (60 days)
+// INSPECTION REVIEW SYSTEM (بدون قيد زمني — كل كشف سابق يظهر)
 // ========================
-const CYCLE_DAYS = 60;
-
-function isWithinCycle(dateStr) {
-  if (!dateStr) return false;
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diffDays = (now - d) / (1000 * 60 * 60 * 24);
-  return diffDays <= CYCLE_DAYS;
-}
 
 let previousInspectionForLoad = null;
+let previousTreatmentsForLoad = [];
 
 async function checkPreviousInspection(lineName, towerNumber) {
   const banner = document.getElementById('incompleteBanner');
   previousInspectionForLoad = null;
+  previousTreatmentsForLoad = [];
   if (!lineName || !towerNumber) { banner.style.display = 'none'; return; }
   try {
     const res = await sbFetch(`inspections?line_name=eq.${encodeURIComponent(lineName)}&tower_number=eq.${encodeURIComponent(towerNumber)}&order=inspection_date.desc&limit=1`);
     const data = await res.json();
     if (!data.length) { banner.style.display = 'none'; return; }
     const last = data[0];
-    // لو الكشف الأخير ضمن الدورة وناقص وهو مو نفس السجل اللي نعدله
-    if (isWithinCycle(last.inspection_date) && last.id !== editId) {
-      previousInspectionForLoad = last;
-      const msg = `الموظف ${last.created_by_name||'—'} كشف هذا البرج بتاريخ ${last.inspection_date} — يمكنك تحميل الكشف للإكمال أو الإضافة عليه`;
-      document.getElementById('incompleteBannerMsg').textContent = msg;
-      banner.style.display = 'block';
-    } else {
-      banner.style.display = 'none';
-    }
+    if (last.id === editId) { banner.style.display = 'none'; return; } // نفس السجل اللي نعدله حالياً
+
+    previousInspectionForLoad = last;
+
+    // نجيب المعالجات المرتبطة بهذا الكشف السابق
+    let treatMsg = '';
+    try {
+      const tRes = await sbFetch(`treatments?inspection_id=eq.${last.id}&order=created_at.desc`);
+      const tData = await tRes.json();
+      previousTreatmentsForLoad = tData || [];
+      if (tData.length) {
+        const items = tData.flatMap(t => (t.items_treated||[]).map(i => i.label)).join('، ');
+        treatMsg = ` | 🔧 تمت معالجة: ${items} بتاريخ ${tData[0].treatment_date} من ${tData[0].treated_by||'—'}`;
+      }
+    } catch(e) {}
+
+    const msg = `الموظف ${last.created_by_name||'—'} كشف هذا البرج بتاريخ ${last.inspection_date}${treatMsg}`;
+    document.getElementById('incompleteBannerMsg').textContent = msg;
+    banner.style.display = 'block';
   } catch { banner.style.display = 'none'; }
 }
 
 function loadPreviousInspection() {
   if (!previousInspectionForLoad) return;
   const r = previousInspectionForLoad;
-  // نحمل بياناته بالفورم للإكمال — بدون تغيير editId (يُحفظ كسجل جديد)
-  setFormData(r);
-  // نضيف بالملاحظات أنه إكمال
+
+  // نحسب حالة العوازل بعد طرح كل العناصر المعالجة (تتحول سليمة/أبيض)
+  let mergedInsulatorState = null;
+  if (r.insulator_state) {
+    try {
+      mergedInsulatorState = JSON.parse(r.insulator_state);
+      // أحدث معالجة لكل فيز تحتوي insulator_state_after — نطبقها إذا موجودة
+      previousTreatmentsForLoad.forEach(t => {
+        if (t.insulator_state_after) {
+          try {
+            const after = JSON.parse(t.insulator_state_after);
+            ['R','S','T'].forEach(phase => {
+              if (after[phase]) mergedInsulatorState[phase] = after[phase];
+            });
+          } catch(e) {}
+        }
+      });
+    } catch(e) { mergedInsulatorState = null; }
+  }
+
+  const rForLoad = { ...r, insulator_state: mergedInsulatorState ? JSON.stringify(mergedInsulatorState) : r.insulator_state };
+
+  // نحمل بياناته بالفورم للإكمال — بدون تغيير editId (يُحفظ كسجل جديد بالأرشيف)
+  setFormData(rForLoad);
+
+  // نضيف بالملاحظات ملخص الكشف السابق والمعالجات
   const notesEl = document.getElementById('f_notes');
   const existingNotes = notesEl.value.trim();
-  const addNote = `إكمال كشف — الكشف الأصلي بتاريخ ${r.inspection_date} من ${r.created_by_name||'—'}`;
+  let addNote = `كشف سابق بتاريخ ${r.inspection_date} من ${r.created_by_name||'—'}`;
+  if (previousTreatmentsForLoad.length) {
+    const items = previousTreatmentsForLoad.flatMap(t => (t.items_treated||[]).map(i => i.label)).join('، ');
+    addNote += ` — تمت معالجة: ${items}`;
+  }
   notesEl.value = existingNotes ? existingNotes + '\n' + addNote : addNote;
   document.getElementById('incompleteBanner').style.display = 'none';
-  showToast('✅ تم تحميل بيانات الكشف السابق — أكمل التعديل وحفظ');
+  showToast('✅ تم تحميل الكشف السابق (بعد المعالجات) — راجع وأكمل ثم احفظ');
 }
 
-// تعديل onTowerChange لتفعيل فحص الدورة
+// تعديل onTowerChange لتفعيل فحص الكشف السابق (بدون قيد زمني)
 function onTowerChange() {
   onTowerChangeOriginal();
   const lineName = document.getElementById('f_line_name').value;
@@ -2818,6 +3184,7 @@ async function saveTreatment() {
   const now = new Date().toISOString().split('T')[0];
   const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
   const stateAfter = JSON.parse(JSON.stringify(treatInsulatorState));
+  const treatedIndices = { R: [], S: [], T: [] }; // مؤشرات العوازل المعالجة بهذي الجلسة (تظهر أخضر بالسجل)
   const items_treated = [];
 
   // اقرأ العوازل المعالجة (الأخضر)
@@ -2828,9 +3195,9 @@ async function saveTreatment() {
       const phase = ['R','S','T'][pi]; if (!phase) return;
       let treatedCount = 0;
       if (mode === 'v') {
-        block.querySelectorAll('polygon').forEach((el,i) => { if(el.getAttribute('fill')==='#48BB78'){stateAfter[phase][i]=false; treatedCount++;} });
+        block.querySelectorAll('polygon').forEach((el,i) => { if(el.getAttribute('fill')==='#48BB78'){stateAfter[phase][i]=false; treatedIndices[phase].push(i); treatedCount++;} });
       } else {
-        block.querySelectorAll('.ins-rect').forEach((el,i) => { if(el.style.background==='rgb(72, 187, 120)'){stateAfter[phase][i]=false; treatedCount++;} });
+        block.querySelectorAll('.ins-rect').forEach((el,i) => { if(el.style.background==='rgb(72, 187, 120)'){stateAfter[phase][i]=false; treatedIndices[phase].push(i); treatedCount++;} });
       }
       if (treatedCount > 0) items_treated.push({key:`ins_${phase}`, label:`عوازل الفيز ${phase}`, count: treatedCount});
     });
@@ -2846,6 +3213,7 @@ async function saveTreatment() {
 
   if (!items_treated.length) { showToast('⚠️ لم تحدد أي عنصر للمعالجة', 'error'); return; }
 
+  // SVG عادي (للأرشيف العام: أحمر/أبيض) — يُستخدم بحقول insulator_svg_x
   function svgForMode(state) {
     if (mode === 'v') return generateVShapeSVG(state);
     if (mode === 'straight4') return generateQuadChainSVG(state, 4, 32);
@@ -2854,6 +3222,18 @@ async function saveTreatment() {
     if (mode === 'chain2_10') return generateChainSVG(state, 2, 10);
     if (mode === 'chain1_10') return generateSingleChainSVG(state, 10);
     return generateChainSVG(state, 2, 12);
+  }
+  // SVG ثلاثي الألوان (لسجل المعالجات: أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة، أبيض=سليم)
+  function svg3ColorForMode(state, treatedIdx) {
+    const dims = mode === 'v' ? null
+      : mode === 'straight4' ? [4,32]
+      : mode === 'chain4_12' ? [4,12]
+      : mode === 'chain2_12' ? [2,12]
+      : mode === 'chain2_10' ? [2,10]
+      : mode === 'chain1_10' ? [1,10]
+      : [2,12];
+    if (mode === 'v') return generateVShapeSVG3Color(state, treatedIdx);
+    return generateChainSVG3Color(state, treatedIdx, dims[0], dims[1]);
   }
   const treatment = {
     inspection_id: r.id,
@@ -2865,9 +3245,9 @@ async function saveTreatment() {
     treatment_date: now,
     insulator_state_before: r.insulator_state,
     insulator_state_after: JSON.stringify(stateAfter),
-    insulator_svg_r: svgForMode(stateAfter.R||[]),
-    insulator_svg_s: svgForMode(stateAfter.S||[]),
-    insulator_svg_t: svgForMode(stateAfter.T||[]),
+    insulator_svg_r: svg3ColorForMode(treatInsulatorState.R||[], treatedIndices.R),
+    insulator_svg_s: svg3ColorForMode(treatInsulatorState.S||[], treatedIndices.S),
+    insulator_svg_t: svg3ColorForMode(treatInsulatorState.T||[], treatedIndices.T),
     items_treated: items_treated,
     notes: ''
   };
@@ -2952,11 +3332,24 @@ async function renderDepLog() {
   }).join('');
 }
 
-function calcLineHealthWithTreatments(lineName) {
+// يرجع آخر سجل كشف فقط لكل برج بخط معين (الحقيقة المعتمدة لحالة البرج)
+function getLatestRecordsPerTower(lineName) {
   const rec = records.filter(r => r.line_name === lineName);
+  const byTower = {};
+  rec.forEach(r => {
+    const key = r.tower_number;
+    if (!byTower[key] || (r.inspection_date||'') > (byTower[key].inspection_date||'')) {
+      byTower[key] = r;
+    }
+  });
+  return Object.values(byTower);
+}
+
+function calcLineHealthWithTreatments(lineName) {
+  const rec = getLatestRecordsPerTower(lineName);
   if (!rec.length) return null;
   const towers = LINES_DATA[lineName]||[];
-  const coverage = towers.length>0 ? new Set(rec.map(r=>r.tower_number)).size/towers.length : 0;
+  const coverage = towers.length>0 ? rec.length/towers.length : 0;
   let elIss=0, elTot=0, mIss=0, mTot=0;
   rec.forEach(r => {
     if (r.insulator_state) {
