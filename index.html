@@ -490,7 +490,12 @@ tbody tr:hover { background: #F7FAFC; }
       <label>&nbsp;</label>
       <button class="btn btn-secondary" onclick="clearFilters()">🔄 مسح التصفية</button>
     </div>
+    <div class="field" style="justify-content:flex-end">
+      <label>&nbsp;</label>
+      <button class="btn btn-primary" onclick="searchOlderRecords()" title="يبحث بكل الأرشيف وليس فقط آخر 6 أشهر — يحتاج اتصال بالإنترنت">🔍 بحث موسّع (كل الأرشيف)</button>
+    </div>
   </div>
+  <p style="color:#718096;font-size:0.78rem;margin-top:-4px;margin-bottom:10px">ℹ️ يُعرض افتراضياً آخر 6 أشهر فقط لتحسين سرعة التحميل. لبيانات أقدم، حدد تاريخ "من" واضغط "بحث موسّع".</p>
 
   <div class="table-wrap">
 
@@ -1116,6 +1121,8 @@ let insulatorState = { R: [], S: [], T: [] };
 let currentVoltage = 0;
 let editId = null, deleteId = null, deleteUserId = null;
 let records = [], filteredRecords = [];
+let fullRecordsCache = []; // كاش كامل (بدون قيد 6 أشهر) — خاص بحالة الخطوط والمغادرات فقط، يضمن دقة "آخر كشف لكل برج"
+let fullRecordsCacheLoadedAt = null;
 let allUsers = [];
 
 const DB_KEY = 'tower_inspections_cache';
@@ -1858,11 +1865,33 @@ async function syncQueue() {
 let currentPage = 1;
 const PAGE_SIZE = 50;
 
+// يحمّل كل السجلات (بدون قيد 6 أشهر) — يُستخدم فقط لحالة الخطوط والمغادرات لضمان دقة "آخر كشف لكل برج"
+// يُعاد التحميل فقط لو مر أكثر من دقيقتين عن آخر تحميل، لتقليل الطلبات المتكررة بنفس الجلسة
+async function loadFullRecordsCache(force) {
+  const now = Date.now();
+  if (!force && fullRecordsCacheLoadedAt && (now - fullRecordsCacheLoadedAt) < 120000 && fullRecordsCache.length) {
+    return; // الكاش حديث، لا حاجة لإعادة التحميل
+  }
+  try {
+    const res = await sbFetch('inspections?select=*&order=created_at.desc');
+    fullRecordsCache = await res.json();
+    fullRecordsCacheLoadedAt = now;
+  } catch {
+    // فشل التحميل: نستخدم الكاش الموجود أو نرجع لـ records العادية كحل بديل
+    if (!fullRecordsCache.length) fullRecordsCache = records;
+    showToast('⚠️ تعذر تحميل كل السجلات، قد تكون البيانات غير مكتملة', 'error');
+  }
+}
+
 async function loadRecords() {
   const tbody = document.getElementById('recordsBody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="24" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
-    const res = await sbFetch('inspections?select=*&order=created_at.desc');
+    // نحمّل فقط آخر 6 أشهر افتراضياً لتحسين سرعة التحميل — للبيانات الأقدم استخدم "بحث موسّع" بالفلاتر
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const cutoffDate = sixMonthsAgo.toISOString().split('T')[0];
+    const res = await sbFetch(`inspections?select=*&inspection_date=gte.${cutoffDate}&order=created_at.desc`);
     const data = await res.json();
     records = data;
     localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 200))); // cache only most recent 200 to avoid storage bloat
@@ -1874,6 +1903,31 @@ async function loadRecords() {
   currentPage = 1;
   filterRecords();
   updateAdminStats();
+}
+
+// بحث موسّع: يطلب مباشرة من Supabase بفترة تاريخ مخصصة (يشمل بيانات أقدم من 6 أشهر) — يتطلب اتصال بالإنترنت
+async function searchOlderRecords() {
+  const dateFrom = document.getElementById('filterDateFrom').value;
+  const dateTo = document.getElementById('filterDateTo').value;
+  if (!dateFrom && !dateTo) { showToast('⚠️ حدد تاريخ "من" على الأقل للبحث الموسّع', 'error'); return; }
+  if (!navigator.onLine) { showToast('⚠️ البحث الموسّع يحتاج اتصال بالإنترنت', 'error'); return; }
+
+  const tbody = document.getElementById('recordsBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="24" class="empty-state">⏳ جاري البحث بكل الأرشيف...</td></tr>';
+
+  try {
+    let query = 'inspections?select=*&order=created_at.desc';
+    if (dateFrom) query += `&inspection_date=gte.${dateFrom}`;
+    if (dateTo) query += `&inspection_date=lte.${dateTo}`;
+    const res = await sbFetch(query);
+    const data = await res.json();
+    records = data; // نستبدل records مؤقتاً بنتيجة البحث الموسّع
+    showToast(`✅ تم العثور على ${data.length} سجل بكل الأرشيف`);
+  } catch {
+    showToast('❌ تعذر البحث الموسّع، تحقق من الاتصال', 'error');
+  }
+  currentPage = 1;
+  filterRecords();
 }
 
 function populateLineFilter() {
@@ -1891,7 +1945,7 @@ function clearFilters() {
   document.getElementById('filterLine').value = '';
   document.getElementById('filterDateFrom').value = '';
   document.getElementById('filterDateTo').value = '';
-  filterRecords();
+  loadRecords(); // نعيد تحميل آخر 6 أشهر الافتراضية (بدل الاحتفاظ بنتيجة بحث موسّع سابق)
 }
 
 function filterRecords() {
@@ -2846,7 +2900,7 @@ async function showLinesStatus() {
   document.getElementById('linesStatusView').style.display = '';
   document.getElementById('linesStatusBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   try {
-    await loadTreatments();
+    await Promise.all([loadTreatments(), loadFullRecordsCache()]);
     renderLinesStatus();
   } catch (err) {
     document.getElementById('linesStatusBody').innerHTML = '<div class="empty-state">⚠️ تعذر الاتصال بالخادم — تحقق من الإنترنت وحاول مرة أخرى<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="showLinesStatus()">🔄 إعادة المحاولة</button></div>';
@@ -3109,7 +3163,7 @@ async function openLineTowerDetails(lineName) {
   document.getElementById('lineTowerListView').style.display = '';
   document.getElementById('lineTowerListTitle').textContent = '🗼 أبراج خط ' + lineName;
   document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
-  await loadTreatments();
+  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
   renderLineTowerList(lineName);
 }
 
@@ -3163,7 +3217,7 @@ async function openTowerDetail(lineName, towerNum) {
   document.getElementById('towerDetailView').style.display = '';
   document.getElementById('towerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
   document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
-  await loadTreatments();
+  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
   renderTowerDetail(lineName, towerNum);
 }
 
@@ -3574,7 +3628,7 @@ function isFullyTreated(inspectionId, deps) {
 }
 
 async function loadDepartures() {
-  await loadTreatments();
+  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
   showDepLinesList();
   populateTreatLines();
 }
@@ -3607,7 +3661,7 @@ function getActiveDepartureTowers(lineName) {
 
 function renderDepLinesList() {
   const body = document.getElementById('depLinesListBody');
-  const uniqueLines = [...new Set(records.map(r => r.line_name).filter(Boolean))].sort();
+  const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort();
 
   if (!uniqueLines.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>'; return; }
 
@@ -3771,7 +3825,7 @@ function populateTreatLines() {
   const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
   const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
   const linesWithDeps = [...new Set(
-    records.filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
+    fullRecordsCache.filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
            .map(r => r.line_name).filter(Boolean)
   )].sort();
   linesWithDeps.forEach(name => {
@@ -3789,7 +3843,7 @@ function onTreatLineChange() {
   document.getElementById('treatItemsCard').style.display = 'none';
   if (!lineName) { towerSel.disabled = true; return; }
   const towersWithDeps = [...new Set(
-    records.filter(r => r.line_name === lineName && extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
+    fullRecordsCache.filter(r => r.line_name === lineName && extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
            .map(r => r.tower_number)
   )].sort((a,b) => parseInt(a)-parseInt(b));
   if (!towersWithDeps.length) { towerSel.innerHTML = '<option value="">-- لا توجد مغادرات --</option>'; towerSel.disabled = true; return; }
@@ -3802,7 +3856,7 @@ function onTreatTowerChange() {
   const towerNum = document.getElementById('treatTower').value;
   const card = document.getElementById('treatItemsCard');
   if (!lineName || !towerNum) { card.style.display = 'none'; return; }
-  const recs = records.filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNum));
+  const recs = fullRecordsCache.filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNum));
   if (!recs.length) { card.style.display = 'none'; return; }
   recs.sort((a,b) => (b.inspection_date||'').localeCompare(a.inspection_date||''));
   currentTreatRecord = recs[0];
@@ -4147,7 +4201,7 @@ async function renderDepLog() {
 
 // يرجع آخر سجل كشف فقط لكل برج بخط معين (الحقيقة المعتمدة لحالة البرج)
 function getLatestRecordsPerTower(lineName) {
-  const rec = records.filter(r => r.line_name === lineName);
+  const rec = fullRecordsCache.filter(r => r.line_name === lineName);
   const byTower = {};
   rec.forEach(r => {
     const key = r.tower_number;
