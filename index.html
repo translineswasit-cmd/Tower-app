@@ -195,9 +195,11 @@ tbody tr:hover { background: #F7FAFC; }
 
 @media print {
   @page { size: A4 landscape; margin: 10mm; }
-  nav, .btn, button, #linesHomeView { display: none !important; }
+  nav, .btn, button, #linesHomeView, #thermalHomeView, .filters-bar, .records-toolbar { display: none !important; }
   .page { display: block !important; }
-  .page:not(#page-lines) { display: none !important; }
+  body.printing-lines .page:not(#page-lines) { display: none !important; }
+  body.printing-thermal .page:not(#page-thermal) { display: none !important; }
+  body.printing-thermal #thermalNewView { display: none !important; }
   body { background: white; }
   .form-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
 }
@@ -550,6 +552,7 @@ tbody tr:hover { background: #F7FAFC; }
     <button class="dep-tab" onclick="switchDepTab('treat',this)">🔧 معالجة المغادرات</button>
     <button class="dep-tab" onclick="switchDepTab('log',this)">✅ سجل المعالجات</button>
     <button class="dep-tab" onclick="switchDepTab('emergency',this)">⚡ المغادرات الطارئة</button>
+    <button class="dep-tab" onclick="switchDepTab('telegram',this)">📨 برقية العمل</button>
   </div>
 
   <!-- قائمة المغادرات -->
@@ -677,12 +680,72 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
   </div>
 
+  <!-- برقية العمل -->
+  <div id="depTelegramView" style="display:none">
+    <div class="dep-tabs" style="margin-bottom:14px">
+      <button class="dep-tab active" id="telegramAddTabBtn" onclick="switchTelegramSubTab('add',this)">➕ إضافة برقية</button>
+      <button class="dep-tab" id="telegramListTabBtn" onclick="switchTelegramSubTab('list',this)">📋 البرقيات السابقة</button>
+    </div>
+
+    <!-- إضافة برقية -->
+    <div id="telegramAddView">
+      <div class="form-card">
+        <h3>📨 إضافة برقية عمل</h3>
+        <div class="field">
+          <label>اسم الخط *</label>
+          <select id="tg_line">
+            <option value="">-- اختر الخط --</option>
+          </select>
+        </div>
+        <div class="grid-2" style="margin-top:12px">
+          <div class="field">
+            <label>تاريخ ووقت الإطفاء (من) *</label>
+            <input type="datetime-local" id="tg_from" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+          </div>
+          <div class="field">
+            <label>تاريخ ووقت الإطفاء (إلى) *</label>
+            <input type="datetime-local" id="tg_to" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+          </div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label>نوع العمل *</label>
+          <input id="tg_work_type" placeholder="مثال: تصليح عازل، استبدال سلك، صيانة دورية..." style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label>الملاحظات</label>
+          <textarea id="tg_notes" rows="3" placeholder="اكتب أي ملاحظات إضافية..." style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%;resize:vertical"></textarea>
+        </div>
+        <div class="form-actions" style="margin-top:18px;flex-direction:column;gap:10px">
+          <button class="btn btn-primary" style="background:#276749;width:100%" onclick="saveTelegram('تنفذت')">✅ تنفذت البرقية</button>
+          <button class="btn btn-primary" style="background:#C0392B;width:100%" onclick="saveTelegram('لم تنفذ')">❌ لم تنفذ البرقية</button>
+          <button class="btn btn-secondary" style="width:100%" onclick="clearTelegramForm()">🔄 مسح</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- البرقيات السابقة -->
+    <div id="telegramListView" style="display:none">
+      <div class="dep-filters" style="margin-bottom:12px">
+        <select id="tgFilterStatus" onchange="renderTelegramLog()">
+          <option value="">-- كل الحالات --</option>
+          <option value="تنفذت">✅ تنفذت</option>
+          <option value="لم تنفذ">❌ لم تنفذ</option>
+        </select>
+        <select id="tgFilterLine" onchange="renderTelegramLog()">
+          <option value="">-- كل الخطوط --</option>
+        </select>
+      </div>
+      <div id="telegramLogBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
+    </div>
+  </div>
+
 </div>
 
 <!-- PENDING SYNC PAGE -->
 <div class="page" id="page-pendingSync">
   <div class="page-title">📦 العناصر المعلقة (بانتظار الرفع)</div>
-  <p style="color:#718096;font-size:0.85rem;margin-bottom:14px">هذي الكشوفات والمعالجات محفوظة على جهازك فقط، وستُرفع تلقائياً لحظة توفر الإنترنت. تقدر تعدلها أو تحذفها الآن قبل الرفع.</p>
+  <p style="color:#718096;font-size:0.85rem;margin-bottom:14px">هذي الكشوفات والمعالجات محفوظة على جهازك فقط، وستُرفع تلقائياً عند توفر الإنترنت (يتحقق التطبيق دورياً). تقدر تضغط الزر لرفعها فوراً، أو تعدلها أو تحذفها قبل الرفع.</p>
+  <button class="btn btn-primary" id="manualSyncBtn" onclick="manualSyncAll()" style="margin-bottom:16px;width:100%">🔄 رفع الآن</button>
   <div id="pendingSyncBody"><div class="empty-state">لا توجد عناصر معلقة ✅</div></div>
 </div>
 
@@ -795,6 +858,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="records-toolbar">
       <div class="page-title" style="margin:0">📂 أرشيف الكشف الحراري <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
       <div class="toolbar-right">
+        <button class="btn-excel" onclick="printThermalArchive()">🖨️ طباعة</button>
         <button class="btn btn-primary" onclick="loadThermalArchive()" style="padding:9px 18px">🔄 تحديث</button>
       </div>
     </div>
@@ -805,9 +869,10 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
       <div class="field"><label>📅 من تاريخ</label><input type="date" id="thFilterDateFrom" onchange="renderThermalArchive()"></div>
       <div class="field"><label>📅 إلى تاريخ</label><input type="date" id="thFilterDateTo" onchange="renderThermalArchive()"></div>
+      <div class="field"><label>🗼 برج محدد (اختياري)</label><input type="text" id="thFilterTower" placeholder="مثال: 5" oninput="renderThermalArchive()"></div>
       <div class="field" style="justify-content:flex-end">
         <label>&nbsp;</label>
-        <button class="btn btn-secondary" onclick="document.getElementById('thFilterLine').value='';document.getElementById('thFilterDateFrom').value='';document.getElementById('thFilterDateTo').value='';renderThermalArchive();">🔄 مسح التصفية</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('thFilterLine').value='';document.getElementById('thFilterDateFrom').value='';document.getElementById('thFilterDateTo').value='';document.getElementById('thFilterTower').value='';renderThermalArchive();">🔄 مسح التصفية</button>
       </div>
     </div>
     <div id="thermalArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
@@ -1062,10 +1127,14 @@ const QUEUE_KEY = 'tower_queue';
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
   document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
-  window.addEventListener('online', () => { updateStatus(true); syncQueue(); syncThermalQueue(); syncTreatmentQueue(); syncLineEntryQueue(); });
+  window.addEventListener('online', () => { updateStatus(true); syncAllQueues(); });
   window.addEventListener('offline', () => updateStatus(false));
   updateStatus(navigator.onLine);
   updatePendingBadge();
+  // فحص دوري كل 25 ثانية يحاول رفع أي عنصر معلق بالخلفية (لا يعتمد فقط على حدث online)
+  setInterval(() => { if (navigator.onLine) syncAllQueues(); }, 25000);
+  // محاولة فورية عند فتح التطبيق أيضاً
+  if (navigator.onLine) setTimeout(() => syncAllQueues(), 2000);
   // تحميل الكاش المحلي للسجلات فوراً (يفيد أوف لاين قبل زيارة صفحة السجلات)
   try { records = JSON.parse(localStorage.getItem(DB_KEY) || '[]'); } catch(e) { records = []; }
 
@@ -1229,6 +1298,37 @@ function updatePendingBadge() {
   } else {
     badge.style.display = 'none';
   }
+}
+
+// يرفع كل أنواع العناصر المعلقة دفعة واحدة (تُستخدم بالفحص الدوري وحدث online وزر الرفع اليدوي)
+let syncInProgress = false;
+async function syncAllQueues() {
+  if (syncInProgress) return; // تجنب تشغيل أكثر من مزامنة بنفس اللحظة
+  if (getTotalPendingCount() === 0) return;
+  syncInProgress = true;
+  try {
+    await syncQueue();
+    await syncThermalQueue();
+    await syncTreatmentQueue();
+    await syncLineEntryQueue();
+  } finally {
+    syncInProgress = false;
+  }
+}
+
+async function manualSyncAll() {
+  if (!navigator.onLine) { showToast('⚠️ لا يوجد اتصال بالإنترنت حالياً', 'error'); return; }
+  const btn = document.getElementById('manualSyncBtn');
+  const before = getTotalPendingCount();
+  if (before === 0) { showToast('✅ لا توجد عناصر معلقة'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري الرفع...'; }
+  await syncAllQueues();
+  const after = getTotalPendingCount();
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 رفع الآن'; }
+  if (after === 0) showToast('✅ تم رفع جميع العناصر المعلقة بنجاح');
+  else if (after < before) showToast(`✅ تم رفع ${before-after} من ${before}، تبقى ${after}`);
+  else showToast('⚠️ تعذر رفع العناصر، تحقق من الاتصال وحاول مرة أخرى', 'error');
+  renderPendingSyncPage();
 }
 
 let toastTimer;
@@ -2457,12 +2557,16 @@ function renderThermalArchive() {
   const lineFilter = document.getElementById('thFilterLine').value;
   const dateFrom = document.getElementById('thFilterDateFrom').value;
   const dateTo = document.getElementById('thFilterDateTo').value;
+  const towerFilterRaw = document.getElementById('thFilterTower').value.trim();
+  // يدعم برج واحد أو أبراج محددة مفصولة بفاصلة: مثال "5" أو "5,8,12"
+  const towerList = towerFilterRaw ? towerFilterRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
 
   filteredThermal = thermalRecords.filter(r => {
     const mLine = !lineFilter || r.line_name === lineFilter;
     const mFrom = !dateFrom || (r.inspection_date && r.inspection_date >= dateFrom);
     const mTo = !dateTo || (r.inspection_date && r.inspection_date <= dateTo);
-    return mLine && mFrom && mTo;
+    const mTower = !towerList.length || (r.tower_number != null && towerList.includes(String(r.tower_number)));
+    return mLine && mFrom && mTo && mTower;
   });
 
   const body = document.getElementById('thermalArchiveBody');
@@ -2841,7 +2945,18 @@ function renderLinesStatus() {
   body.innerHTML = html || '<div class="empty-state">لا توجد بيانات</div>';
 }
 
-function printLinesInfo() { window.print(); }
+function printLinesInfo() {
+  document.body.classList.add('printing-lines');
+  window.print();
+  setTimeout(() => document.body.classList.remove('printing-lines'), 500);
+}
+
+function printThermalArchive() {
+  if (!filteredThermal || !filteredThermal.length) { showToast('⚠️ لا توجد بيانات لطباعتها بالفلتر الحالي', 'error'); return; }
+  document.body.classList.add('printing-thermal');
+  window.print();
+  setTimeout(() => document.body.classList.remove('printing-thermal'), 500);
+}
 
 // ========================
 // PENDING SYNC PAGE (عرض/تعديل/حذف العناصر المعلقة قبل الرفع)
@@ -3642,10 +3757,12 @@ function switchDepTab(tab, btn) {
   document.getElementById('depTreatView').style.display = tab==='treat'?'':'none';
   document.getElementById('depLogView').style.display = tab==='log'?'':'none';
   document.getElementById('depEmergencyView').style.display = tab==='emergency'?'':'none';
+  document.getElementById('depTelegramView').style.display = tab==='telegram'?'':'none';
   if (tab==='list') showDepLinesList();
   if (tab==='log') renderDepLog();
   if (tab==='treat') { populateTreatLines(); otherDepTreatState={}; }
   if (tab==='emergency') { populateEmgLines(); renderEmergencyLog(); }
+  if (tab==='telegram') { populateTelegramLines(); switchTelegramSubTab('add', document.getElementById('telegramAddTabBtn')); }
 }
 
 function populateTreatLines() {
@@ -4222,6 +4339,151 @@ function populateEmgLines() {
     if (name.includes('400')) g400.appendChild(opt); else g132.appendChild(opt);
   });
   sel.appendChild(g400); sel.appendChild(g132);
+}
+
+// ========================
+// WORK TELEGRAM (برقية العمل)
+// ========================
+function populateTelegramLines() {
+  const sel = document.getElementById('tg_line');
+  sel.innerHTML = '<option value="">-- اختر الخط --</option>';
+  const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
+  const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
+  Object.keys(LINES_DATA).forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    if (name.includes('400')) g400.appendChild(opt); else g132.appendChild(opt);
+  });
+  sel.appendChild(g400); sel.appendChild(g132);
+}
+
+function switchTelegramSubTab(tab, btn) {
+  document.querySelectorAll('#depTelegramView .dep-tab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  document.getElementById('telegramAddView').style.display = tab==='add' ? '' : 'none';
+  document.getElementById('telegramListView').style.display = tab==='list' ? '' : 'none';
+  if (tab==='list') renderTelegramLog();
+}
+
+function clearTelegramForm() {
+  document.getElementById('tg_line').value = '';
+  document.getElementById('tg_from').value = '';
+  document.getElementById('tg_to').value = '';
+  document.getElementById('tg_work_type').value = '';
+  document.getElementById('tg_notes').value = '';
+  editingTelegramId = null;
+}
+
+let editingTelegramId = null;
+
+async function saveTelegram(status) {
+  const lineName = document.getElementById('tg_line').value;
+  const from = document.getElementById('tg_from').value;
+  const to = document.getElementById('tg_to').value;
+  const workType = document.getElementById('tg_work_type').value.trim();
+  const notes = document.getElementById('tg_notes').value.trim();
+
+  if (!lineName || !from || !to || !workType) {
+    showToast('⚠️ اسم الخط وتاريخ الإطفاء ونوع العمل مطلوبة', 'error'); return;
+  }
+
+  const rec = {
+    line_name: lineName,
+    outage_from: from,
+    outage_to: to,
+    work_type: workType,
+    notes: notes,
+    status: status,
+    created_by: currentUser.full_name
+  };
+
+  try {
+    let res;
+    if (editingTelegramId) {
+      res = await sbFetch(`work_telegrams?id=eq.${editingTelegramId}`, { method: 'PATCH', body: JSON.stringify(rec) });
+    } else {
+      res = await sbFetch('work_telegrams', { method: 'POST', body: JSON.stringify(rec) });
+    }
+    if (!res.ok) throw new Error();
+    showToast(status === 'تنفذت' ? '✅ تم حفظ البرقية بحالة تنفذت' : '❌ تم حفظ البرقية بحالة لم تنفذ');
+    clearTelegramForm();
+    switchTelegramSubTab('list', document.getElementById('telegramListTabBtn'));
+  } catch { showToast('❌ تعذر الحفظ، حاول مرة أخرى', 'error'); }
+}
+
+async function updateTelegramStatus(id, newStatus) {
+  try {
+    const res = await sbFetch(`work_telegrams?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ status: newStatus }) });
+    if (!res.ok) throw new Error();
+    showToast(newStatus === 'تنفذت' ? '✅ تم تحديث الحالة إلى تنفذت' : '⏳ تم تحديث الحالة');
+    renderTelegramLog();
+  } catch { showToast('❌ تعذر التحديث', 'error'); }
+}
+
+async function deleteTelegram(id) {
+  if (!confirm('هل تريد حذف هذي البرقية؟')) return;
+  try {
+    await sbFetch(`work_telegrams?id=eq.${id}`, { method: 'DELETE' });
+    showToast('🗑️ تم الحذف');
+    renderTelegramLog();
+  } catch { showToast('❌ خطأ بالحذف', 'error'); }
+}
+
+function fmtDateTime(dt) {
+  if (!dt) return '—';
+  try {
+    const d = new Date(dt);
+    return d.toLocaleString('ar-IQ', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  } catch(e) { return dt; }
+}
+
+async function renderTelegramLog() {
+  const body = document.getElementById('telegramLogBody');
+  body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  const statusFilter = document.getElementById('tgFilterStatus').value;
+  const lineFilter = document.getElementById('tgFilterLine').value;
+
+  try {
+    const res = await sbFetch('work_telegrams?select=*&order=created_at.desc');
+    let data = await res.json();
+
+    if (statusFilter) data = data.filter(r => r.status === statusFilter);
+    if (lineFilter) data = data.filter(r => r.line_name === lineFilter);
+
+    if (!data.length) { body.innerHTML = '<div class="empty-state">لا توجد برقيات</div>'; return; }
+
+    const canDelete = currentUser.role === 'admin' || currentUser.role === 'supervisor';
+
+    body.innerHTML = data.map(r => {
+      const isDone = r.status === 'تنفذت';
+      const borderColor = isDone ? '#48BB78' : '#C0392B';
+      const statusBadge = isDone
+        ? `<span style="background:#C6F6D5;color:#22543D;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:700">✅ تنفذت</span>`
+        : `<span style="background:#FED7D7;color:#822727;padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:700">❌ لم تنفذ</span>`;
+      return `<div class="dep-card" style="border-right-color:${borderColor};margin-bottom:12px">
+        <div class="dep-card-header">
+          <div class="dep-card-title">📨 ${r.line_name}</div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusBadge}</div>
+        </div>
+        <div style="margin:8px 0;font-weight:700;color:#2E4057;font-size:0.9rem">${r.work_type||'—'}</div>
+        <div style="font-size:0.8rem;color:#4A5568;margin-bottom:6px">⏱️ الإطفاء: ${fmtDateTime(r.outage_from)} ← ${fmtDateTime(r.outage_to)}</div>
+        ${r.notes ? `<div style="color:#4A5568;font-size:0.85rem;margin-bottom:8px">${r.notes}</div>` : ''}
+        <div style="font-size:0.75rem;color:#718096;margin-top:6px">👤 ${r.created_by||'—'} | 📅 ${r.created_at ? r.created_at.split('T')[0] : '—'}</div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          ${!isDone ? `<button class="btn-sm btn-primary" onclick="updateTelegramStatus('${r.id}','تنفذت')" style="background:#276749">✅ تنفذت</button>` : ''}
+          ${isDone ? `<button class="btn-sm btn-primary" onclick="updateTelegramStatus('${r.id}','لم تنفذ')" style="background:#C0392B">↩️ لم تنفذ</button>` : ''}
+          ${canDelete ? `<button class="btn-sm btn-del" onclick="deleteTelegram('${r.id}')">🗑️ حذف</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    const lineFilterSel = document.getElementById('tgFilterLine');
+    const currentLine = lineFilterSel.value;
+    const uniqueLines = [...new Set(data.map(r => r.line_name).filter(Boolean))].sort();
+    lineFilterSel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
+      uniqueLines.map(n => `<option value="${n}" ${n===currentLine?'selected':''}>${n}</option>`).join('');
+
+  } catch { body.innerHTML = '<div class="empty-state">⚠️ تعذر التحميل</div>'; }
 }
 
 </script>
