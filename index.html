@@ -937,6 +937,17 @@ const TOWER_TYPES = {
 
 // تصنيف الأبراج حسب الوظيفة الإنشائية (تعليق / شد) — مرجع موحّد يستخدمه الكشف الحراري
 const TOWER_CATEGORY_132 = { S:'تعليق', T:'شد', SP:'شد', R:'تعليق', E:'شد', K:'شد' };
+
+// الخطوط المستثناة بـ132kV — لها تصميم عوازل مختلف عن باقي خطوط 132
+const EXCLUDED_132_LINES = [
+  'الكوت القديمة - جنوب الكوت',
+  'الكوت القديمة - شيخ سعد',
+  'الدجيلي - الحي',
+  'جنوب الكوت - الدجيلي'
+];
+function isExcluded132Line(lineName) {
+  return EXCLUDED_132_LINES.some(ex => lineName && lineName.includes(ex.split(' - ')[0]) && lineName.includes(ex.split(' - ')[1]));
+}
 const TOWER_CATEGORY_400 = { XA:'تعليق', XB:'تعليق', XC:'شد', XD:'شد', XE:'تعليق' };
 
 const ROLE_LABELS = { admin: 'مدير', supervisor: 'مشرف', technician: 'فني', readonly: 'قراءة فقط' };
@@ -1208,16 +1219,29 @@ function updateWiresGroundUI() {
 const TYPE_TEXT_TO_CODE_400 = { 'برج تعليق':'XA','برج عبور':'XB','برج شد':'XC','برج نهائي':'XD','برج تبادل أطوار':'XE' };
 const TYPE_TEXT_TO_CODE_132 = { 'برج تعليق':'S','برج شد':'T','برج خاص':'SP','برج عبور':'R','برج نهائي':'E','برج عبور اسفل الخطوط':'K','برج عبور اسفل الخط':'K' };
 
-function getInsulatorMode(voltage, towerType) {
+function getInsulatorMode(voltage, towerType, lineName) {
   if (voltage === 400) {
-    const code = TOWER_CATEGORY_400[towerType] ? towerType : TYPE_TEXT_TO_CODE_400[towerType];
-    return TOWER_CATEGORY_400[code] === 'شد' ? 'straight4' : 'v';
+    const code400 = TOWER_CATEGORY_400[towerType] ? towerType : TYPE_TEXT_TO_CODE_400[towerType];
+    return TOWER_CATEGORY_400[code400] === 'شد' ? 'straight4' : 'v';
   }
-  return 'chain';
+  // 132kV
+  const code132 = TOWER_CATEGORY_132[towerType] ? towerType : TYPE_TEXT_TO_CODE_132[towerType];
+  const isShad = TOWER_CATEGORY_132[code132] === 'شد';
+  const excluded = isExcluded132Line(lineName);
+  if (excluded) {
+    // الخطوط المستثناة: تعليق=سلسلة واحدة، شد=سلسلتين
+    return isShad ? 'chain2_12' : 'chain1_10';
+  }
+  // القاعدة العامة: تعليق=سلسلتين، شد=4 سلاسل
+  return isShad ? 'chain4_12' : 'chain2_10';
 }
 function getInsulatorCount(mode) {
-  if (mode === 'v') return 56;
-  if (mode === 'straight4') return 128;
+  if (mode === 'v') return 56;             // 28×2
+  if (mode === 'straight4') return 128;    // 32×4
+  if (mode === 'chain1_10') return 10;     // سلسلة واحدة × 10
+  if (mode === 'chain2_10') return 20;     // سلسلتين × 10
+  if (mode === 'chain2_12') return 24;     // سلسلتين × 12
+  if (mode === 'chain4_12') return 48;     // 4 سلاسل × 12
   return 24;
 }
 
@@ -1227,7 +1251,9 @@ function buildInsulatorUI(voltage, towerType, savedState) {
   sec.style.display = 'block';
   wrap.innerHTML = '';
 
-  const mode = getInsulatorMode(voltage, towerType);
+  // أسماء المحطتين (تظهر فوق كل مجموعة سلاسل بأنماط straight4 / chain2_12 / chain4_12)
+  const lineName = document.getElementById('f_line_name') ? document.getElementById('f_line_name').value : '';
+  const mode = getInsulatorMode(voltage, towerType, lineName);
   const count = getInsulatorCount(mode);
 
   if (savedState) {
@@ -1236,8 +1262,6 @@ function buildInsulatorUI(voltage, towerType, savedState) {
     insulatorState = { R: Array(count).fill(false), S: Array(count).fill(false), T: Array(count).fill(false) };
   }
 
-  // أسماء المحطتين لخطوط 400 (تظهر فوق كل مجموعة سلسلتين بنمط straight4)
-  const lineName = document.getElementById('f_line_name') ? document.getElementById('f_line_name').value : '';
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['', ''];
 
   ['R','S','T'].forEach(phase => {
@@ -1247,8 +1271,12 @@ function buildInsulatorUI(voltage, towerType, savedState) {
     block.appendChild(lbl);
     let el;
     if (mode === 'v') el = buildVShape(phase);
-    else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB);
-    else el = buildChain(phase);
+    else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB, 4, 32);
+    else if (mode === 'chain4_12') el = buildStraight4Chain(phase, stA, stB, 4, 12);
+    else if (mode === 'chain2_12') el = buildStraight4Chain(phase, stA, stB, 2, 12);
+    else if (mode === 'chain1_10') el = buildSingleChain(phase, 10);
+    else if (mode === 'chain2_10') el = buildChain(phase, 10);
+    else el = buildChain(phase, 12);
     block.appendChild(el);
     wrap.appendChild(block);
   });
@@ -1289,12 +1317,13 @@ function buildVShape(phase) {
   return svg;
 }
 
-function buildChain(phase) {
+function buildChain(phase, rows) {
+  rows = rows || 12;
   const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
   for (let col=0;col<2;col++) {
     const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
-    for (let row=0;row<12;row++) {
-      const idx = col*12+row;
+    for (let row=0;row<rows;row++) {
+      const idx = col*rows+row;
       const rect = document.createElement('div');
       rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
       if (currentUser.role !== 'readonly') {
@@ -1310,7 +1339,29 @@ function buildChain(phase) {
   return wrap;
 }
 
-function buildStraight4Chain(phase, stationA, stationB) {
+function buildSingleChain(phase, rows) {
+  rows = rows || 10;
+  const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
+  const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
+  for (let row=0;row<rows;row++) {
+    const idx = row;
+    const rect = document.createElement('div');
+    rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
+    if (currentUser.role !== 'readonly') {
+      rect.addEventListener('click', () => {
+        insulatorState[phase][idx] = !insulatorState[phase][idx];
+        rect.classList.toggle('damaged', insulatorState[phase][idx]);
+      });
+    }
+    colDiv.appendChild(rect);
+  }
+  wrap.appendChild(colDiv);
+  return wrap;
+}
+
+function buildStraight4Chain(phase, stationA, stationB, totalCols, rows) {
+  totalCols = totalCols || 4; rows = rows || 32;
+  const colsPerGroup = totalCols / 2; // كل مجموعة نصف الأعمدة
   const outer = document.createElement('div');
   outer.style.display = 'flex'; outer.style.flexDirection = 'column'; outer.style.alignItems = 'center'; outer.style.gap = '4px';
 
@@ -1326,11 +1377,11 @@ function buildStraight4Chain(phase, stationA, stationB) {
     lbl.style.background = '#EBF0F5'; lbl.style.padding = '2px 8px'; lbl.style.borderRadius = '10px'; lbl.style.whiteSpace = 'nowrap';
     groupWrap.appendChild(lbl);
     const colsWrap = document.createElement('div'); colsWrap.style.display = 'flex'; colsWrap.style.gap = '6px';
-    for (let c = 0; c < 2; c++) {
+    for (let c = 0; c < colsPerGroup; c++) {
       const col = c + colOffset;
       const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
-      for (let row = 0; row < 32; row++) {
-        const idx = col*32+row;
+      for (let row = 0; row < rows; row++) {
+        const idx = col*rows+row;
         const rect = document.createElement('div');
         rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
         if (currentUser.role !== 'readonly') {
@@ -1347,8 +1398,8 @@ function buildStraight4Chain(phase, stationA, stationB) {
     return groupWrap;
   }
 
-  groupsWrap.appendChild(buildGroup('🏭 ' + (stationA || 'محطة A'), 0));
-  groupsWrap.appendChild(buildGroup('🏭 ' + (stationB || 'محطة B'), 2));
+  groupsWrap.appendChild(buildGroup('🏭 جهة ' + (stationA || 'محطة A'), 0));
+  groupsWrap.appendChild(buildGroup('🏭 جهة ' + (stationB || 'محطة B'), colsPerGroup));
   outer.appendChild(groupsWrap);
   return outer;
 }
@@ -1372,25 +1423,39 @@ function generateVShapeSVG(state) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
-function generateChainSVG(state) {
+function generateChainSVG(state, cols, rows) {
+  cols = cols || 2; rows = rows || 12;
   let rects=''; const w=18,h=14,gap=2,colGap=6;
-  for(let col=0;col<2;col++) for(let row=0;row<12;row++){
-    const idx=col*12+row, x=col*(w+colGap), y=row*(h+gap);
+  for(let col=0;col<cols;col++) for(let row=0;row<rows;row++){
+    const idx=col*rows+row, x=col*(w+colGap), y=row*(h+gap);
     const fill=state[idx]?'#FC4444':'white', stroke=state[idx]?'#9B0000':'#555';
     rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
   }
-  const svgW=2*w+colGap, svgH=12*(h+gap)-gap;
+  const svgW=cols*w+(cols-1)*colGap, svgH=rows*(h+gap)-gap;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
-function generateQuadChainSVG(state) {
+function generateQuadChainSVG(state, cols, rows) {
+  cols = cols || 4; rows = rows || 32;
   let rects=''; const w=11,h=8,gap=1.2,colGap=3.5;
-  for(let col=0;col<4;col++) for(let row=0;row<32;row++){
-    const idx=col*32+row, x=col*(w+colGap), y=row*(h+gap);
+  for(let col=0;col<cols;col++) for(let row=0;row<rows;row++){
+    const idx=col*rows+row, x=col*(w+colGap), y=row*(h+gap);
     const fill=state[idx]?'#FC4444':'white', stroke=state[idx]?'#9B0000':'#555';
     rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="1.5" fill="${fill}" stroke="${stroke}" stroke-width="1"/>`;
   }
-  const svgW=4*w+3*colGap, svgH=32*(h+gap)-gap;
+  const svgW=cols*w+(cols-1)*colGap, svgH=rows*(h+gap)-gap;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
+}
+
+function generateSingleChainSVG(state, rows) {
+  rows = rows || 10;
+  let rects=''; const w=18,h=14,gap=2;
+  for(let row=0;row<rows;row++){
+    const idx=row, y=row*(h+gap);
+    const fill=state[idx]?'#FC4444':'white', stroke=state[idx]?'#9B0000':'#555';
+    rects+=`<rect x="0" y="${y}" width="${w}" height="${h}" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`;
+  }
+  const svgW=w, svgH=rows*(h+gap)-gap;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
@@ -1405,8 +1470,17 @@ const FIELDS = ['iron_intersections','tower_foundations','tower_attachments',
 
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
-  const insMode = getInsulatorMode(currentVoltage, towerType);
-  const svgFn = insMode === 'v' ? generateVShapeSVG : insMode === 'straight4' ? generateQuadChainSVG : generateChainSVG;
+  const lineName = document.getElementById('f_line_name').value;
+  const insMode = getInsulatorMode(currentVoltage, towerType, lineName);
+  function svgFor(state) {
+    if (insMode === 'v') return generateVShapeSVG(state);
+    if (insMode === 'straight4') return generateQuadChainSVG(state, 4, 32);
+    if (insMode === 'chain4_12') return generateQuadChainSVG(state, 4, 12);
+    if (insMode === 'chain2_12') return generateQuadChainSVG(state, 2, 12);
+    if (insMode === 'chain2_10') return generateChainSVG(state, 2, 10);
+    if (insMode === 'chain1_10') return generateSingleChainSVG(state, 10);
+    return generateChainSVG(state, 2, 12);
+  }
   // مزامنة r2/s2/t2 مع r1/s1/t1 (فقرة واحدة فقط تُعرض الآن)
   ['r','s','t'].forEach(p => {
     const v1 = document.getElementById('f_wires_'+p+'1').value;
@@ -1419,9 +1493,9 @@ function getFormData() {
     tower_type: towerType,
     voltage: currentVoltage,
     insulator_state: JSON.stringify(insulatorState),
-    insulator_svg_r: svgFn(insulatorState.R),
-    insulator_svg_s: svgFn(insulatorState.S),
-    insulator_svg_t: svgFn(insulatorState.T),
+    insulator_svg_r: svgFor(insulatorState.R),
+    insulator_svg_s: svgFor(insulatorState.S),
+    insulator_svg_t: svgFor(insulatorState.T),
     created_by: currentUser.id,
     created_by_name: currentUser.full_name,
   };
@@ -1758,10 +1832,18 @@ function showThermalArchive() {
 function lineEndpoints(lineName) {
   const parts = lineName.split(' - ');
   if (parts.length < 2) return [lineName, lineName];
-  const first = parts[0].trim();
+  // إزالة "رقم X" والجهد (132/400 ك.ف) ورقم الدورة (1+2) من اسم المحطة
+  function cleanStationName(s) {
+    return s
+      .replace(/\d+\s*ك\.?ف\.?\s*$/, '')      // يشيل "400 ك.ف" بالنهاية
+      .replace(/رقم\s*\d+\s*$/, '')             // يشيل "رقم 1" / "رقم 2" بالنهاية
+      .replace(/\(\d+\+\d+\)\s*$/, '')          // يشيل "(1+2)" بالنهاية
+      .trim();
+  }
+  const first = cleanStationName(parts[0]);
   const rest = parts.slice(1).join(' - ').trim();
-  const second = rest.replace(/\d+\s*ك\.?ف\.?\s*$/, '').trim();
-  return [first, second || rest];
+  const second = cleanStationName(rest);
+  return [first || parts[0].trim(), second || rest];
 }
 
 // Decide which towers count as "تستحق فحص حراري" (شد/نهائي لـ132، وما يعادلها لـ400)
@@ -2602,7 +2684,7 @@ function renderTreatItems() {
     html += '</div></div>';
   }
   body.innerHTML = html;
-  if (insulatorDeps.length) buildTreatInsulatorUI(r.voltage||132, r.tower_type||'');
+  if (insulatorDeps.length) buildTreatInsulatorUI(r.voltage||132, r.tower_type||'', r.line_name||'');
 }
 
 function toggleOtherDep(key, btn) {
@@ -2614,11 +2696,11 @@ function toggleOtherDep(key, btn) {
   otherDepTreatState[key] = newState;
 }
 
-function buildTreatInsulatorUI(voltage, towerType) {
+function buildTreatInsulatorUI(voltage, towerType, lineName) {
   const wrap = document.getElementById('treatPhasesWrap');
   if (!wrap) return;
   wrap.innerHTML = '';
-  const mode = getInsulatorMode(voltage||132, towerType||'');
+  const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
   const count = getInsulatorCount(mode);
   ['R','S','T'].forEach(phase => {
     if (!treatInsulatorState[phase]||!treatInsulatorState[phase].length)
@@ -2654,7 +2736,10 @@ function buildTreatVisual(phase, mode) {
     for(let i=0;i<N;i++){const t=i/(N-1); addP(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);}
     return svg;
   }
-  if (mode === 'straight4') {
+  if (mode === 'straight4' || mode === 'chain4_12' || mode === 'chain2_12') {
+    const totalCols = mode === 'chain2_12' ? 2 : 4;
+    const rows = mode === 'straight4' ? 32 : 12;
+    const colsPerGroup = totalCols / 2;
     const lineName = currentTreatRecord ? currentTreatRecord.line_name : '';
     const [stA, stB] = lineName ? lineEndpoints(lineName) : ['محطة A','محطة B'];
     const outer = document.createElement('div');
@@ -2667,10 +2752,10 @@ function buildTreatVisual(phase, mode) {
       lbl.style.background='#EBF0F5'; lbl.style.padding='2px 8px'; lbl.style.borderRadius='10px'; lbl.style.whiteSpace='nowrap';
       gWrap.appendChild(lbl);
       const colsWrap=document.createElement('div'); colsWrap.style.display='flex'; colsWrap.style.gap='6px';
-      for(let c=0;c<2;c++){
+      for(let c=0;c<colsPerGroup;c++){
         const col=c+colOffset, colDiv=document.createElement('div'); colDiv.className='chain-col';
-        for(let row=0;row<32;row++){
-          const idx=col*32+row, rect=document.createElement('div');
+        for(let row=0;row<rows;row++){
+          const idx=col*rows+row, rect=document.createElement('div');
           const dmg=treatInsulatorState[phase][idx];
           rect.className='ins-rect'+(dmg?' damaged':'');
           rect.style.cursor=dmg?'pointer':'default';
@@ -2685,12 +2770,29 @@ function buildTreatVisual(phase, mode) {
       gWrap.appendChild(colsWrap);
       return gWrap;
     }
-    groupsWrap.appendChild(buildGroup('🏭 '+(stA||'محطة A'),0));
-    groupsWrap.appendChild(buildGroup('🏭 '+(stB||'محطة B'),2));
+    groupsWrap.appendChild(buildGroup('🏭 جهة '+(stA||'محطة A'),0));
+    groupsWrap.appendChild(buildGroup('🏭 جهة '+(stB||'محطة B'),colsPerGroup));
     outer.appendChild(groupsWrap);
     return outer;
   }
-  const cols=mode==='straight4'?4:2, rows=mode==='straight4'?32:12;
+  if (mode === 'chain1_10') {
+    const wrap=document.createElement('div'); wrap.className='chain-wrap';
+    const colDiv=document.createElement('div'); colDiv.className='chain-col';
+    for(let row=0;row<10;row++){
+      const idx=row, rect=document.createElement('div');
+      const dmg=treatInsulatorState[phase][idx];
+      rect.className='ins-rect'+(dmg?' damaged':'');
+      rect.style.cursor=dmg?'pointer':'default';
+      if(dmg) rect.addEventListener('click',()=>{
+        const fixed=rect.style.background==='rgb(72, 187, 120)';
+        rect.style.background=fixed?'#FC4444':'#48BB78'; rect.style.borderColor=fixed?'#9B0000':'#276749';
+      });
+      colDiv.appendChild(rect);
+    }
+    wrap.appendChild(colDiv);
+    return wrap;
+  }
+  const cols=2, rows=mode==='chain2_10'?10:12;
   const wrap=document.createElement('div'); wrap.className='chain-wrap';
   for(let col=0;col<cols;col++){
     const colDiv=document.createElement('div'); colDiv.className='chain-col';
@@ -2714,7 +2816,7 @@ async function saveTreatment() {
   if (!currentTreatRecord) return;
   const r = currentTreatRecord;
   const now = new Date().toISOString().split('T')[0];
-  const mode = getInsulatorMode(r.voltage||132, r.tower_type||'');
+  const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
   const stateAfter = JSON.parse(JSON.stringify(treatInsulatorState));
   const items_treated = [];
 
@@ -2728,7 +2830,6 @@ async function saveTreatment() {
       if (mode === 'v') {
         block.querySelectorAll('polygon').forEach((el,i) => { if(el.getAttribute('fill')==='#48BB78'){stateAfter[phase][i]=false; treatedCount++;} });
       } else {
-        const rows=mode==='straight4'?32:12;
         block.querySelectorAll('.ins-rect').forEach((el,i) => { if(el.style.background==='rgb(72, 187, 120)'){stateAfter[phase][i]=false; treatedCount++;} });
       }
       if (treatedCount > 0) items_treated.push({key:`ins_${phase}`, label:`عوازل الفيز ${phase}`, count: treatedCount});
@@ -2745,7 +2846,15 @@ async function saveTreatment() {
 
   if (!items_treated.length) { showToast('⚠️ لم تحدد أي عنصر للمعالجة', 'error'); return; }
 
-  const svgFn = mode==='v'?generateVShapeSVG:mode==='straight4'?generateQuadChainSVG:generateChainSVG;
+  function svgForMode(state) {
+    if (mode === 'v') return generateVShapeSVG(state);
+    if (mode === 'straight4') return generateQuadChainSVG(state, 4, 32);
+    if (mode === 'chain4_12') return generateQuadChainSVG(state, 4, 12);
+    if (mode === 'chain2_12') return generateQuadChainSVG(state, 2, 12);
+    if (mode === 'chain2_10') return generateChainSVG(state, 2, 10);
+    if (mode === 'chain1_10') return generateSingleChainSVG(state, 10);
+    return generateChainSVG(state, 2, 12);
+  }
   const treatment = {
     inspection_id: r.id,
     line_name: r.line_name,
@@ -2756,9 +2865,9 @@ async function saveTreatment() {
     treatment_date: now,
     insulator_state_before: r.insulator_state,
     insulator_state_after: JSON.stringify(stateAfter),
-    insulator_svg_r: svgFn(stateAfter.R||[]),
-    insulator_svg_s: svgFn(stateAfter.S||[]),
-    insulator_svg_t: svgFn(stateAfter.T||[]),
+    insulator_svg_r: svgForMode(stateAfter.R||[]),
+    insulator_svg_s: svgForMode(stateAfter.S||[]),
+    insulator_svg_t: svgForMode(stateAfter.T||[]),
     items_treated: items_treated,
     notes: ''
   };
