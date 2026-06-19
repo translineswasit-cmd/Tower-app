@@ -741,7 +741,6 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="linesHomeView">
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="showLinesInfo()">📋 بيانات الخطوط</button>
-      <button class="btn btn-secondary" onclick="showLinesTowers()">🗼 الخطوط والأبراج</button>
       <button class="btn btn-secondary" onclick="showLinesStatus()">📡 حالة الخطوط</button>
     </div>
   </div>
@@ -762,19 +761,6 @@ tbody tr:hover { background: #F7FAFC; }
       </select>
     </div>
     <div id="linesInfoBody"></div>
-  </div>
-  <div id="linesTowersView" style="display:none">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <div class="page-title" style="margin:0">🗼 الخطوط والأبراج</div>
-      <button class="btn btn-secondary btn-sm" onclick="showLinesHome()">⬅ رجوع</button>
-    </div>
-    <div class="field" style="margin-bottom:12px">
-      <label>اختر الخط</label>
-      <select id="linesTowersSelect" onchange="renderLinesTowers()" style="padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;font-size:14px;width:100%">
-        <option value="">-- اختر خطاً --</option>
-      </select>
-    </div>
-    <div id="linesTowersBody"></div>
   </div>
   <div id="linesStatusView" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
@@ -2335,46 +2321,24 @@ function saveLinesInfoData(data) {
 function showLinesHome() {
   document.getElementById('linesHomeView').style.display = '';
   document.getElementById('linesInfoView').style.display = 'none';
-  document.getElementById('linesTowersView').style.display = 'none';
   document.getElementById('linesStatusView').style.display = 'none';
 }
 
 function showLinesInfo() {
   document.getElementById('linesHomeView').style.display = 'none';
   document.getElementById('linesInfoView').style.display = '';
-  document.getElementById('linesTowersView').style.display = 'none';
   document.getElementById('linesStatusView').style.display = 'none';
   const addBtn = document.getElementById('btnAddLine');
   if (addBtn) addBtn.style.display = currentUser && currentUser.role === 'admin' ? '' : 'none';
   renderLinesInfo();
 }
 
-function showLinesTowers() {
-  document.getElementById('linesHomeView').style.display = 'none';
-  document.getElementById('linesInfoView').style.display = 'none';
-  document.getElementById('linesTowersView').style.display = '';
-  document.getElementById('linesStatusView').style.display = 'none';
-  const sel = document.getElementById('linesTowersSelect');
-  sel.innerHTML = '<option value="">-- اختر خطاً --</option>';
-  const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
-  const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
-  Object.keys(LINES_DATA).forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name; opt.textContent = name;
-    if (name.includes('400')) g400.appendChild(opt);
-    else g132.appendChild(opt);
-  });
-  sel.appendChild(g400); sel.appendChild(g132);
-  document.getElementById('linesTowersBody').innerHTML = '';
-}
-
 async function showLinesStatus() {
   document.getElementById('linesHomeView').style.display = 'none';
   document.getElementById('linesInfoView').style.display = 'none';
-  document.getElementById('linesTowersView').style.display = 'none';
   document.getElementById('linesStatusView').style.display = '';
   document.getElementById('linesStatusBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
-  if (!treatmentsCache || !treatmentsCache.length) await loadTreatments();
+  await loadTreatments();
   renderLinesStatus();
 }
 
@@ -2409,23 +2373,6 @@ function renderLinesInfo() {
       (notes ? '<div style="margin-top:8px;padding:8px;background:#fef9e7;border-radius:6px;font-size:12px;color:#7d6608"><strong>ملاحظة:</strong> ' + notes + '</div>' : '') +
       '</div>';
   });
-  body.innerHTML = html;
-}
-
-function renderLinesTowers() {
-  const name = document.getElementById('linesTowersSelect').value;
-  const body = document.getElementById('linesTowersBody');
-  if (!name) { body.innerHTML = ''; return; }
-  const towers = LINES_DATA[name];
-  if (!towers || !towers.length) { body.innerHTML = '<div class="empty-state">لا توجد أبراج</div>'; return; }
-  const tc = {'برج نهائي':'#922b21','برج شد':'#1a5276','برج تعليق':'#1e8449','برج عبور':'#7d6608','برج خاص':'#6c3483'};
-  let html = '<div style="margin-bottom:10px;color:#555;font-size:13px">إجمالي الأبراج: <strong>' + towers.length + '</strong></div>';
-  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">';
-  towers.forEach(t => {
-    const color = tc[t.type] || '#2c3e50';
-    html += '<div style="border:1px solid #e0e0e0;border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center"><span style="font-weight:700;color:#1a2e4a">برج ' + t.num + '</span><span style="font-size:11px;color:' + color + ';font-weight:600">' + t.type + '</span></div>';
-  });
-  html += '</div>';
   body.innerHTML = html;
 }
 
@@ -2500,7 +2447,7 @@ async function openLineTowerDetails(lineName) {
   document.getElementById('lineTowerListView').style.display = '';
   document.getElementById('lineTowerListTitle').textContent = '🗼 أبراج خط ' + lineName;
   document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
-  if (!treatmentsCache || !treatmentsCache.length) await loadTreatments();
+  await loadTreatments();
   renderLineTowerList(lineName);
 }
 
@@ -2554,7 +2501,7 @@ async function openTowerDetail(lineName, towerNum) {
   document.getElementById('towerDetailView').style.display = '';
   document.getElementById('towerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
   document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
-  if (!treatmentsCache || !treatmentsCache.length) await loadTreatments();
+  await loadTreatments();
   renderTowerDetail(lineName, towerNum);
 }
 
