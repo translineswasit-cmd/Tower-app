@@ -373,6 +373,26 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
+<!-- WORK ORDER MODAL (تنفذت البرقية) -->
+<div class="modal-bg" id="workOrderModal">
+  <div class="modal-box" style="max-width:380px">
+    <h3>📋 بيانات أمر العمل</h3>
+    <p style="margin:6px 0 14px 0;color:#666;font-size:0.85rem">رقم وتاريخ أمر العمل مطلوبين لتأكيد تنفيذ البرقية</p>
+    <div class="field" style="margin-bottom:10px">
+      <label>رقم أمر العمل *</label>
+      <input id="wo_number" placeholder="مثال: 123" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+    </div>
+    <div class="field" style="margin-bottom:6px">
+      <label>تاريخ أمر العمل *</label>
+      <input type="date" id="wo_date" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+    </div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-secondary" onclick="closeWorkOrderModal()">إلغاء</button>
+      <button class="btn btn-primary" style="background:#276749" onclick="confirmWorkOrder()">✅ تم</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADD MEMBER MODAL -->
 <div class="modal-bg" id="addMemberModal">
   <div class="modal-box" style="max-width:420px">
@@ -4973,6 +4993,7 @@ function clearTelegramForm() {
 }
 
 let editingTelegramId = null;
+let pendingWorkOrderContext = null; // { mode: 'new'|'update', rec?, id? }
 
 async function saveTelegram(status) {
   const lineName = document.getElementById('tg_line').value;
@@ -4995,6 +5016,16 @@ async function saveTelegram(status) {
     created_by: currentUser.full_name
   };
 
+  if (status === 'تنفذت') {
+    pendingWorkOrderContext = { mode: 'new', rec };
+    openWorkOrderModal();
+    return;
+  }
+
+  await persistTelegram(rec);
+}
+
+async function persistTelegram(rec) {
   try {
     let res;
     if (editingTelegramId) {
@@ -5003,19 +5034,62 @@ async function saveTelegram(status) {
       res = await sbFetch('work_telegrams', { method: 'POST', body: JSON.stringify(rec) });
     }
     if (!res.ok) throw new Error();
-    showToast(status === 'تنفذت' ? '✅ تم حفظ البرقية بحالة تنفذت' : '❌ تم حفظ البرقية بحالة لم تنفذ');
+    showToast(rec.status === 'تنفذت' ? '✅ تم حفظ البرقية بحالة تنفذت' : '❌ تم حفظ البرقية بحالة لم تنفذ');
     clearTelegramForm();
     switchTelegramSubTab('list', document.getElementById('telegramListTabBtn'));
   } catch { showToast('❌ تعذر الحفظ، حاول مرة أخرى', 'error'); }
 }
 
 async function updateTelegramStatus(id, newStatus) {
+  if (newStatus === 'تنفذت') {
+    pendingWorkOrderContext = { mode: 'update', id };
+    openWorkOrderModal();
+    return;
+  }
   try {
-    const res = await sbFetch(`work_telegrams?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ status: newStatus }) });
+    const res = await sbFetch(`work_telegrams?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ status: newStatus, work_order_no: null, work_order_date: null }) });
     if (!res.ok) throw new Error();
-    showToast(newStatus === 'تنفذت' ? '✅ تم تحديث الحالة إلى تنفذت' : '⏳ تم تحديث الحالة');
+    showToast('⏳ تم تحديث الحالة');
     renderTelegramLog();
   } catch { showToast('❌ تعذر التحديث', 'error'); }
+}
+
+function openWorkOrderModal() {
+  document.getElementById('wo_number').value = '';
+  document.getElementById('wo_date').value = '';
+  document.getElementById('workOrderModal').classList.add('show');
+}
+
+function closeWorkOrderModal() {
+  document.getElementById('workOrderModal').classList.remove('show');
+  pendingWorkOrderContext = null;
+}
+
+async function confirmWorkOrder() {
+  const woNumber = document.getElementById('wo_number').value.trim();
+  const woDate = document.getElementById('wo_date').value;
+
+  if (!woNumber || !woDate) {
+    showToast('⚠️ رقم وتاريخ أمر العمل مطلوبين', 'error'); return;
+  }
+  if (!pendingWorkOrderContext) { closeWorkOrderModal(); return; }
+
+  if (pendingWorkOrderContext.mode === 'new') {
+    const rec = { ...pendingWorkOrderContext.rec, work_order_no: woNumber, work_order_date: woDate };
+    document.getElementById('workOrderModal').classList.remove('show');
+    pendingWorkOrderContext = null;
+    await persistTelegram(rec);
+  } else if (pendingWorkOrderContext.mode === 'update') {
+    const id = pendingWorkOrderContext.id;
+    try {
+      const res = await sbFetch(`work_telegrams?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'تنفذت', work_order_no: woNumber, work_order_date: woDate }) });
+      if (!res.ok) throw new Error();
+      showToast('✅ تم تحديث الحالة إلى تنفذت');
+      document.getElementById('workOrderModal').classList.remove('show');
+      pendingWorkOrderContext = null;
+      renderTelegramLog();
+    } catch { showToast('❌ تعذر التحديث', 'error'); }
+  }
 }
 
 async function deleteTelegram(id) {
@@ -5065,6 +5139,7 @@ async function renderTelegramLog() {
         </div>
         <div style="margin:8px 0;font-weight:700;color:#2E4057;font-size:0.9rem">${r.work_type||'—'}</div>
         <div style="font-size:0.8rem;color:#4A5568;margin-bottom:6px">⏱️ الإطفاء: ${fmtDateTime(r.outage_from)} ← ${fmtDateTime(r.outage_to)}</div>
+        ${isDone ? `<div style="font-size:0.8rem;color:#22543D;margin-bottom:6px">📋 أمر العمل رقم ${r.work_order_no||'—'} | تاريخ ${r.work_order_date||'—'}</div>` : ''}
         ${r.notes ? `<div style="color:#4A5568;font-size:0.85rem;margin-bottom:8px">${r.notes}</div>` : ''}
         <div style="font-size:0.75rem;color:#718096;margin-top:6px">👤 ${r.created_by||'—'} | 📅 ${r.created_at ? r.created_at.split('T')[0] : '—'}</div>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
