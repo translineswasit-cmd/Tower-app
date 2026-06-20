@@ -23,6 +23,8 @@
   .popup-box ul { margin: 6px 0 0 0; padding-right:18px; font-size:0.8rem; color:#444; }
   .popup-box button { margin-top:8px; padding:6px 14px; border:none; border-radius:6px; background:#2E4057; color:white; font-size:0.78rem; cursor:pointer; width:100%; }
   .demo-banner { background:#FEF3CD; color:#7d6608; text-align:center; padding:6px; font-size:0.75rem; font-weight:600; }
+  .locate-btn { position:absolute; z-index:500; bottom:24px; left:14px; width:46px; height:46px; background:white; border-radius:50%; box-shadow:0 2px 10px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center; font-size:1.3rem; cursor:pointer; border:none; }
+  .map-wrap { position:relative; }
 </style>
 </head>
 <body>
@@ -39,7 +41,10 @@
   <div class="legend-item"><div class="legend-dot" style="background:#718096"></div> نقطة محطة/نهاية خط</div>
 </div>
 <div id="errBox"></div>
-<div id="map"></div>
+<div class="map-wrap">
+  <div id="map"></div>
+  <button class="locate-btn" onclick="locateMe()" title="موقعي الحالي">📍</button>
+</div>
 
 <script>
 window.addEventListener('error', function(e) {
@@ -113,6 +118,26 @@ DATA.stations.forEach(s => {
 });
 
 map.fitBounds(bounds, { padding: [30,30] });
+
+// زر "موقعي الحالي" — يستخدم GPS المتصفح، يعمل أوف لاين أيضاً (الموقع نفسه لا يحتاج إنترنت)
+let myLocationMarker = null;
+function locateMe() {
+  if (!navigator.geolocation) {
+    alert('متصفحك لا يدعم تحديد الموقع');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(function(pos) {
+    const lat = pos.coords.latitude, lon = pos.coords.longitude;
+    if (myLocationMarker) map.removeLayer(myLocationMarker);
+    myLocationMarker = L.circleMarker([lat, lon], {
+      radius: 9, fillColor: '#3182CE', color:'#fff', weight:3, fillOpacity:1
+    }).addTo(map);
+    myLocationMarker.bindPopup('📍 موقعك الحالي').openPopup();
+    map.setView([lat, lon], 15);
+  }, function(err) {
+    alert('تعذر تحديد الموقع: ' + err.message + '\nتأكد من تفعيل خدمة الموقع (GPS) وإعطاء الإذن للمتصفح');
+  }, { enableHighAccuracy: true, timeout: 10000 });
+}
 </script>
 </body>
 </html>
