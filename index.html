@@ -454,10 +454,10 @@ tbody tr:hover { background: #F7FAFC; }
       <h3 id="towersGridTitle">🗼 أبراج الخط</h3>
       <div class="towers-legend">
         <span class="legend-chip" style="background:#e2e8f0;color:#4a5568">⬜ لم يُكشف</span>
-        <span class="legend-chip" style="background:#48BB78">🟩 سليم</span>
-        <span class="legend-chip" style="background:#F6C23E;color:#1a202c">🟨 وسط</span>
-        <span class="legend-chip" style="background:#ED8936">🟧 قريب من الحرج</span>
-        <span class="legend-chip" style="background:#E53E3E">🟥 حرج</span>
+        <span class="legend-chip" style="background:#9AE6B4;color:#22543D">🟩 سليم</span>
+        <span class="legend-chip" style="background:#FDE9A0;color:#7C5E10">🟨 وسط</span>
+        <span class="legend-chip" style="background:#F8C193;color:#7B341E">🟧 قريب من الحرج</span>
+        <span class="legend-chip" style="background:#FCA5A5;color:#742A2A">🟥 حرج</span>
       </div>
     </div>
     <div class="towers-grid" id="towersGrid"></div>
@@ -512,14 +512,14 @@ tbody tr:hover { background: #F7FAFC; }
     <h3>⚡ الأسلاك</h3>
     <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد الفقرة</p>
     <div class="grid-3">
-      <div class="field"><label id="wireLbl_r1">الطور R</label><select id="f_wires_r1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
-      <div class="field"><label id="wireLbl_s1">الطور S</label><select id="f_wires_s1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
-      <div class="field"><label id="wireLbl_t1">الطور T</label><select id="f_wires_t1"><option value="">-- اختر --</option><option>سليم</option><option>تلف بسيط</option><option>تلف شديد</option><option>منقطع</option><option>ترهل</option></select></div>
+      <div class="field"><label id="wireLbl_r1">الطور R</label><textarea id="f_wires_r1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea></div>
+      <div class="field"><label id="wireLbl_s1">الطور S</label><textarea id="f_wires_s1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea></div>
+      <div class="field"><label id="wireLbl_t1">الطور T</label><textarea id="f_wires_t1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea></div>
     </div>
     <!-- حقول r2/s2/t2 مخفية — تُحفظ بنفس قيمة r1/s1/t1 تلقائياً -->
-    <select id="f_wires_r2" style="display:none"></select>
-    <select id="f_wires_s2" style="display:none"></select>
-    <select id="f_wires_t2" style="display:none"></select>
+    <input type="hidden" id="f_wires_r2">
+    <input type="hidden" id="f_wires_s2">
+    <input type="hidden" id="f_wires_t2">
   </div>
   <div class="form-card">
     <h3>🌍 الأرضي</h3>
@@ -1684,10 +1684,10 @@ function isInspectionComplete(rec) {
 
 const TOWER_LEVEL_META = {
   none:   { bg:'#e2e8f0', border:'#cbd5e0', text:'#4a5568' },
-  green:  { bg:'#48BB78', border:'#2F855A', text:'#ffffff' },
-  yellow: { bg:'#F6C23E', border:'#B7860B', text:'#1a202c' },
-  orange: { bg:'#ED8936', border:'#9C4221', text:'#ffffff' },
-  red:    { bg:'#E53E3E', border:'#822727', text:'#ffffff' },
+  green:  { bg:'#9AE6B4', border:'#68D391', text:'#22543D' },
+  yellow: { bg:'#FDE9A0', border:'#F0C75E', text:'#7C5E10' },
+  orange: { bg:'#F8C193', border:'#ED9A52', text:'#7B341E' },
+  red:    { bg:'#FCA5A5', border:'#F56565', text:'#742A2A' },
 };
 
 function getLatestRecordForTower(lineName, towerNum) {
