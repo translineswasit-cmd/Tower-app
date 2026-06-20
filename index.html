@@ -74,6 +74,24 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .page-title { font-size: 1.3rem; color: #1a2e4a; font-weight: 700; margin-bottom: 20px; }
 
 .form-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+
+.active-lines-tabs { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:12px; }
+.line-tab { display:flex; align-items:center; gap:6px; background:#eef1f6; border:2px solid transparent; border-radius:20px; padding:6px 6px 6px 14px; font-size:0.8rem; font-weight:700; color:#2E4057; white-space:nowrap; cursor:pointer; flex-shrink:0; }
+.line-tab.active { background:#2E4057; color:#fff; }
+.line-tab-end { background:rgba(255,255,255,0.25); border:none; border-radius:50%; width:24px; height:24px; font-size:0.75rem; cursor:pointer; color:inherit; }
+.line-tab:not(.active) .line-tab-end { background:#dde3ec; }
+
+.towers-grid-header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.towers-grid-header h3 { margin:0; font-size:1rem; color:#1a2e4a; }
+.towers-legend { display:flex; gap:6px; flex-wrap:wrap; }
+.legend-chip { font-size:0.68rem; font-weight:700; padding:3px 8px; border-radius:10px; }
+.towers-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(88px,1fr)); gap:10px; margin-bottom:18px; }
+.tower-box { border:2px solid; border-radius:12px; padding:8px 6px; text-align:center; cursor:pointer; transition:transform .12s; min-height:84px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
+.tower-box:hover { transform:translateY(-2px); }
+.tower-box-num { font-size:1.1rem; font-weight:800; line-height:1.1; }
+.tower-box-type { font-size:0.62rem; font-weight:600; opacity:0.9; }
+.tower-box-date { font-size:0.6rem; opacity:0.95; margin-top:2px; }
+.tower-box-complete { font-size:0.6rem; font-weight:700; }
 .form-card h3 { font-size: 0.95rem; color: #2E4057; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid #EBF0F5; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
@@ -415,14 +433,11 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page" id="page-form">
   <div class="page-title" id="formTitle">➕ إضافة كشف جديد</div>
 
-  <!-- تنبيه الكشف الناقص -->
-  <div class="incomplete-banner" id="incompleteBanner">
-    <h4>⚠️ هذا البرج كُشف مسبقاً في نفس الدورة</h4>
-    <p id="incompleteBannerMsg">فلان كشف هذا البرج بتاريخ كذا — الكشف ناقص</p>
-    <button class="btn-load-prev" onclick="loadPreviousInspection()">📂 تحميل الكشف السابق للإكمال</button>
-  </div>
+  <!-- شريط الخطوط النشطة حالياً -->
+  <div class="active-lines-tabs" id="activeLinesTabs" style="display:none"></div>
+
   <div class="form-card">
-    <h3>📌 معلومات عامة</h3>
+    <h3>📌 اختر الخط</h3>
     <div class="grid-2">
       <div class="field">
         <label>اسم الخط *</label>
@@ -430,39 +445,67 @@ tbody tr:hover { background: #F7FAFC; }
         <div class="line-info-strip" id="lineInfoStrip"></div>
       </div>
       <div class="field"><label>تاريخ الكشف *</label><input type="date" id="f_inspection_date"></div>
-      <div class="field">
-        <label>رقم البرج *</label>
-        <select id="f_tower_number" onchange="onTowerChange()" disabled><option value="">-- اختر الخط أولاً --</option></select>
-        <div class="tower-info-box" id="towerInfoBox"><div class="type-value" id="towerTypeValue">—</div><div class="type-desc" id="towerTypeDesc"></div></div>
+    </div>
+  </div>
+
+  <!-- شبكة أبراج الخط -->
+  <div id="towersGridSection" style="display:none">
+    <div class="towers-grid-header">
+      <h3 id="towersGridTitle">🗼 أبراج الخط</h3>
+      <div class="towers-legend">
+        <span class="legend-chip" style="background:#e2e8f0;color:#4a5568">⬜ لم يُكشف</span>
+        <span class="legend-chip" style="background:#48BB78">🟩 سليم</span>
+        <span class="legend-chip" style="background:#F6C23E;color:#1a202c">🟨 وسط</span>
+        <span class="legend-chip" style="background:#ED8936">🟧 قريب من الحرج</span>
+        <span class="legend-chip" style="background:#E53E3E">🟥 حرج</span>
       </div>
-      <div class="field"><label>نوع البرج</label><input id="f_tower_type" readonly placeholder="يُحدد تلقائياً" style="background:#F7FAFC;color:#4A5568;"></div>
     </div>
+    <div class="towers-grid" id="towersGrid"></div>
   </div>
-  <div class="insulator-section" id="insulatorSection" style="display:none">
-    <h3>🔘 كشف العوازل</h3>
-    <p class="insulator-hint">اضغط على أي عازل لتحديده كمتضرر (أحمر) أو سليم (أبيض)</p>
-    <div class="phases-wrap" id="phasesWrap"></div>
-    <div class="insulator-legend">
-      <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
-      <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
-    </div>
-  </div>
-  <div class="form-card">
-    <h3>🔩 تقاطعات الحديد</h3>
-    <div class="field"><label>ملاحظات</label>
-      <textarea id="f_iron_intersections" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
-    </div>
-  </div>
-  <div class="form-card">
-    <h3>🏗️ قواعد البرج</h3>
-    <div class="field"><label>ملاحظات</label>
-      <textarea id="f_tower_foundations" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
-    </div>
-  </div>
+
+  <!-- نافذة تفاصيل كشف البرج -->
+  <div class="modal-bg" id="towerInspectionModal">
+    <div class="modal-box" style="max-width:760px;text-align:right">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 id="modalTowerTitle" style="margin:0">🗼 برج رقم —</h3>
+        <button class="btn-sm btn-secondary" onclick="closeTowerInspectionModal()">✖ إغلاق</button>
+      </div>
+      <select id="f_tower_number" onchange="onTowerChange()" style="display:none"></select>
+      <input id="f_tower_type" readonly style="display:none">
+      <div class="tower-info-box" id="towerInfoBox"><div class="type-value" id="towerTypeValue">—</div><div class="type-desc" id="towerTypeDesc"></div></div>
+
+      <!-- تنبيه الكشف الناقص -->
+      <div class="incomplete-banner" id="incompleteBanner">
+        <h4>⚠️ هذا البرج كُشف مسبقاً في نفس الدورة</h4>
+        <p id="incompleteBannerMsg">فلان كشف هذا البرج بتاريخ كذا — الكشف ناقص</p>
+        <button class="btn-load-prev" onclick="loadPreviousInspection()">📂 تحميل الكشف السابق للإكمال</button>
+      </div>
+
+      <div class="insulator-section" id="insulatorSection" style="display:none">
+        <h3>🔘 كشف العوازل</h3>
+        <p class="insulator-hint">اضغط على أي عازل لتحديده كمتضرر (أحمر) أو سليم (أبيض)</p>
+        <div class="phases-wrap" id="phasesWrap"></div>
+        <div class="insulator-legend">
+          <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
+          <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
+        </div>
+      </div>
+      <div class="form-card">
+        <h3>🔩 تقاطعات الحديد</h3>
+        <div class="field"><label>ملاحظات</label>
+          <textarea id="f_iron_intersections" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
+        </div>
+      </div>
+      <div class="form-card">
+        <h3>🏗️ قواعد البرج</h3>
+        <div class="field"><label>ملاحظات</label>
+          <textarea id="f_tower_foundations" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
+        </div>
+      </div>
   <div class="form-card">
     <h3>🔧 ملحقات البرج</h3>
     <div class="field"><label>ملاحظات</label>
-      <textarea id="f_tower_attachments" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
+      <textarea id="f_tower_attachments" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
     </div>
   </div>
   <div class="form-card">
@@ -483,11 +526,11 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="grid-2">
       <div class="field">
         <label id="groundLbl1">الأرضي</label>
-        <textarea id="f_ground_1" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
+        <textarea id="f_ground_1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
       </div>
       <div class="field" id="groundBlock2" style="display:none">
         <label id="groundLbl2">الأرضي 2</label>
-        <textarea id="f_ground_2" rows="2" placeholder="اكتب أي مشاكل تلاحظها هنا (اتركه فاضي إذا سليم)"></textarea>
+        <textarea id="f_ground_2" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
       </div>
     </div>
   </div>
@@ -497,6 +540,16 @@ tbody tr:hover { background: #F7FAFC; }
       <div class="field"><label>مسببات الحرائق</label><select id="f_fire_causes"><option value="">-- اختر --</option><option>لا يوجد</option><option>أعشاب جافة</option><option>مخلفات</option><option>أشجار قريبة</option><option>تجاوزات</option></select></div>
       <div class="field"><label>وجود طريق</label><select id="f_road_access"><option value="">-- اختر --</option><option>متاح</option><option>صعب الوصول</option><option>غير متاح</option></select></div>
     </div>
+    <div class="grid-2" style="margin-top:10px">
+      <div class="field">
+        <label>ملاحظات مسببات الحرائق</label>
+        <textarea id="f_fire_causes_notes" rows="2" placeholder="اكتب التفاصيل إن وجدت"></textarea>
+      </div>
+      <div class="field">
+        <label>ملاحظات وجود الطريق</label>
+        <textarea id="f_road_access_notes" rows="2" placeholder="اكتب التفاصيل إن وجدت"></textarea>
+      </div>
+    </div>
   </div>
   <div class="form-card">
     <h3>📝 ملاحظات</h3>
@@ -504,8 +557,10 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
   <div class="form-actions">
     <button class="btn btn-primary" id="saveBtn" onclick="saveRecord()">💾 حفظ الكشف</button>
-    <button class="btn btn-secondary" onclick="clearForm()">🔄 مسح</button>
+    <button class="btn btn-secondary" onclick="resetTowerFieldsOnly()">🔄 مسح</button>
     <button class="btn btn-secondary" id="cancelEditBtn" style="display:none" onclick="cancelEdit()">❌ إلغاء</button>
+  </div>
+    </div>
   </div>
 </div>
 
@@ -1293,6 +1348,9 @@ const ROLE_LABELS = { admin: 'مدير', supervisor: 'مشرف', technician: 'ف
 let insulatorState = { R: [], S: [], T: [] };
 let currentVoltage = 0;
 let editId = null, deleteId = null, deleteUserId = null;
+let currentGridLine = null;
+let activeInspectionLines = [];
+try { activeInspectionLines = JSON.parse(localStorage.getItem('active_inspection_lines')||'[]'); } catch(e) { activeInspectionLines = []; }
 let records = [], filteredRecords = [];
 let fullRecordsCache = []; // كاش كامل (بدون قيد 6 أشهر) — خاص بحالة الخطوط والمغادرات فقط، يضمن دقة "آخر كشف لكل برج"
 let fullRecordsCacheLoadedAt = null;
@@ -1456,6 +1514,12 @@ function showPage(id, btn) {
   document.getElementById('page-' + id).classList.add('active');
   if (btn) btn.classList.add('active');
   if (id === 'admin') loadMembers();
+  if (id === 'form') {
+    renderActiveLinesTabs();
+    if (!currentGridLine && activeInspectionLines.length && !document.getElementById('f_line_name').value) {
+      switchToLineTab(activeInspectionLines[activeInspectionLines.length-1]);
+    }
+  }
 }
 
 function updateStatus(online) {
@@ -1529,7 +1593,13 @@ function onLineChange() {
   document.getElementById('f_tower_type').value = '';
   document.getElementById('towerInfoBox').style.display = 'none';
   document.getElementById('insulatorSection').style.display = 'none';
-  if (!name) { tSel.disabled = true; lineInfo.style.display = 'none'; currentVoltage = 0; updateWiresGroundUI(); return; }
+  if (!name) {
+    tSel.disabled = true; lineInfo.style.display = 'none'; currentVoltage = 0; updateWiresGroundUI();
+    currentGridLine = null;
+    document.getElementById('towersGridSection').style.display = 'none';
+    renderActiveLinesTabs();
+    return;
+  }
   const towers = LINES_DATA[name];
   towers.forEach(t => {
     const o = document.createElement('option');
@@ -1541,6 +1611,207 @@ function onLineChange() {
   lineInfo.textContent = '📡 عدد الأبراج: '+towers.length+' برج | '+v+' ك.ف';
   currentVoltage = v;
   updateWiresGroundUI();
+
+  if (!document.getElementById('f_inspection_date').value) {
+    document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
+  }
+  addActiveLineTab(name);
+  renderTowersGrid(name);
+}
+
+// ========================
+// TOWERS GRID + ACTIVE LINES TABS + INSPECTION MODAL
+// ========================
+
+// دالة مركزية واحدة لتحديد حالة البرج (حرج/قريب من الحرج/وسط/سليم) — أي تعديل على المعايير يُطبَّق هنا فقط
+// المعايير الحالية (قابلة للتعديل لاحقاً بالتجربة):
+//   400 ك.ف: 3 عوازل متتالية أو 7 متفرقة بنفس السلسلة = حرج
+//   132 ك.ف: 3 عوازل متتالية أو 4 متفرقة بنفس السلسلة = حرج
+//   قواعد البرج/ملحقات البرج متضررة بالكامل = حرج
+//   تقاطعات حديد ناقصة أكثر من 40 = حرج
+function maxConsecutiveDamaged(arr) {
+  let max = 0, cur = 0;
+  (arr||[]).forEach(v => { if (v) { cur++; if (cur > max) max = cur; } else cur = 0; });
+  return max;
+}
+
+function getTowerCriticalityLevel(rec) {
+  if (!rec) return 'none';
+  const voltage = rec.voltage || 132;
+  const consecutiveCritical = 3;
+  const scatteredCritical = voltage === 400 ? 7 : 4;
+  let maxConsec = 0, maxScattered = 0;
+  if (rec.insulator_state) {
+    try {
+      const st = JSON.parse(rec.insulator_state);
+      ['R','S','T'].forEach(p => {
+        const arr = st[p] || [];
+        const consec = maxConsecutiveDamaged(arr);
+        const scattered = arr.filter(Boolean).length;
+        if (consec > maxConsec) maxConsec = consec;
+        if (scattered > maxScattered) maxScattered = scattered;
+      });
+    } catch(e) {}
+  }
+  const foundationsCritical = /كامل/.test(rec.tower_foundations||'');
+  const attachmentsCritical = /كامل/.test(rec.tower_attachments||'');
+  let ironNum = 0;
+  const m = (rec.iron_intersections||'').match(/\d+/);
+  if (m) ironNum = parseInt(m[0]);
+
+  if (maxConsec >= consecutiveCritical || maxScattered >= scatteredCritical || foundationsCritical || attachmentsCritical || ironNum > 40) {
+    return 'red';
+  }
+  if (maxConsec >= consecutiveCritical-1 || maxScattered >= Math.max(2, scatteredCritical-3) || (ironNum > 30 && ironNum <= 40)) {
+    return 'orange';
+  }
+  const hasAnyIssue = maxScattered > 0 ||
+    (rec.iron_intersections && rec.iron_intersections.trim() && rec.iron_intersections.trim() !== 'سليم') ||
+    (rec.tower_foundations && rec.tower_foundations.trim() && rec.tower_foundations.trim() !== 'سليم') ||
+    (rec.tower_attachments && rec.tower_attachments.trim() && rec.tower_attachments.trim() !== 'سليم') ||
+    (rec.ground_1 && rec.ground_1.trim() && rec.ground_1.trim() !== 'سليم') ||
+    (rec.ground_2 && rec.ground_2.trim() && rec.ground_2.trim() !== 'سليم') ||
+    (rec.fire_causes && rec.fire_causes !== 'لا يوجد' && rec.fire_causes !== '');
+  if (hasAnyIssue) return 'yellow';
+  return 'green';
+}
+
+function isInspectionComplete(rec) {
+  if (!rec) return false;
+  const core = ['iron_intersections','tower_foundations','tower_attachments','fire_causes','road_access'];
+  return core.every(f => rec[f] && String(rec[f]).trim() !== '');
+}
+
+const TOWER_LEVEL_META = {
+  none:   { bg:'#e2e8f0', border:'#cbd5e0', text:'#4a5568' },
+  green:  { bg:'#48BB78', border:'#2F855A', text:'#ffffff' },
+  yellow: { bg:'#F6C23E', border:'#B7860B', text:'#1a202c' },
+  orange: { bg:'#ED8936', border:'#9C4221', text:'#ffffff' },
+  red:    { bg:'#E53E3E', border:'#822727', text:'#ffffff' },
+};
+
+function getLatestRecordForTower(lineName, towerNum) {
+  const recs = fullRecordsCache.filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNum));
+  if (!recs.length) return null;
+  recs.sort((a,b) => (b.inspection_date||'').localeCompare(a.inspection_date||'') || String(b.created_at||'').localeCompare(String(a.created_at||'')));
+  return recs[0];
+}
+
+async function renderTowersGrid(lineName) {
+  currentGridLine = lineName;
+  const section = document.getElementById('towersGridSection');
+  const grid = document.getElementById('towersGrid');
+  const titleEl = document.getElementById('towersGridTitle');
+  if (!lineName) { section.style.display = 'none'; renderActiveLinesTabs(); return; }
+  section.style.display = '';
+  titleEl.textContent = '🗼 أبراج خط: ' + lineName;
+  grid.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات الأبراج...</div>';
+  await loadFullRecordsCache();
+  const towers = LINES_DATA[lineName] || [];
+  grid.innerHTML = towers.map(t => {
+    const rec = getLatestRecordForTower(lineName, t.num);
+    const level = getTowerCriticalityLevel(rec);
+    const meta = TOWER_LEVEL_META[level];
+    const complete = rec ? isInspectionComplete(rec) : null;
+    const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) : 'لم يُكشف بعد';
+    const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
+    return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
+      <div class="tower-box-num">${t.num}</div>
+      <div class="tower-box-type">${t.type||''}</div>
+      <div class="tower-box-date">${dateLine}</div>
+      ${completeLine ? `<div class="tower-box-complete">${completeLine}</div>` : ''}
+    </div>`;
+  }).join('');
+  renderActiveLinesTabs();
+}
+
+function persistActiveLines() { localStorage.setItem('active_inspection_lines', JSON.stringify(activeInspectionLines)); }
+
+function addActiveLineTab(lineName) {
+  if (!lineName) return;
+  if (!activeInspectionLines.includes(lineName)) {
+    activeInspectionLines.push(lineName);
+    persistActiveLines();
+  }
+  renderActiveLinesTabs();
+}
+
+function renderActiveLinesTabs() {
+  const wrap = document.getElementById('activeLinesTabs');
+  if (!activeInspectionLines.length) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+  wrap.style.display = 'flex';
+  wrap.innerHTML = activeInspectionLines.map(ln => {
+    const isActive = ln === currentGridLine ? ' active' : '';
+    const safe = String(ln).replace(/'/g,"\\'");
+    return `<div class="line-tab${isActive}">
+      <span onclick="switchToLineTab('${safe}')">${ln}</span>
+      <button class="line-tab-end" onclick="endLineInspection('${safe}')" title="إنهاء الكشف">✅</button>
+    </div>`;
+  }).join('');
+}
+
+function switchToLineTab(lineName) {
+  document.getElementById('f_line_name').value = lineName;
+  onLineChange();
+}
+
+function endLineInspection(lineName) {
+  activeInspectionLines = activeInspectionLines.filter(l => l !== lineName);
+  persistActiveLines();
+  if (currentGridLine === lineName) {
+    if (activeInspectionLines.length) {
+      switchToLineTab(activeInspectionLines[activeInspectionLines.length-1]);
+    } else {
+      currentGridLine = null;
+      document.getElementById('f_line_name').value = '';
+      document.getElementById('towersGridSection').style.display = 'none';
+      document.getElementById('lineInfoStrip').style.display = 'none';
+      renderActiveLinesTabs();
+    }
+  } else {
+    renderActiveLinesTabs();
+  }
+  showToast('✅ تم إنهاء الكشف على هذا الخط');
+}
+
+function openTowerModal(lineName, towerNum) {
+  document.getElementById('f_line_name').value = lineName;
+  if (!document.getElementById('f_inspection_date').value) {
+    document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
+  }
+  const tSel = document.getElementById('f_tower_number');
+  if (tSel.dataset.loadedFor !== lineName) {
+    tSel.innerHTML = '<option value="">--</option>';
+    (LINES_DATA[lineName]||[]).forEach(t => {
+      const o = document.createElement('option');
+      o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code||'';
+      tSel.appendChild(o);
+    });
+    tSel.dataset.loadedFor = lineName;
+    tSel.disabled = false;
+    currentVoltage = LINE_VOLTAGE[lineName];
+    updateWiresGroundUI();
+  }
+  tSel.value = towerNum;
+  onTowerChange();
+  document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + towerNum;
+  document.getElementById('towerInspectionModal').classList.add('show');
+}
+
+function closeTowerInspectionModal() {
+  document.getElementById('towerInspectionModal').classList.remove('show');
+  if (editId) { cancelEdit(); return; }
+  resetTowerFieldsOnly();
+}
+
+function resetTowerFieldsOnly() {
+  document.getElementById('f_tower_number').value = '';
+  document.getElementById('f_tower_type').value = '';
+  document.getElementById('towerInfoBox').style.display = 'none';
+  document.getElementById('insulatorSection').style.display = 'none';
+  document.getElementById('incompleteBanner').style.display = 'none';
+  FIELDS.forEach(f => { const el = document.getElementById('f_'+f); if (el) el.value=''; });
+  insulatorState = {R:[],S:[],T:[]};
 }
 
 function onTowerChangeOriginal() {
@@ -1589,7 +1860,7 @@ function updateWiresGroundUI() {
     if (currentVoltage === 400) {
       groundLbl1.textContent = 'الأرضي 1 (' + spanLabel + ')';
       if (groundLbl2) groundLbl2.textContent = 'الأرضي 2 (' + spanLabel + ')';
-      groundBlock2.style.display = 'block';
+      groundBlock2.style.display = 'flex';
     } else {
       groundLbl1.textContent = 'الأرضي (' + spanLabel + ')';
       groundBlock2.style.display = 'none';
@@ -1678,8 +1949,8 @@ function buildInsulatorUI(voltage, towerType, savedState) {
 }
 
 function buildVShape(phase) {
-  const N = 28, svgW = 140, svgH = 110;
-  const tipX = svgW/2, tipY = svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const N = 28, svgW = 140, svgH = 110, gap = 10;
+  const tipY = svgH-8, tipLX = svgW/2 - gap/2, tipRX = svgW/2 + gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('width', svgW); svg.setAttribute('height', svgH);
   svg.setAttribute('viewBox', '0 0 '+svgW+' '+svgH);
@@ -1703,11 +1974,11 @@ function buildVShape(phase) {
     svg.appendChild(rect);
   }
 
-  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
+  const angL=Math.atan2(tlY-tipY,tlX-tipLX), angR=Math.atan2(trY-tipY,trX-tipRX);
   for(let i=0;i<N;i++){
     const t=i/(N-1);
-    addRect(tipX+(tlX-tipX)*t, tipY+(tlY-tipY)*t, angL, i);
-    addRect(tipX+(trX-tipX)*t, tipY+(trY-tipY)*t, angR, N+i);
+    addRect(tipLX+(tlX-tipLX)*t, tipY+(tlY-tipY)*t, angL, i);
+    addRect(tipRX+(trX-tipRX)*t, tipY+(trY-tipY)*t, angR, N+i);
   }
   return svg;
 }
@@ -1800,7 +2071,7 @@ function buildStraight4Chain(phase, stationA, stationB, totalCols, rows) {
 }
 
 function generateVShapeSVG(state) {
-  const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const N=28, svgW=140, svgH=110, gap=10, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   let rects='';
   function makeRect(cx,cy,angle,idx){
     const ca=Math.cos(angle),sa=Math.sin(angle);
@@ -1809,18 +2080,18 @@ function generateVShapeSVG(state) {
     const fill=state[idx]?'#FC4444':'white', stroke=state[idx]?'#9B0000':'#555';
     return `<polygon points="${pts}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`;
   }
-  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
+  const angL=Math.atan2(tlY-tipY,tlX-tipLX), angR=Math.atan2(trY-tipY,trX-tipRX);
   for(let i=0;i<N;i++){
     const t=i/(N-1);
-    rects+=makeRect(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i);
-    rects+=makeRect(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);
+    rects+=makeRect(tipLX+(tlX-tipLX)*t,tipY+(tlY-tipY)*t,angL,i);
+    rects+=makeRect(tipRX+(trX-tipRX)*t,tipY+(trY-tipY)*t,angR,N+i);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
 // نسخة ثلاثية الألوان من V-shape — لسجل المعالجات: أبيض=سليم، أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة
 function generateVShapeSVG3Color(state, treatedIdx) {
-  const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const N=28, svgW=140, svgH=110, gap=10, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   const treatedSet = new Set(treatedIdx||[]);
   let rects='';
   function makeRect(cx,cy,angle,idx){
@@ -1832,11 +2103,11 @@ function generateVShapeSVG3Color(state, treatedIdx) {
     else if (state[idx]) { fill='#FC4444'; stroke='#9B0000'; }
     return `<polygon points="${pts}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`;
   }
-  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
+  const angL=Math.atan2(tlY-tipY,tlX-tipLX), angR=Math.atan2(trY-tipY,trX-tipRX);
   for(let i=0;i<N;i++){
     const t=i/(N-1);
-    rects+=makeRect(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i);
-    rects+=makeRect(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);
+    rects+=makeRect(tipLX+(tlX-tipLX)*t,tipY+(tlY-tipY)*t,angL,i);
+    rects+=makeRect(tipRX+(trX-tipRX)*t,tipY+(trY-tipY)*t,angR,N+i);
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
@@ -1904,7 +2175,7 @@ function renderInsulatorSVG(svgStr) { return svgStr || '—'; }
 // ========================
 const FIELDS = ['iron_intersections','tower_foundations','tower_attachments',
   'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
-  'ground_1','ground_2','fire_causes','road_access','notes'];
+  'ground_1','ground_2','fire_causes','fire_causes_notes','road_access','road_access_notes','notes'];
 
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
@@ -1972,6 +2243,7 @@ function clearForm() {
 
 function cancelEdit() {
   editId=null; clearForm();
+  document.getElementById('towerInspectionModal').classList.remove('show');
   document.getElementById('formTitle').textContent='➕ إضافة كشف جديد';
   document.getElementById('saveBtn').textContent='💾 حفظ الكشف';
   document.getElementById('cancelEditBtn').style.display='none';
@@ -1987,27 +2259,40 @@ async function saveRecord() {
   if (editId) {
     try {
       const res = await sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(d) });
-      if (res.ok) { showToast('✅ تم تحديث السجل'); cancelEdit(); loadRecords(); }
+      if (res.ok) {
+        showToast('✅ تم تحديث السجل');
+        document.getElementById('towerInspectionModal').classList.remove('show');
+        cancelEdit(); loadRecords();
+      }
       else throw new Error();
     } catch { showToast('❌ خطأ بالتحديث', 'error'); }
   } else {
     if (navigator.onLine) {
       try {
         const res = await sbFetch('inspections', { method: 'POST', body: JSON.stringify(d) });
-        if (res.ok) { showToast('✅ تم حفظ الكشف بنجاح'); clearForm(); }
+        if (res.ok) { showToast('✅ تم حفظ الكشف بنجاح'); afterGridSaveSuccess(d); }
         else throw new Error();
       } catch {
         addToQueue(d);
         showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
-        clearForm();
+        afterGridSaveSuccess(d);
       }
     } else {
       addToQueue(d);
       showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
-      clearForm();
+      afterGridSaveSuccess(d);
     }
   }
   btn.disabled = false;
+}
+
+// بعد حفظ ناجح (أو تخزين أوف لاين) لكشف برج من شبكة الأبراج:
+// نحدّث الكاش المحلي فوراً لتلوين البرج بالشبكة بدون انتظار إعادة تحميل، نغلق النافذة المنبثقة، ونمسح حقول البرج فقط (لا نمسح الخط/التاريخ المختار)
+function afterGridSaveSuccess(d) {
+  fullRecordsCache.unshift({ ...d, created_at: new Date().toISOString() });
+  document.getElementById('towerInspectionModal').classList.remove('show');
+  resetTowerFieldsOnly();
+  if (currentGridLine) renderTowersGrid(currentGridLine);
 }
 
 function addToQueue(rec) {
@@ -2244,6 +2529,10 @@ function editRecord(id) {
   document.getElementById('saveBtn').textContent = '💾 حفظ التعديل';
   document.getElementById('cancelEditBtn').style.display = 'inline-block';
   showPage('form', document.querySelectorAll('nav button')[1]);
+  setTimeout(() => {
+    document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + (r.tower_number||'—');
+    document.getElementById('towerInspectionModal').classList.add('show');
+  }, 80);
   window.scrollTo(0,0);
 }
 
@@ -2321,7 +2610,8 @@ function confirmExportExcel() {
     'ملحقات البرج': r.tower_attachments,
     'أسلاك R': r.wires_r1, 'أسلاك S': r.wires_s1, 'أسلاك T': r.wires_t1,
     'الأرضي 1': r.ground_1, 'الأرضي 2': r.ground_2,
-    'مسببات الحرائق': r.fire_causes, 'وجود طريق': r.road_access, 'ملاحظات': r.notes
+    'مسببات الحرائق': r.fire_causes, 'ملاحظات مسببات الحرائق': r.fire_causes_notes,
+    'وجود طريق': r.road_access, 'ملاحظات الطريق': r.road_access_notes, 'ملاحظات': r.notes
   }));
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
@@ -3380,6 +3670,8 @@ function editPendingInspection(i) {
     const btn = document.getElementById('saveBtn');
     btn.setAttribute('onclick', 'saveEditedPendingInspection()');
     btn.textContent = '💾 حفظ التعديل (سيبقى معلقاً)';
+    document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + (rec.tower_number||'—');
+    document.getElementById('towerInspectionModal').classList.add('show');
   }, 80);
 }
 
@@ -3392,6 +3684,7 @@ function saveEditedPendingInspection() {
   localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
   editingPendingInspectionIndex = null;
   showToast('✅ تم تحديث الكشف المعلق');
+  document.getElementById('towerInspectionModal').classList.remove('show');
   clearForm();
   // إعادة الزر لوضعه الطبيعي
   const btn = document.getElementById('saveBtn');
