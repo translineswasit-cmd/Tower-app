@@ -283,6 +283,7 @@ tbody tr:hover { background: #F7FAFC; }
     <button onclick="showPage('departures',this);loadDepartures();">🚨 المغادرات</button>
     <button onclick="showPage('pendingSync',this);renderPendingSyncPage();">📦 المعلقة</button>
     <button onclick="showPage('admin',this)">⚙️ الإدارة</button>
+    <button onclick="showPage('inventory',this);showInventoryHome();">📦 المخزن</button>
     <button onclick="showPage('account',this);loadAccountPage();">👤 الحساب</button>
   </nav>
 </div>
@@ -332,6 +333,10 @@ tbody tr:hover { background: #F7FAFC; }
         <label>القسم / الموقع</label>
         <input id="newMemberDept" placeholder="مثال: فرق الميدان">
       </div>
+      <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+        <input type="checkbox" id="newMemberInvPerm" style="width:18px;height:18px">
+        <label style="margin:0">📦 صلاحية إدارة المخزن (إضافة/تعديل المواد)</label>
+      </div>
       <button type="submit" class="btn btn-primary" style="margin-top:4px">➕ إنشاء الحساب</button>
     </form>
 
@@ -359,6 +364,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('departures',document.querySelectorAll('nav button')[5]);loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
     <div class="card" onclick="showPage('records',document.querySelectorAll('nav button')[2]);loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span><span class="sublabel">Excel أو PDF</span></div>
     <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[4])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
+    <div class="card" onclick="showPage('inventory',document.querySelectorAll('nav button')[8]);showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span><span class="sublabel">عدة العمل ومواد الخطوط</span></div>
   </div>
 </div>
 
@@ -973,6 +979,130 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
+<!-- ============ INVENTORY (المخزن) ============ -->
+<div class="page" id="page-inventory">
+  <div class="page-title">📦 المخزن</div>
+
+  <div id="invHomeView">
+    <div class="cards-grid" style="grid-template-columns:repeat(2,1fr);max-width:600px;margin:0 auto">
+      <div class="card" onclick="showInventoryTools()"><span class="icon">🧰</span><span class="label">عدة العمل</span><span class="sublabel">أدوات وعدد العمل الميداني</span></div>
+      <div class="card" onclick="showInventoryMaterials()"><span class="icon">🔩</span><span class="label">مواد خطوط النقل</span><span class="sublabel">حديد، عوازل، أسلاك...</span></div>
+    </div>
+  </div>
+
+  <!-- TOOLS VIEW -->
+  <div id="invToolsView" style="display:none">
+    <div class="records-toolbar">
+      <button class="btn btn-secondary btn-sm" onclick="showInventoryHome()">⬅ رجوع</button>
+      <button class="btn btn-primary btn-sm" id="btnAddTool" onclick="openAddToolModal()" style="display:none">➕ إضافة مادة جديدة</button>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="records-table" style="width:100%;background:white;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05)">
+      <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">الحجم</th><th style="padding:10px">تعمل</th><th style="padding:10px">عاطلة</th><th style="padding:10px">الإجمالي</th><th style="padding:10px">ملاحظات</th><th style="padding:10px">إجراء</th></tr></thead>
+      <tbody id="toolsBody"><tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- MATERIALS VIEW -->
+  <div id="invMaterialsView" style="display:none">
+    <div class="records-toolbar">
+      <button class="btn btn-secondary btn-sm" onclick="showInventoryHome()">⬅ رجوع</button>
+      <button class="btn btn-primary btn-sm" id="btnAddMaterial" onclick="openAddMaterialModal()" style="display:none">➕ إضافة مادة جديدة</button>
+    </div>
+    <div class="filters-bar">
+      <div class="field"><label>فلترة بالجهد</label>
+        <select id="materialVoltageFilter" onchange="renderMaterials()">
+          <option value="all">الكل</option><option value="132">132 ك.ف</option><option value="400">400 ك.ف</option><option value="both">كلا الجهدين</option>
+        </select>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="records-table" style="width:100%;background:white;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05)">
+      <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">الجهد</th><th style="padding:10px">النوع/الحجم</th><th style="padding:10px">الكمية</th><th style="padding:10px">الوحدة</th><th style="padding:10px">ملاحظات</th><th style="padding:10px">إجراء</th></tr></thead>
+      <tbody id="materialsBody"><tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Add Tool Rows (multi-row) -->
+<div id="addToolModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;overflow-y:auto">
+  <div style="background:white;max-width:760px;margin:20px auto;border-radius:14px;padding:24px">
+    <h3 style="margin-bottom:16px;color:#1a2e4a">➕ إضافة مادة جديدة (عدة العمل)</h3>
+    <div id="toolRowsWrap"></div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addToolRow()">➕ إضافة حجم/مادة آخر</button>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="closeAddToolModal()">إلغاء</button>
+      <button class="btn btn-primary" onclick="saveToolRows()">💾 حفظ الكل</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Edit Tool -->
+<div id="editToolModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;overflow-y:auto">
+  <div style="background:white;max-width:460px;margin:20px auto;border-radius:14px;padding:24px">
+    <h3 style="margin-bottom:16px;color:#1a2e4a">✏️ تعديل مادة</h3>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="field"><label>اسم المادة</label><input id="et_name"></div>
+      <div class="field"><label>الحجم</label><input id="et_size"></div>
+      <div class="grid-2">
+        <div class="field"><label>تعمل</label><input id="et_working" type="number" min="0"></div>
+        <div class="field"><label>عاطلة</label><input id="et_broken" type="number" min="0"></div>
+      </div>
+      <div class="field"><label>ملاحظات</label><textarea id="et_notes" rows="2"></textarea></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:space-between">
+      <button class="btn btn-del btn-sm" onclick="deleteToolRow()">🗑️ حذف</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-secondary" onclick="closeEditToolModal()">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveEditTool()">💾 حفظ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Add Material Rows (multi-row) -->
+<div id="addMaterialModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;overflow-y:auto">
+  <div style="background:white;max-width:860px;margin:20px auto;border-radius:14px;padding:24px">
+    <h3 style="margin-bottom:16px;color:#1a2e4a">➕ إضافة مادة جديدة (مواد خطوط النقل)</h3>
+    <div id="materialRowsWrap"></div>
+    <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addMaterialRow()">➕ إضافة مادة آخرى</button>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="closeAddMaterialModal()">إلغاء</button>
+      <button class="btn btn-primary" onclick="saveMaterialRows()">💾 حفظ الكل</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Edit Material -->
+<div id="editMaterialModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;overflow-y:auto">
+  <div style="background:white;max-width:460px;margin:20px auto;border-radius:14px;padding:24px">
+    <h3 style="margin-bottom:16px;color:#1a2e4a">✏️ تعديل مادة</h3>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="field"><label>اسم المادة</label><input id="em_name"></div>
+      <div class="field"><label>الجهد</label>
+        <select id="em_voltage"><option value="132">132 ك.ف</option><option value="400">400 ك.ف</option><option value="both">كلا الجهدين</option></select>
+      </div>
+      <div class="field"><label>النوع/الحجم</label><input id="em_size"></div>
+      <div class="grid-2">
+        <div class="field"><label>الكمية</label><input id="em_qty" type="number" step="0.01" min="0"></div>
+        <div class="field"><label>الوحدة</label>
+          <select id="em_unit"><option value="قطعة">قطعة</option><option value="متر">متر</option><option value="كم">كم</option><option value="طن">طن</option></select>
+        </div>
+      </div>
+      <div class="field"><label>ملاحظات</label><textarea id="em_notes" rows="2"></textarea></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:space-between">
+      <button class="btn btn-del btn-sm" onclick="deleteMaterialRow()">🗑️ حذف</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-secondary" onclick="closeEditMaterialModal()">إلغاء</button>
+        <button class="btn btn-primary" onclick="saveEditMaterial()">💾 حفظ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="page" id="page-admin">
   <div class="page-title">⚙️ لوحة الإدارة</div>
   <div class="admin-grid">
@@ -987,8 +1117,8 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
     <div class="members-table-wrap">
       <table>
-        <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>القسم</th><th>الحالة</th><th>إجراءات</th></tr></thead>
-        <tbody id="membersBody"><tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+        <thead><tr><th>الاسم</th><th>اسم المستخدم</th><th>الصلاحية</th><th>القسم</th><th>الحالة</th><th>صلاحية المخزن</th><th>إجراءات</th></tr></thead>
+        <tbody id="membersBody"><tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1217,7 +1347,7 @@ async function doLogin() {
       btn.disabled = false; btn.textContent = 'دخول'; return;
     }
 
-    currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department, phone: user.phone };
+    currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department, phone: user.phone, can_manage_inventory: !!user.can_manage_inventory };
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
 
     // Update last_login (fire and forget)
@@ -2761,7 +2891,7 @@ async function loadMembers() {
 
 function renderMembers() {
   const tbody = document.getElementById('membersBody');
-  if (!allUsers.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">لا يوجد أعضاء</td></tr>'; return; }
+  if (!allUsers.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">لا يوجد أعضاء</td></tr>'; return; }
   tbody.innerHTML = allUsers.map(u => `
     <tr>
       <td>${u.full_name}</td>
@@ -2769,11 +2899,20 @@ function renderMembers() {
       <td><span class="role-badge role-${u.role}">${ROLE_LABELS[u.role]||u.role}</span></td>
       <td>${u.department||'—'}</td>
       <td>${u.is_active ? '🟢 فعّال' : '🔴 معطّل'}</td>
+      <td><button class="btn-sm ${u.can_manage_inventory ? 'btn-edit' : 'btn-secondary'}" onclick="toggleInventoryPerm('${u.id}', ${!!u.can_manage_inventory})">${u.can_manage_inventory ? '📦 مفعّلة' : '📦 معطّلة'}</button></td>
       <td>
         <button class="btn-sm btn-edit" onclick="toggleUserActive('${u.id}', ${u.is_active})">${u.is_active?'⏸️':'▶️'}</button>
         <button class="btn-sm btn-del" onclick="openDeleteUserModal('${u.id}')" style="margin-right:4px">🗑️</button>
       </td>
     </tr>`).join('');
+}
+
+async function toggleInventoryPerm(id, current) {
+  try {
+    await sbFetch(`users?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ can_manage_inventory: !current }) });
+    showToast(!current ? '📦 تم منح صلاحية المخزن' : '📦 تم سحب صلاحية المخزن');
+    loadMembers();
+  } catch { showToast('❌ خطأ', 'error'); }
 }
 
 function genUsername(fullName) {
@@ -2806,6 +2945,7 @@ async function createMember() {
   const fullName = document.getElementById('newMemberName').value.trim();
   const role = document.getElementById('newMemberRole').value;
   const department = document.getElementById('newMemberDept').value.trim();
+  const canManageInventory = document.getElementById('newMemberInvPerm').checked;
 
   if (!fullName) { showToast('⚠️ أدخل اسم العضو', 'error'); return; }
 
@@ -2816,7 +2956,7 @@ async function createMember() {
     const res = await sbFetch('users', {
       method: 'POST',
       headers: { 'Prefer': 'return=representation' },
-      body: JSON.stringify({ full_name: fullName, username, password, role, department, email: username+'@local.app' })
+      body: JSON.stringify({ full_name: fullName, username, password, role, department, email: username+'@local.app', can_manage_inventory: canManageInventory })
     });
     if (!res.ok) throw new Error();
 
@@ -4538,6 +4678,308 @@ async function renderTelegramLog() {
       uniqueLines.map(n => `<option value="${n}" ${n===currentLine?'selected':''}>${n}</option>`).join('');
 
   } catch { body.innerHTML = '<div class="empty-state">⚠️ تعذر التحميل</div>'; }
+}
+// ==================== INVENTORY (المخزن) ====================
+
+function canManageInventory() {
+  return !!(currentUser && (currentUser.role === 'admin' || currentUser.can_manage_inventory));
+}
+
+let allTools = [];
+let allMaterials = [];
+let editingToolId = null;
+let editingMaterialId = null;
+
+function showInventoryHome() {
+  document.getElementById('invHomeView').style.display = '';
+  document.getElementById('invToolsView').style.display = 'none';
+  document.getElementById('invMaterialsView').style.display = 'none';
+}
+
+function showInventoryTools() {
+  document.getElementById('invHomeView').style.display = 'none';
+  document.getElementById('invToolsView').style.display = '';
+  document.getElementById('invMaterialsView').style.display = 'none';
+  document.getElementById('btnAddTool').style.display = canManageInventory() ? '' : 'none';
+  loadInventoryTools();
+}
+
+function showInventoryMaterials() {
+  document.getElementById('invHomeView').style.display = 'none';
+  document.getElementById('invToolsView').style.display = 'none';
+  document.getElementById('invMaterialsView').style.display = '';
+  document.getElementById('btnAddMaterial').style.display = canManageInventory() ? '' : 'none';
+  loadInventoryMaterials();
+}
+
+// ---- TOOLS ----
+async function loadInventoryTools() {
+  const tbody = document.getElementById('toolsBody');
+  tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  try {
+    const res = await sbFetch('inventory_tools?select=*&order=name.asc');
+    if (!res.ok) throw new Error();
+    allTools = await res.json();
+    renderTools();
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
+  }
+}
+
+function renderTools() {
+  const tbody = document.getElementById('toolsBody');
+  if (!allTools.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">لا توجد مواد مضافة</td></tr>'; return; }
+  const canEdit = canManageInventory();
+  tbody.innerHTML = allTools.map(t => {
+    const working = t.qty_working || 0, broken = t.qty_broken || 0;
+    const editBtn = canEdit ? `<button class="btn-sm btn-edit" onclick="openEditToolModal('${t.id}')">✏️</button>` : '—';
+    return `<tr>
+      <td style="padding:8px">${t.name}</td>
+      <td style="padding:8px">${t.size||'—'}</td>
+      <td style="padding:8px;color:#1e8449;font-weight:700">${working}</td>
+      <td style="padding:8px;color:${broken>0?'#c0392b':'#999'};font-weight:700">${broken}</td>
+      <td style="padding:8px;font-weight:700">${working+broken}</td>
+      <td style="padding:8px;font-size:12px;color:#777">${t.notes||'—'}</td>
+      <td style="padding:8px">${editBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+let toolRowCount = 0;
+function openAddToolModal() {
+  if (!canManageInventory()) { showToast('⛔ لا تملك صلاحية إدارة المخزن', 'error'); return; }
+  document.getElementById('toolRowsWrap').innerHTML = '';
+  toolRowCount = 0;
+  addToolRow();
+  document.getElementById('addToolModal').style.display = '';
+}
+function closeAddToolModal() { document.getElementById('addToolModal').style.display = 'none'; }
+
+function addToolRow() {
+  toolRowCount++;
+  const id = 'toolRow' + toolRowCount;
+  const div = document.createElement('div');
+  div.className = 'form-card';
+  div.id = id;
+  div.style.marginBottom = '10px';
+  div.innerHTML = `
+    <div class="grid-2">
+      <div class="field"><label>اسم المادة *</label><input class="tr_name" placeholder="مثال: مفك"></div>
+      <div class="field"><label>الحجم</label><input class="tr_size" placeholder="مثال: 10 ملم"></div>
+      <div class="field"><label>تعمل</label><input class="tr_working" type="number" min="0" value="0"></div>
+      <div class="field"><label>عاطلة</label><input class="tr_broken" type="number" min="0" value="0"></div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>ملاحظات</label><input class="tr_notes" placeholder="اختياري"></div>
+    <button class="btn btn-del btn-sm" style="margin-top:8px" onclick="document.getElementById('${id}').remove()">🗑️ إزالة هذا الصف</button>`;
+  document.getElementById('toolRowsWrap').appendChild(div);
+}
+
+async function saveToolRows() {
+  const rows = Array.from(document.querySelectorAll('#toolRowsWrap .form-card'));
+  const payload = [];
+  for (const row of rows) {
+    const name = row.querySelector('.tr_name').value.trim();
+    if (!name) continue;
+    payload.push({
+      name,
+      size: row.querySelector('.tr_size').value.trim() || null,
+      qty_working: parseInt(row.querySelector('.tr_working').value) || 0,
+      qty_broken: parseInt(row.querySelector('.tr_broken').value) || 0,
+      notes: row.querySelector('.tr_notes').value.trim() || null
+    });
+  }
+  if (!payload.length) { showToast('⚠️ أدخل اسم مادة واحدة على الأقل', 'error'); return; }
+  try {
+    const res = await sbFetch('inventory_tools', { method: 'POST', body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error();
+    showToast('✅ تم حفظ المواد بنجاح');
+    closeAddToolModal();
+    loadInventoryTools();
+  } catch { showToast('❌ خطأ بالحفظ، تحقق من الاتصال', 'error'); }
+}
+
+function openEditToolModal(id) {
+  const t = allTools.find(x => x.id === id);
+  if (!t) return;
+  editingToolId = id;
+  document.getElementById('et_name').value = t.name || '';
+  document.getElementById('et_size').value = t.size || '';
+  document.getElementById('et_working').value = t.qty_working || 0;
+  document.getElementById('et_broken').value = t.qty_broken || 0;
+  document.getElementById('et_notes').value = t.notes || '';
+  document.getElementById('editToolModal').style.display = '';
+}
+function closeEditToolModal() { document.getElementById('editToolModal').style.display = 'none'; editingToolId = null; }
+
+async function saveEditTool() {
+  if (!editingToolId) return;
+  const body = {
+    name: document.getElementById('et_name').value.trim(),
+    size: document.getElementById('et_size').value.trim() || null,
+    qty_working: parseInt(document.getElementById('et_working').value) || 0,
+    qty_broken: parseInt(document.getElementById('et_broken').value) || 0,
+    notes: document.getElementById('et_notes').value.trim() || null
+  };
+  try {
+    const res = await sbFetch(`inventory_tools?id=eq.${editingToolId}`, { method: 'PATCH', body: JSON.stringify(body) });
+    if (!res.ok) throw new Error();
+    showToast('✅ تم التعديل بنجاح');
+    closeEditToolModal();
+    loadInventoryTools();
+  } catch { showToast('❌ خطأ بالتعديل', 'error'); }
+}
+
+async function deleteToolRow() {
+  if (!editingToolId) return;
+  if (!confirm('هل تريد حذف هذه المادة نهائياً؟')) return;
+  try {
+    await sbFetch(`inventory_tools?id=eq.${editingToolId}`, { method: 'DELETE' });
+    showToast('🗑️ تم الحذف');
+    closeEditToolModal();
+    loadInventoryTools();
+  } catch { showToast('❌ خطأ بالحذف', 'error'); }
+}
+
+// ---- MATERIALS ----
+async function loadInventoryMaterials() {
+  const tbody = document.getElementById('materialsBody');
+  tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  try {
+    const res = await sbFetch('inventory_materials?select=*&order=name.asc');
+    if (!res.ok) throw new Error();
+    allMaterials = await res.json();
+    renderMaterials();
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
+  }
+}
+
+function voltageLabel(v) { return v === 'both' ? 'كلا الجهدين' : (v + ' ك.ف'); }
+
+function renderMaterials() {
+  const filter = document.getElementById('materialVoltageFilter').value;
+  const tbody = document.getElementById('materialsBody');
+  const filtered = allMaterials.filter(m => filter === 'all' || String(m.voltage) === filter);
+  if (!filtered.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">لا توجد مواد مضافة</td></tr>'; return; }
+  const canEdit = canManageInventory();
+  tbody.innerHTML = filtered.map(m => {
+    const vc = m.voltage === '400' ? '#c0392b' : (m.voltage === '132' ? '#1a5276' : '#6c3483');
+    const editBtn = canEdit ? `<button class="btn-sm btn-edit" onclick="openEditMaterialModal('${m.id}')">✏️</button>` : '—';
+    return `<tr>
+      <td style="padding:8px">${m.name}</td>
+      <td style="padding:8px"><span style="background:${vc};color:#fff;padding:2px 9px;border-radius:14px;font-size:11px;font-weight:700">${voltageLabel(m.voltage)}</span></td>
+      <td style="padding:8px">${m.type_size||'—'}</td>
+      <td style="padding:8px;font-weight:700">${m.qty}</td>
+      <td style="padding:8px">${m.unit||'—'}</td>
+      <td style="padding:8px;font-size:12px;color:#777">${m.notes||'—'}</td>
+      <td style="padding:8px">${editBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+let materialRowCount = 0;
+function openAddMaterialModal() {
+  if (!canManageInventory()) { showToast('⛔ لا تملك صلاحية إدارة المخزن', 'error'); return; }
+  document.getElementById('materialRowsWrap').innerHTML = '';
+  materialRowCount = 0;
+  addMaterialRow();
+  document.getElementById('addMaterialModal').style.display = '';
+}
+function closeAddMaterialModal() { document.getElementById('addMaterialModal').style.display = 'none'; }
+
+function addMaterialRow() {
+  materialRowCount++;
+  const id = 'matRow' + materialRowCount;
+  const div = document.createElement('div');
+  div.className = 'form-card';
+  div.id = id;
+  div.style.marginBottom = '10px';
+  div.innerHTML = `
+    <div class="grid-3">
+      <div class="field"><label>اسم المادة *</label><input class="mr_name" placeholder="مثال: عازل"></div>
+      <div class="field"><label>الجهد *</label>
+        <select class="mr_voltage"><option value="132">132 ك.ف</option><option value="400">400 ك.ف</option><option value="both">كلا الجهدين</option></select>
+      </div>
+      <div class="field"><label>النوع/الحجم</label><input class="mr_size" placeholder="مثال: V-string"></div>
+    </div>
+    <div class="grid-2" style="margin-top:10px">
+      <div class="field"><label>الكمية</label><input class="mr_qty" type="number" step="0.01" min="0" value="0"></div>
+      <div class="field"><label>الوحدة</label>
+        <select class="mr_unit"><option value="قطعة">قطعة</option><option value="متر">متر</option><option value="كم">كم</option><option value="طن">طن</option></select>
+      </div>
+    </div>
+    <div class="field" style="margin-top:10px"><label>ملاحظات</label><input class="mr_notes" placeholder="اختياري"></div>
+    <button class="btn btn-del btn-sm" style="margin-top:8px" onclick="document.getElementById('${id}').remove()">🗑️ إزالة هذا الصف</button>`;
+  document.getElementById('materialRowsWrap').appendChild(div);
+}
+
+async function saveMaterialRows() {
+  const rows = Array.from(document.querySelectorAll('#materialRowsWrap .form-card'));
+  const payload = [];
+  for (const row of rows) {
+    const name = row.querySelector('.mr_name').value.trim();
+    if (!name) continue;
+    payload.push({
+      name,
+      voltage: row.querySelector('.mr_voltage').value,
+      type_size: row.querySelector('.mr_size').value.trim() || null,
+      qty: parseFloat(row.querySelector('.mr_qty').value) || 0,
+      unit: row.querySelector('.mr_unit').value,
+      notes: row.querySelector('.mr_notes').value.trim() || null
+    });
+  }
+  if (!payload.length) { showToast('⚠️ أدخل اسم مادة واحدة على الأقل', 'error'); return; }
+  try {
+    const res = await sbFetch('inventory_materials', { method: 'POST', body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error();
+    showToast('✅ تم حفظ المواد بنجاح');
+    closeAddMaterialModal();
+    loadInventoryMaterials();
+  } catch { showToast('❌ خطأ بالحفظ، تحقق من الاتصال', 'error'); }
+}
+
+function openEditMaterialModal(id) {
+  const m = allMaterials.find(x => x.id === id);
+  if (!m) return;
+  editingMaterialId = id;
+  document.getElementById('em_name').value = m.name || '';
+  document.getElementById('em_voltage').value = m.voltage || '132';
+  document.getElementById('em_size').value = m.type_size || '';
+  document.getElementById('em_qty').value = m.qty || 0;
+  document.getElementById('em_unit').value = m.unit || 'قطعة';
+  document.getElementById('em_notes').value = m.notes || '';
+  document.getElementById('editMaterialModal').style.display = '';
+}
+function closeEditMaterialModal() { document.getElementById('editMaterialModal').style.display = 'none'; editingMaterialId = null; }
+
+async function saveEditMaterial() {
+  if (!editingMaterialId) return;
+  const body = {
+    name: document.getElementById('em_name').value.trim(),
+    voltage: document.getElementById('em_voltage').value,
+    type_size: document.getElementById('em_size').value.trim() || null,
+    qty: parseFloat(document.getElementById('em_qty').value) || 0,
+    unit: document.getElementById('em_unit').value,
+    notes: document.getElementById('em_notes').value.trim() || null
+  };
+  try {
+    const res = await sbFetch(`inventory_materials?id=eq.${editingMaterialId}`, { method: 'PATCH', body: JSON.stringify(body) });
+    if (!res.ok) throw new Error();
+    showToast('✅ تم التعديل بنجاح');
+    closeEditMaterialModal();
+    loadInventoryMaterials();
+  } catch { showToast('❌ خطأ بالتعديل', 'error'); }
+}
+
+async function deleteMaterialRow() {
+  if (!editingMaterialId) return;
+  if (!confirm('هل تريد حذف هذه المادة نهائياً؟')) return;
+  try {
+    await sbFetch(`inventory_materials?id=eq.${editingMaterialId}`, { method: 'DELETE' });
+    showToast('🗑️ تم الحذف');
+    closeEditMaterialModal();
+    loadInventoryMaterials();
+  } catch { showToast('❌ خطأ بالحذف', 'error'); }
 }
 
 </script>
