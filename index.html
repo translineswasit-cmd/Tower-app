@@ -76,10 +76,11 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .form-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
 
 .active-lines-tabs { display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:12px; }
-.line-tab { display:flex; align-items:center; gap:6px; background:#eef1f6; border:2px solid transparent; border-radius:20px; padding:6px 6px 6px 14px; font-size:0.8rem; font-weight:700; color:#2E4057; white-space:nowrap; cursor:pointer; flex-shrink:0; }
+.line-tab { display:flex; flex-direction:column; align-items:center; gap:4px; background:#eef1f6; border:2px solid transparent; border-radius:14px; padding:8px 14px; font-size:0.8rem; font-weight:700; color:#2E4057; white-space:nowrap; flex-shrink:0; }
 .line-tab.active { background:#2E4057; color:#fff; }
-.line-tab-end { background:rgba(255,255,255,0.25); border:none; border-radius:50%; width:24px; height:24px; font-size:0.75rem; cursor:pointer; color:inherit; }
-.line-tab:not(.active) .line-tab-end { background:#dde3ec; }
+.line-tab-name { cursor:pointer; }
+.line-tab-end { display:flex; align-items:center; gap:4px; background:rgba(255,255,255,0.3); border:none; border-radius:8px; padding:3px 10px; font-size:0.68rem; font-weight:700; cursor:pointer; color:inherit; }
+.line-tab:not(.active) .line-tab-end { background:#dde3ec; color:#2E4057; }
 
 .towers-grid-header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
 .towers-grid-header h3 { margin:0; font-size:1rem; color:#1a2e4a; }
@@ -1744,8 +1745,8 @@ function renderActiveLinesTabs() {
     const isActive = ln === currentGridLine ? ' active' : '';
     const safe = String(ln).replace(/'/g,"\\'");
     return `<div class="line-tab${isActive}">
-      <span onclick="switchToLineTab('${safe}')">${ln}</span>
-      <button class="line-tab-end" onclick="endLineInspection('${safe}')" title="إنهاء الكشف">✅</button>
+      <span class="line-tab-name" onclick="switchToLineTab('${safe}')">${ln}</span>
+      <button class="line-tab-end" onclick="endLineInspection('${safe}')">✅ إنهاء الكشف</button>
     </div>`;
   }).join('');
 }
