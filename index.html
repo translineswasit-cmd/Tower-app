@@ -895,6 +895,9 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="thermalNewView" style="display:none">
     <div class="page-title">➕ الكشف الحراري الجديد <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
 
+    <!-- شريط الخطوط النشطة حالياً (كشف حراري) -->
+    <div class="active-lines-tabs" id="activeThermalTabs" style="display:none"></div>
+
     <!-- step 1: session setup -->
     <div class="form-card" id="thermalSessionForm">
       <h3>📌 بيانات الجلسة</h3>
@@ -917,7 +920,8 @@ tbody tr:hover { background: #F7FAFC; }
         <span>📡 الخط: <b id="thSumLine"></b></span>
         <span>📅 التاريخ: <b id="thSumDate"></b></span>
         <span>🌤️ حرارة الجو: <b id="thSumAmbient"></b>°C</span>
-        <button class="btn-sm btn-secondary" style="margin-right:auto" onclick="finishThermalSession()">⏹️ إنهاء الكشف</button>
+        <button class="btn-sm btn-secondary" style="margin-right:auto" onclick="showThermalSetupForAnotherLine()">➕ كشف خط آخر</button>
+        <button class="btn-sm btn-secondary" onclick="finishThermalSession()">⏹️ إنهاء الكشف</button>
       </div>
       <div class="form-card">
         <h3>📍 نقطة القياس</h3>
@@ -2785,7 +2789,10 @@ const THERMAL_DB_KEY = 'thermal_inspections_cache';
 const THERMAL_QUEUE_KEY = 'thermal_queue';
 const HOT_THRESHOLD = 70;
 
-let thermalSession = null;   // { line_name, inspection_date, ambient_temp }
+let thermalSession = null;   // { line_name, inspection_date, ambient_temp } -- derived from current active line
+let activeThermalSessions = {};  // { line_name: { inspection_date, ambient_temp } }
+let currentThermalLine = null;
+try { activeThermalSessions = JSON.parse(localStorage.getItem('active_thermal_sessions') || '{}'); } catch { activeThermalSessions = {}; }
 let thermalRecords = [];
 let filteredThermal = [];
 
@@ -2798,10 +2805,12 @@ function showThermalNew() {
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'block';
   document.getElementById('thermalArchiveView').style.display = 'none';
-  // reset to step 1 unless a session is already active
-  if (!thermalSession) {
+  renderActiveThermalTabs();
+  if (!currentThermalLine) {
     document.getElementById('thermalSessionForm').style.display = 'block';
     document.getElementById('thermalPointForm').style.display = 'none';
+  } else {
+    switchToThermalTab(currentThermalLine);
   }
 }
 function showThermalArchive() {
@@ -2862,25 +2871,83 @@ function buildThermalPointOptions(lineName) {
   return opts;
 }
 
+function persistThermalSessions() { localStorage.setItem('active_thermal_sessions', JSON.stringify(activeThermalSessions)); }
+
 function startThermalSession() {
   const line = document.getElementById('th_line_name').value;
   const date = document.getElementById('th_date').value;
   const ambient = document.getElementById('th_ambient').value;
   if (!line || !date || ambient === '') { showToast('⚠️ عبّي كل الحقول (الخط، التاريخ، حرارة الجو)', 'error'); return; }
 
-  thermalSession = { line_name: line, inspection_date: date, ambient_temp: parseFloat(ambient) };
+  activeThermalSessions[line] = { inspection_date: date, ambient_temp: parseFloat(ambient) };
+  persistThermalSessions();
+  currentThermalLine = line;
+  switchToThermalTab(line);
+}
 
-  document.getElementById('thSumLine').textContent = line;
-  document.getElementById('thSumDate').textContent = date;
-  document.getElementById('thSumAmbient').textContent = ambient;
+function renderActiveThermalTabs() {
+  const wrap = document.getElementById('activeThermalTabs');
+  const lines = Object.keys(activeThermalSessions);
+  if (!lines.length) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+  wrap.style.display = 'flex';
+  wrap.innerHTML = lines.map(ln => {
+    const isActive = ln === currentThermalLine ? ' active' : '';
+    const safe = String(ln).replace(/'/g,"\\'");
+    return `<div class="line-tab${isActive}">
+      <span class="line-tab-name" onclick="switchToThermalTab('${safe}')">${ln}</span>
+      <button class="line-tab-end" onclick="endThermalLine('${safe}')">⏹️ إنهاء</button>
+    </div>`;
+  }).join('');
+}
+
+function switchToThermalTab(lineName) {
+  const sess = activeThermalSessions[lineName];
+  if (!sess) return;
+  currentThermalLine = lineName;
+  thermalSession = { line_name: lineName, inspection_date: sess.inspection_date, ambient_temp: sess.ambient_temp };
+
+  document.getElementById('thSumLine').textContent = lineName;
+  document.getElementById('thSumDate').textContent = sess.inspection_date;
+  document.getElementById('thSumAmbient').textContent = sess.ambient_temp;
 
   const ptSel = document.getElementById('th_point');
   ptSel.innerHTML = '<option value="">-- اختر --</option>' +
-    buildThermalPointOptions(line).map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+    buildThermalPointOptions(lineName).map(o => `<option value="${o.value}">${o.label}</option>`).join('');
 
   document.getElementById('thermalSessionForm').style.display = 'none';
   document.getElementById('thermalPointForm').style.display = 'block';
   resetThermalReadingInputs();
+  renderActiveThermalTabs();
+}
+
+function showThermalSetupForAnotherLine() {
+  document.getElementById('thermalPointForm').style.display = 'none';
+  document.getElementById('thermalSessionForm').style.display = 'block';
+  document.getElementById('th_line_name').value = '';
+  document.getElementById('th_ambient').value = '';
+  document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
+}
+
+function endThermalLine(lineName) {
+  delete activeThermalSessions[lineName];
+  persistThermalSessions();
+  if (currentThermalLine === lineName) {
+    const remaining = Object.keys(activeThermalSessions);
+    if (remaining.length) {
+      switchToThermalTab(remaining[remaining.length - 1]);
+    } else {
+      currentThermalLine = null;
+      thermalSession = null;
+      document.getElementById('thermalPointForm').style.display = 'none';
+      document.getElementById('thermalSessionForm').style.display = 'block';
+      document.getElementById('th_ambient').value = '';
+      document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
+      renderActiveThermalTabs();
+    }
+  } else {
+    renderActiveThermalTabs();
+  }
+  showToast('✅ تم إنهاء الكشف الحراري على هذا الخط');
 }
 
 function onThermalPointChange() {
@@ -3033,11 +3100,7 @@ async function syncLineEntryQueue() {
 }
 
 function finishThermalSession() {
-  thermalSession = null;
-  document.getElementById('thermalPointForm').style.display = 'none';
-  document.getElementById('thermalSessionForm').style.display = 'block';
-  document.getElementById('th_ambient').value = '';
-  document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
+  if (currentThermalLine) endThermalLine(currentThermalLine);
   showThermalHome();
 }
 
