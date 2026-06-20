@@ -3083,7 +3083,9 @@ async function confirmDeleteUser() {
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       console.error('Delete user failed:', res.status, errText);
-      showToast('❌ تعذر الحذف (لا توجد صلاحية حذف بقاعدة البيانات)', 'error');
+      let detail = errText;
+      try { const j = JSON.parse(errText); detail = j.message || j.hint || j.code || errText; } catch {}
+      showToast('❌ تعذر الحذف: ' + (detail || ('خطأ ' + res.status)), 'error');
       closeDeleteUserModal();
       return;
     }
