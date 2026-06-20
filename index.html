@@ -142,6 +142,12 @@ tbody tr:hover { background: #F7FAFC; }
 .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500; align-items: center; justify-content: center; padding: 16px; }
 .modal-bg.show { display: flex; }
 .modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 380px; width: 100%; text-align: center; max-height: 90vh; overflow-y: auto; }
+.manage-acc-btn { background:#eef1f6; color:#4a5568; border:none; width:38px; height:38px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s; }
+.manage-acc-btn:hover { background:#dde3ec; }
+.acc-actions-grid { display:flex; justify-content:center; gap:18px; margin-top:18px; flex-wrap:wrap; }
+.acc-action-btn { background:#f7f8fa; color:#4a5568; border:1px solid #e2e6ec; border-radius:14px; width:92px; padding:16px 8px 12px; display:flex; flex-direction:column; align-items:center; gap:8px; cursor:pointer; transition:all .15s; }
+.acc-action-btn:hover { background:#eef1f6; border-color:#c7cedb; transform:translateY(-2px); }
+.acc-action-btn span { font-size:0.74rem; font-weight:600; line-height:1.3; }
 .modal-box h3 { color: #C53030; margin-bottom: 10px; }
 .modal-box p { color: #4A5568; margin-bottom: 22px; }
 .modal-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
@@ -307,6 +313,18 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="modal-actions">
       <button class="btn btn-del btn-sm" style="padding:10px 24px" onclick="confirmDeleteUser()">نعم، احذف</button>
       <button class="btn btn-secondary" onclick="closeDeleteUserModal()">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ACCOUNT ACTIONS MODAL -->
+<div class="modal-bg" id="accountActionsModal">
+  <div class="modal-box" style="max-width:340px">
+    <h3>⚙️ إدارة الحساب</h3>
+    <p style="margin:6px 0 0 0;color:#666;font-size:0.85rem" id="aa_name"></p>
+    <div class="acc-actions-grid" id="accountActionsGrid"></div>
+    <div class="modal-actions" style="margin-top:20px">
+      <button class="btn btn-secondary" onclick="closeAccountActionsModal()">إغلاق</button>
     </div>
   </div>
 </div>
@@ -2917,7 +2935,6 @@ async function loadMembers() {
 function renderMembers() {
   const tbody = document.getElementById('membersBody');
   if (!allUsers.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">لا يوجد أعضاء</td></tr>'; return; }
-  const isAdmin = currentUser && currentUser.role === 'admin';
   tbody.innerHTML = allUsers.map(u => `
     <tr>
       <td>${u.full_name}</td>
@@ -2926,13 +2943,35 @@ function renderMembers() {
       <td>${u.department||'—'}</td>
       <td>${u.is_active ? '🟢 فعّال' : '🔴 معطّل'}</td>
       <td><button class="btn-sm ${u.can_manage_inventory ? 'btn-edit' : 'btn-secondary'}" onclick="toggleInventoryPerm('${u.id}', ${!!u.can_manage_inventory})">${u.can_manage_inventory ? '📦 مفعّلة' : '📦 معطّلة'}</button></td>
-      <td>
-        ${isAdmin ? `<button class="btn-sm btn-edit" onclick="openViewPasswordModal('${u.id}')" title="عرض كلمة السر">👁️</button>` : ''}
-        <button class="btn-sm btn-edit" onclick="toggleUserActive('${u.id}', ${u.is_active})">${u.is_active?'⏸️':'▶️'}</button>
-        <button class="btn-sm btn-del" onclick="openDeleteUserModal('${u.id}')" style="margin-right:4px">🗑️</button>
-      </td>
+      <td><button class="manage-acc-btn" onclick="openAccountActionsModal('${u.id}')" title="إدارة الحساب">${ICON_SETTINGS}</button></td>
     </tr>`).join('');
 }
+
+// ==== أيقونات SVG حديثة (خط نظيف) ====
+const ICON_SETTINGS = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+const ICON_EYE = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+const ICON_PAUSE = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>`;
+const ICON_PLAY = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 21 12 6 21 6 3"></polygon></svg>`;
+const ICON_TRASH = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>`;
+
+let accountActionsUserId = null;
+function openAccountActionsModal(id) {
+  const u = allUsers.find(x => x.id === id);
+  if (!u) return;
+  accountActionsUserId = id;
+  const isAdmin = currentUser && currentUser.role === 'admin';
+  document.getElementById('aa_name').textContent = u.full_name || '—';
+  const wrap = document.getElementById('accountActionsGrid');
+  let html = '';
+  if (isAdmin) {
+    html += `<button class="acc-action-btn" onclick="closeAccountActionsModal();openViewPasswordModal('${u.id}')">${ICON_EYE}<span>معاينة الحساب</span></button>`;
+  }
+  html += `<button class="acc-action-btn" onclick="closeAccountActionsModal();toggleUserActive('${u.id}', ${u.is_active})">${u.is_active ? ICON_PAUSE : ICON_PLAY}<span>${u.is_active ? 'إيقاف الحساب' : 'تفعيل الحساب'}</span></button>`;
+  html += `<button class="acc-action-btn" onclick="closeAccountActionsModal();openDeleteUserModal('${u.id}')">${ICON_TRASH}<span>حذف الحساب</span></button>`;
+  wrap.innerHTML = html;
+  document.getElementById('accountActionsModal').classList.add('show');
+}
+function closeAccountActionsModal() { document.getElementById('accountActionsModal').classList.remove('show'); accountActionsUserId = null; }
 
 function openViewPasswordModal(id) {
   const u = allUsers.find(x => x.id === id);
@@ -3040,9 +3079,22 @@ function closeDeleteUserModal() { document.getElementById('deleteUserModal').cla
 async function confirmDeleteUser() {
   if (!deleteUserId) return;
   try {
-    await sbFetch(`users?id=eq.${deleteUserId}`, { method: 'DELETE' });
+    const res = await sbFetch(`users?id=eq.${deleteUserId}`, { method: 'DELETE', headers: { 'Prefer': 'return=representation' } });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error('Delete user failed:', res.status, errText);
+      showToast('❌ تعذر الحذف (لا توجد صلاحية حذف بقاعدة البيانات)', 'error');
+      closeDeleteUserModal();
+      return;
+    }
+    const deletedRows = await res.json().catch(() => []);
+    if (!deletedRows || !deletedRows.length) {
+      showToast('⚠️ لم يتم العثور على الحساب أو لم يُحذف فعلياً', 'error');
+      closeDeleteUserModal();
+      return;
+    }
     showToast('🗑️ تم حذف العضو'); loadMembers();
-  } catch { showToast('❌ خطأ بالحذف', 'error'); }
+  } catch { showToast('❌ خطأ بالاتصال، تحقق من الإنترنت', 'error'); }
   closeDeleteUserModal();
 }
 
