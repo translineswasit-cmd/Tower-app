@@ -68,7 +68,7 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .cards-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 14px; }
 .card { background: white; border-radius: 12px; padding: 24px 16px; text-align: center; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .card:hover { transform: translateY(-4px); box-shadow: 0 8px 28px rgba(0,0,0,0.13); }
-.card .icon { font-size: 2.2rem; }
+.card .icon { font-size: 2.8rem; }
 .card .label { font-weight: 700; color: #2E4057; font-size: 0.95rem; }
 .card .sublabel { color: #A0AEC0; font-size: 0.75rem; }
 .page-title { font-size: 1.3rem; color: #1a2e4a; font-weight: 700; margin-bottom: 20px; }
@@ -253,9 +253,9 @@ tbody tr:hover { background: #F7FAFC; }
 .dr-text-area { width:100%; padding:7px 8px; border:1.5px solid #E2E8F0; border-radius:8px; font-size:0.8rem; margin-bottom:6px; font-family:inherit; }
 .cards-grid-3col { grid-template-columns: repeat(3, 1fr) !important; gap:10px; }
 .cards-grid-3col .card { padding:14px 6px; }
-.cards-grid-3col .card .icon { font-size:1.6rem; }
-.card .icon-img { width:34px; height:34px; display:block; margin:0 auto; }
-.cards-grid-3col .card .icon-img { width:26px; height:26px; }
+.cards-grid-3col .card .icon { font-size:2.3rem; }
+.card .icon-img { width:46px; height:46px; display:block; margin:0 auto; }
+.cards-grid-3col .card .icon-img { width:40px; height:40px; }
 .cards-grid-3col .card .label { font-size:0.75rem; }
 .staff-stat-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
 .staff-stat-name { font-weight:700; font-size:0.95rem; color:#1a202c; }
@@ -464,7 +464,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="cards-grid">
     <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span><span class="sublabel">عرض جميع البيانات</span></div>
-    <div class="card" onclick="showPage('lines');showLinesHome();"><span class="icon">📊</span><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
+    <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img"><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img"><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
   </div>
@@ -476,10 +476,10 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="cards-grid cards-grid-3col">
     <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
     <div class="card" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span></div>
-    <div class="card" onclick="showPage('lines');showLinesHome();"><span class="icon">📊</span><span class="label">الخطوط</span></div>
+    <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img"><span class="label">الخطوط</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
-    <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">📦</span><span class="label">المعلّقة</span></div>
+    <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
     <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img"><span class="label">إحصائيات الموظفين</span></div>
     <div class="card" id="svcExportCard" onclick="showPage('records');loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span></div>
     <div class="card" id="svcDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span></div>
@@ -912,7 +912,7 @@ tbody tr:hover { background: #F7FAFC; }
 
 <!-- PENDING SYNC PAGE -->
 <div class="page" id="page-pendingSync">
-  <div class="page-title">📦 العناصر المعلقة (بانتظار الرفع)</div>
+  <div class="page-title">⏳ العناصر المعلقة (بانتظار الرفع)</div>
   <p style="color:#718096;font-size:0.85rem;margin-bottom:14px">هذي الكشوفات والمعالجات محفوظة على جهازك فقط، وستُرفع تلقائياً عند توفر الإنترنت (يتحقق التطبيق دورياً). تقدر تضغط الزر لرفعها فوراً، أو تعدلها أو تحذفها قبل الرفع.</p>
   <button class="btn btn-primary" id="manualSyncBtn" onclick="manualSyncAll()" style="margin-bottom:16px;width:100%">🔄 رفع الآن</button>
   <div id="pendingSyncBody"><div class="empty-state">لا توجد عناصر معلقة ✅</div></div>
@@ -1057,7 +1057,7 @@ tbody tr:hover { background: #F7FAFC; }
 
 <!-- LINES PAGE -->
 <div class="page" id="page-lines">
-  <div class="page-title">📊 الخطوط</div>
+  <div class="page-title"><img src="icon-lines.png" style="width:28px;height:28px;vertical-align:middle;margin-left:6px"> الخطوط</div>
   <div id="linesHomeView">
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="showLinesInfo()">📋 بيانات الخطوط</button>

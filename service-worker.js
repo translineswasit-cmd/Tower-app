@@ -1,10 +1,11 @@
-const CACHE_NAME = 'tower-app-v42';
+const CACHE_NAME = 'tower-app-v44';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './manifest.json',
   './icon-thermal.png',
   './icon-stats.png',
+  './icon-lines.png',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
 ];
 
