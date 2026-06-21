@@ -35,19 +35,28 @@ body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #
 
 /* HEADER */
 .header { background: linear-gradient(135deg, #1a2e4a 0%, #2E4057 60%, #3a5a8a 100%); color: white; position: sticky; top: 0; z-index: 200; box-shadow: 0 3px 16px rgba(0,0,0,0.25); }
-.header-top { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; }
+.header-top { display: flex; flex-direction: column; padding: 12px 20px; gap: 6px; }
 .header-brand { display: flex; align-items: center; gap: 12px; }
-.header-brand .logo { font-size: 2rem; }
-.header-brand h1 { font-size: 1.1rem; font-weight: 700; }
-.header-brand p { font-size: 0.7rem; opacity: 0.75; }
-.header-right { display: flex; align-items: center; gap: 10px; }
+.header-brand .logo { font-size: 2rem; flex-shrink: 0; }
+.header-brand h1 { font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
+.header-brand p { font-size: 0.7rem; opacity: 0.75; white-space: nowrap; }
+.header-userrow { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .user-pill { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.12); padding: 6px 12px; border-radius: 20px; font-size: 0.8rem; cursor: pointer; }
 .user-pill .avatar { width: 24px; height: 24px; border-radius: 50%; background: #63B3ED; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.75rem; }
-.status-pill { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.12); padding: 5px 12px; border-radius: 20px; font-size: 0.78rem; }
-.header-username { color: white; font-size: 0.8rem; font-weight: 600; opacity: 0.92; white-space: nowrap; }
-.dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-pill { display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.12); padding: 3px 10px; border-radius: 16px; font-size: 0.68rem; }
+.header-username { color: white; font-size: 0.7rem; font-weight: 600; opacity: 0.92; white-space: nowrap; }
+.dot { width: 7px; height: 7px; border-radius: 50%; }
 .dot.green { background: #48BB78; box-shadow: 0 0 6px #48BB78; }
 .dot.red { background: #FC8181; }
+
+/* HEADER MINI MODE (operation pages) */
+.header-mini { display: none; align-items: center; padding: 10px 16px; }
+.header.mini-mode .header-top,
+.header.mini-mode #pendingSyncBadge,
+.header.mini-mode nav { display: none !important; }
+.header.mini-mode .header-mini { display: flex; }
+.header-back-btn { background: rgba(255,255,255,0.12); color: white; border: none; border-radius: 8px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.header-back-btn:hover { background: rgba(255,255,255,0.2); }
 nav { display: flex; border-top: 1px solid rgba(255,255,255,0.12); overflow-x: auto; }
 nav button { flex: 1; min-width: 80px; padding: 11px 8px; background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; font-family: inherit; font-size: 0.82rem; transition: all 0.2s; border-bottom: 3px solid transparent; white-space: nowrap; }
 nav button:hover { color: white; background: rgba(255,255,255,0.08); }
@@ -321,18 +330,21 @@ tbody tr:hover { background: #F7FAFC; }
 <!-- APP ROOT -->
 <div id="appRoot" style="display:none">
 
-<div class="header">
+<div class="header" id="appHeader">
   <div class="header-top">
     <div class="header-brand">
       <span class="logo">⚡</span>
       <div><h1>الشركة العامة لنقل الطاقة الكهربائية</h1><p>قسم الخطوط - فرع شبكة واسط</p></div>
     </div>
-    <div class="header-right">
-      <div class="status-pill"><span class="dot green" id="statusDot"></span><span id="statusText">متصل</span></div>
+    <div class="header-userrow">
       <span class="header-username" id="headerUserName">—</span>
+      <div class="status-pill"><span class="dot green" id="statusDot"></span><span id="statusText">متصل</span></div>
     </div>
   </div>
   <div id="pendingSyncBadge" onclick="showPage('pendingSync');renderPendingSyncPage();" style="display:none;background:#F6C23E;color:#1a202c;padding:8px 16px;text-align:center;font-weight:700;font-size:0.85rem;cursor:pointer;align-items:center;justify-content:center;gap:6px"></div>
+  <div class="header-mini" id="headerMini">
+    <button class="header-back-btn" onclick="goBackFromOperation()">→ رجوع</button>
+  </div>
   <nav>
     <button class="active" data-page="home" onclick="showPage('home',this)">🏠 الرئيسية</button>
     <button data-page="services" onclick="showPage('services',this)">🧰 الخدمات <span id="servicesNavDot" style="display:none;color:#F6C23E">●</span></button>
@@ -1643,10 +1655,23 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport'];
+let previousPageId = 'home';
+
 function navKeyForPage(id) {
   if (id === 'home') return 'home';
   if (id === 'account') return 'account';
   return 'services';
+}
+
+function updateHeaderMode(id) {
+  const header = document.getElementById('appHeader');
+  if (!header) return;
+  header.classList.toggle('mini-mode', OPERATION_PAGES.includes(id));
+}
+
+function goBackFromOperation() {
+  showPage(previousPageId);
 }
 
 function showPage(id, btn) {
@@ -1655,6 +1680,9 @@ function showPage(id, btn) {
     showToast('⚠️ صلاحية القراءة فقط، لا يمكنك إضافة كشف', 'error');
     return;
   }
+  const currentActive = document.querySelector('.page.active');
+  const currentId = currentActive ? currentActive.id.replace('page-','') : null;
+  if (currentId && currentId !== id) previousPageId = currentId;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
@@ -1664,6 +1692,7 @@ function showPage(id, btn) {
     const navBtn = document.querySelector(`nav button[data-page="${navKeyForPage(id)}"]`);
     if (navBtn) navBtn.classList.add('active');
   }
+  updateHeaderMode(id);
   if (id === 'admin') loadMembers();
   if (id === 'form') {
     renderActiveLinesTabs();
