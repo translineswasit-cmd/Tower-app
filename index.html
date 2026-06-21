@@ -254,6 +254,8 @@ tbody tr:hover { background: #F7FAFC; }
 .cards-grid-3col { grid-template-columns: repeat(3, 1fr) !important; gap:10px; }
 .cards-grid-3col .card { padding:14px 6px; }
 .cards-grid-3col .card .icon { font-size:1.6rem; }
+.card .icon-img { width:34px; height:34px; display:block; margin:0 auto; }
+.cards-grid-3col .card .icon-img { width:26px; height:26px; }
 .cards-grid-3col .card .label { font-size:0.75rem; }
 .staff-stat-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
 .staff-stat-name { font-weight:700; font-size:0.95rem; color:#1a202c; }
@@ -463,7 +465,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span><span class="sublabel">عرض جميع البيانات</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><span class="icon">📊</span><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
-    <div class="card" onclick="showPage('thermal');showThermalHome();"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
+    <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img"><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
   </div>
 </div>
@@ -475,10 +477,10 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
     <div class="card" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><span class="icon">📊</span><span class="label">الخطوط</span></div>
-    <div class="card" onclick="showPage('thermal');showThermalHome();"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span></div>
+    <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">📦</span><span class="label">المعلّقة</span></div>
-    <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><span class="icon">📊</span><span class="label">إحصائيات الموظفين</span></div>
+    <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img"><span class="label">إحصائيات الموظفين</span></div>
     <div class="card" id="svcExportCard" onclick="showPage('records');loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span></div>
     <div class="card" id="svcDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span></div>
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
@@ -4128,7 +4130,7 @@ function renderLinesInfo() {
     const idx = data.indexOf(l);
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
     const notes = l.notes && l.notes !== 'None' ? l.notes : '';
-    const editBtns = isAdmin ? '<div style="display:flex;gap:6px"><button class="btn btn-secondary btn-sm" onclick="editLine(' + idx + ')">✏️</button><button style="background:#e74c3c;color:white;border:none;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px" onclick="deleteLine(' + idx + ')">🗑️</button></div>' : '';
+    const editBtns = isAdmin ? '<div style="display:flex;gap:6px"><button class="btn btn-secondary btn-sm" onclick="editLine(' + idx + ')">✏️</button><button class="btn btn-secondary btn-sm" onclick="deleteLine(' + idx + ')">🗑️</button></div>' : '';
     html += '<div class="form-card" style="margin-bottom:12px;padding:14px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">' +
       '<div style="font-weight:700;font-size:15px;color:#1a2e4a">' + l.name + '</div>' +
