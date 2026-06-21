@@ -258,6 +258,8 @@ tbody tr:hover { background: #F7FAFC; }
 .cards-grid-3col .card .icon-img { width:40px; height:40px; }
 .icon-img-lg { width:56px !important; height:56px !important; }
 .cards-grid-3col .icon-img-lg { width:48px !important; height:48px !important; }
+.icon-img-xl { width:72px !important; height:72px !important; }
+.cards-grid-3col .icon-img-xl { width:60px !important; height:60px !important; }
 .cards-grid-3col .card .label { font-size:0.75rem; }
 .staff-stat-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
 .staff-stat-name { font-weight:700; font-size:0.95rem; color:#1a202c; }
@@ -468,7 +470,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span><span class="sublabel">بانتظار الرفع</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
-    <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-lg"><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
+    <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
   </div>
 </div>
 
@@ -478,11 +480,11 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="cards-grid cards-grid-3col">
     <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
     <div class="card" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span></div>
-    <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-lg"><span class="label">الخطوط</span></div>
+    <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
-    <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-lg"><span class="label">إحصائيات الموظفين</span></div>
+    <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">إحصائيات الموظفين</span></div>
     <div class="card" id="svcExportCard" onclick="showPage('records');loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span></div>
     <div class="card" id="svcDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span></div>
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
