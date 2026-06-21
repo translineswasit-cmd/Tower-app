@@ -241,6 +241,26 @@ tbody tr:hover { background: #F7FAFC; }
 .dep-tab.active { background: #2E4057; color: white; }
 .dep-tab:hover:not(.active) { background: #E2E8F0; }
 .dep-card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-right: 4px solid #FC4444; }
+.staff-stat-card { background: white; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-right: 4px solid #2E4057; cursor: pointer; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.dr-row-card { background: white; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-right: 4px solid #3182CE; }
+.dr-row-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.dr-row-title { font-weight:700; color:#1a202c; font-size:0.92rem; }
+.dr-meta-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:0.78rem; color:#4A5568; margin-bottom:10px; }
+.dr-checks { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.dr-check-pill { display:flex; align-items:center; gap:5px; background:#F7FAFC; border:1px solid #E2E8F0; border-radius:16px; padding:5px 10px; font-size:0.78rem; cursor:pointer; }
+.dr-num-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:10px; }
+.dr-num-grid input { padding:7px 8px; border:1.5px solid #E2E8F0; border-radius:8px; font-size:0.8rem; width:100%; }
+.dr-text-area { width:100%; padding:7px 8px; border:1.5px solid #E2E8F0; border-radius:8px; font-size:0.8rem; margin-bottom:6px; font-family:inherit; }
+.staff-stat-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
+.staff-stat-name { font-weight:700; font-size:0.95rem; color:#1a202c; }
+.staff-stat-sub { font-size:0.78rem; color:#718096; margin-top:4px; }
+.staff-stat-total { background:#EBF4FF; color:#2E4057; padding:6px 14px; border-radius:20px; font-weight:700; font-size:0.95rem; white-space:nowrap; }
+.staff-badge { display:inline-block; padding:2px 10px; border-radius:12px; font-size:0.72rem; font-weight:700; margin-right:6px; }
+.staff-badge.active { background:#C6F6D5; color:#22543D; }
+.staff-badge.inactive { background:#FED7D7; color:#822727; }
+.ss-detail-row { display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid #EDF2F7; font-size:0.88rem; }
+.ss-detail-row span:first-child { color:#4A5568; }
+.ss-detail-row b { color:#1a202c; }
 .dep-card.treated { border-right-color: #48BB78; opacity: 0.7; }
 .dep-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 6px; }
 .dep-card-title { font-weight: 700; color: #1a2e4a; font-size: 0.95rem; }
@@ -308,7 +328,9 @@ tbody tr:hover { background: #F7FAFC; }
     <button onclick="showPage('departures',this);loadDepartures();">🚨 المغادرات</button>
     <button onclick="showPage('pendingSync',this);renderPendingSyncPage();">📦 المعلقة</button>
     <button onclick="showPage('admin',this)">⚙️ الإدارة</button>
+    <button onclick="showPage('staffStats',this);loadStaffStats();">📊 إحصائيات الموظفين</button>
     <button onclick="showPage('inventory',this);showInventoryHome();">📦 المخزن</button>
+    <button onclick="showPage('dailyReport',this);showDailyReportHome();">📅 التقرير اليومي</button>
     <button onclick="showPage('account',this);loadAccountPage();">👤 الحساب</button>
   </nav>
 </div>
@@ -445,8 +467,9 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('thermal',document.querySelectorAll('nav button')[4]);showThermalHome();"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" onclick="showPage('departures',document.querySelectorAll('nav button')[5]);loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
     <div class="card" onclick="showPage('records',document.querySelectorAll('nav button')[2]);loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span><span class="sublabel">Excel أو PDF</span></div>
-    <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[4])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
-    <div class="card" onclick="showPage('inventory',document.querySelectorAll('nav button')[8]);showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span><span class="sublabel">عدة العمل ومواد الخطوط</span></div>
+    <div class="card" onclick="showPage('admin',document.querySelectorAll('nav button')[7])"><span class="icon">⚙️</span><span class="label">الإدارة</span><span class="sublabel">إعدادات النظام</span></div>
+    <div class="card" onclick="showPage('inventory',document.querySelectorAll('nav button')[9]);showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span><span class="sublabel">عدة العمل ومواد الخطوط</span></div>
+    <div class="card" onclick="showPage('dailyReport',document.querySelectorAll('nav button')[10]);showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
   </div>
 </div>
 
@@ -1247,6 +1270,48 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
+<!-- STAFF STATISTICS -->
+<div class="page" id="page-staffStats">
+  <div class="page-title">📊 إحصائيات الموظفين</div>
+  <div id="staffStatsList">
+    <div class="empty-state">⏳ جاري التحميل...</div>
+  </div>
+</div>
+
+<!-- STAFF STATS DETAIL MODAL -->
+<div class="modal-bg" id="staffStatsDetailModal">
+  <div class="modal-box" style="max-width:480px">
+    <h3 id="ssDetailName">📊 تفاصيل</h3>
+    <div id="ssDetailBody" style="margin-top:14px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-secondary" onclick="document.getElementById('staffStatsDetailModal').classList.remove('show')">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- DAILY REPORT -->
+<div class="page" id="page-dailyReport">
+  <div class="page-title">📅 التقرير اليومي (الموقف اليومي للخطوط)</div>
+  <div class="form-card">
+    <div class="field">
+      <label>التاريخ</label>
+      <input type="date" id="dr_date" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+    </div>
+    <button class="btn btn-primary" style="margin-top:10px" onclick="generateDailyReport()">🔍 توليد التقرير</button>
+  </div>
+
+  <div id="dailyReportRowsWrap" style="margin-top:16px"></div>
+
+  <div id="dailyReportActions" style="display:none;margin-top:14px;gap:10px;flex-wrap:wrap" class="dep-tabs">
+    <select id="dr_add_line_select" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem;flex:1;min-width:160px"></select>
+    <button class="btn btn-secondary btn-sm" onclick="addDailyReportLine()">➕ إضافة خط</button>
+  </div>
+  <div id="dailyReportSaveBar" style="display:none;margin-top:14px;gap:10px">
+    <button class="btn btn-primary" style="flex:1" onclick="saveDailyReport()">💾 حفظ وأرشفة</button>
+    <button class="btn btn-secondary" style="flex:1" onclick="downloadDailyReportExcel()">📥 تنزيل Excel</button>
+  </div>
+</div>
+
 <!-- ACCOUNT -->
 <div class="page" id="page-account">
   <div class="page-title">👤 الحساب</div>
@@ -1514,12 +1579,15 @@ function logout() {
 }
 
 function applyRolePermissions() {
-  const adminBtn = document.querySelectorAll('nav button')[4]; // admin tab
+  const adminBtn = document.querySelectorAll('nav button')[7]; // admin tab
   if (currentUser.role !== 'admin') {
     adminBtn.style.display = 'none';
   } else {
     adminBtn.style.display = '';
   }
+  // إحصائيات الموظفين: للمدير والمشرف فقط
+  const statsBtn = document.querySelectorAll('nav button')[8];
+  if (statsBtn) statsBtn.style.display = (currentUser.role === 'admin' || currentUser.role === 'supervisor') ? '' : 'none';
   // readonly users cannot add/edit
   const formBtn = document.querySelectorAll('nav button')[1];
   if (currentUser.role === 'readonly') {
@@ -3292,6 +3360,326 @@ async function changeAccountPassword() {
 // ========================
 // ADMIN: MEMBER MANAGEMENT
 // ========================
+// ========================
+// STAFF STATISTICS (إحصائيات الموظفين)
+// ========================
+let staffStatsCache = null;
+
+// ========================
+// DAILY REPORT (الموقف اليومي للخطوط)
+// ========================
+let dailyReportRows = [];
+
+function showDailyReportHome() {
+  document.getElementById('dr_date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('dailyReportRowsWrap').innerHTML = '';
+  document.getElementById('dailyReportActions').style.display = 'none';
+  document.getElementById('dailyReportSaveBar').style.display = 'none';
+  dailyReportRows = [];
+}
+
+function findLineInfo(lineName) {
+  return LINES_INFO.find(l => l.name === lineName) || null;
+}
+
+async function generateDailyReport() {
+  const date = document.getElementById('dr_date').value;
+  if (!date) { showToast('⚠️ اختر التاريخ أولاً', 'error'); return; }
+  const nextDay = new Date(date + 'T00:00:00'); nextDay.setDate(nextDay.getDate() + 1);
+  const nextDayStr = nextDay.toISOString().split('T')[0];
+  const gte = `created_at=gte.${date}T00:00:00`;
+  const lt = `created_at=lt.${nextDayStr}T00:00:00`;
+
+  document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">⏳ جاري التوليد...</div>';
+  try {
+    const [inspRes, thermRes, lineThermRes, treatRes] = await Promise.all([
+      sbFetch(`inspections?select=line_name,tower_number&${gte}&${lt}`),
+      sbFetch(`thermal_inspections?select=line_name,tower_number&${gte}&${lt}`),
+      sbFetch(`line_entry_thermal?select=line_name&${gte}&${lt}`),
+      sbFetch(`treatments?select=line_name,items_treated&treatment_date=eq.${date}`)
+    ]);
+    const [insp, therm, lineTherm, treat] = await Promise.all([
+      inspRes.json(), thermRes.json(), lineThermRes.json(), treatRes.json()
+    ]);
+
+    const byLine = {}; // line_name -> partial row
+    function ensure(line) {
+      if (!byLine[line]) byLine[line] = { visualTowers: new Set(), thermalTowers: new Set(), hasThermal: false, fire: false };
+      return byLine[line];
+    }
+    insp.forEach(r => { if (r.line_name) { const e = ensure(r.line_name); if (r.tower_number != null) e.visualTowers.add(r.tower_number); } });
+    therm.forEach(r => { if (r.line_name) { const e = ensure(r.line_name); e.hasThermal = true; if (r.tower_number != null) e.thermalTowers.add(r.tower_number); } });
+    lineTherm.forEach(r => { if (r.line_name) { ensure(r.line_name).hasThermal = true; } });
+    treat.forEach(r => {
+      if (!r.line_name) return;
+      let items = r.items_treated;
+      if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
+      if (Array.isArray(items) && items.some(it => it.key === 'fire')) ensure(r.line_name).fire = true;
+    });
+
+    dailyReportRows = Object.keys(byLine).map(lineName => buildDailyReportRow(lineName, byLine[lineName]));
+    renderDailyReportRows();
+    populateAddLineSelect();
+    document.getElementById('dailyReportActions').style.display = 'flex';
+    document.getElementById('dailyReportSaveBar').style.display = 'flex';
+    if (!dailyReportRows.length) showToast('ℹ️ ما لقينا أي نشاط مسجل بهذا التاريخ، تكدر تضيف خط يدوياً');
+  } catch (e) {
+    document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">❌ تعذر توليد التقرير</div>';
+  }
+}
+
+function buildDailyReportRow(lineName, info) {
+  const li = findLineInfo(lineName);
+  return {
+    line_name: lineName,
+    network: 'واسط',
+    company: 'الوسطى',
+    voltage: li ? li.voltage : '',
+    length: li ? li.length : '',
+    capacity: li ? li.capacity : '',
+    tension_towers: li ? li.tension_towers : '',
+    visual: info ? info.visualTowers.size > 0 : false,
+    thermal: info ? info.hasThermal : false,
+    sched_no_outage: false,
+    sched_outage: false,
+    emergency_outage: false,
+    fire_removal: info ? info.fire : false,
+    visual_length: '',
+    thermal_towers: info ? info.thermalTowers.size : '',
+    thermal_load: '',
+    work_details: '',
+    notes: ''
+  };
+}
+
+function populateAddLineSelect() {
+  const sel = document.getElementById('dr_add_line_select');
+  sel.innerHTML = '<option value="">-- اختر خط لإضافته --</option>' +
+    LINES_INFO.map(l => `<option value="${l.name}">${l.name} (${l.voltage} ك.ف)</option>`).join('');
+}
+
+function addDailyReportLine() {
+  const sel = document.getElementById('dr_add_line_select');
+  const lineName = sel.value;
+  if (!lineName) return;
+  if (dailyReportRows.some(r => r.line_name === lineName)) { showToast('⚠️ الخط موجود بالتقرير بالفعل', 'error'); return; }
+  dailyReportRows.push(buildDailyReportRow(lineName, null));
+  sel.value = '';
+  renderDailyReportRows();
+}
+
+function removeDailyReportLine(idx) {
+  syncDailyReportRowsFromDOM();
+  dailyReportRows.splice(idx, 1);
+  renderDailyReportRows();
+}
+
+function syncDailyReportRowsFromDOM() {
+  dailyReportRows.forEach((row, idx) => {
+    const get = (id) => document.getElementById(id);
+    ['visual','thermal','sched_no_outage','sched_outage','emergency_outage','fire_removal'].forEach(k => {
+      const el = get(`dr_${k}_${idx}`); if (el) row[k] = el.checked;
+    });
+    ['visual_length','thermal_towers','thermal_load'].forEach(k => {
+      const el = get(`dr_${k}_${idx}`); if (el) row[k] = el.value;
+    });
+    ['work_details','notes'].forEach(k => {
+      const el = get(`dr_${k}_${idx}`); if (el) row[k] = el.value;
+    });
+  });
+}
+
+function renderDailyReportRows() {
+  const wrap = document.getElementById('dailyReportRowsWrap');
+  if (!dailyReportRows.length) { wrap.innerHTML = '<div class="empty-state">لا توجد خطوط بالتقرير حالياً</div>'; return; }
+  wrap.innerHTML = dailyReportRows.map((row, idx) => `
+    <div class="dr-row-card">
+      <div class="dr-row-head">
+        <div class="dr-row-title">📡 ${row.line_name}</div>
+        <button class="btn-sm btn-secondary" onclick="removeDailyReportLine(${idx})">✖ حذف</button>
+      </div>
+      <div class="dr-meta-grid">
+        <span>الجهد: ${row.voltage||'—'} ك.ف</span>
+        <span>طول الخط: ${row.length||'—'} كم</span>
+        <span>السعة: ${row.capacity||'—'} MVA</span>
+        <span>أبراج الشد: ${row.tension_towers||'—'}</span>
+      </div>
+      <div class="dr-checks">
+        <label class="dr-check-pill"><input type="checkbox" id="dr_visual_${idx}" ${row.visual?'checked':''}> كشف بصري</label>
+        <label class="dr-check-pill"><input type="checkbox" id="dr_thermal_${idx}" ${row.thermal?'checked':''}> كشف حراري</label>
+        <label class="dr-check-pill"><input type="checkbox" id="dr_sched_no_outage_${idx}" ${row.sched_no_outage?'checked':''}> صيانة مبرمجة بدون إطفاء</label>
+        <label class="dr-check-pill"><input type="checkbox" id="dr_sched_outage_${idx}" ${row.sched_outage?'checked':''}> صيانة مبرمجة بإطفاء</label>
+        <label class="dr-check-pill"><input type="checkbox" id="dr_emergency_outage_${idx}" ${row.emergency_outage?'checked':''}> صيانة طارئة بإطفاء</label>
+        <label class="dr-check-pill"><input type="checkbox" id="dr_fire_removal_${idx}" ${row.fire_removal?'checked':''}> إزالة مسببات حرائق</label>
+      </div>
+      <div class="dr-num-grid">
+        <input id="dr_visual_length_${idx}" type="number" placeholder="طول المسار بصرياً (كم)" value="${row.visual_length}">
+        <input id="dr_thermal_towers_${idx}" type="number" placeholder="عدد أبراج شد كُشفت حرارياً" value="${row.thermal_towers}">
+        <input id="dr_thermal_load_${idx}" type="number" placeholder="حمل الخط (MW)" value="${row.thermal_load}">
+      </div>
+      <textarea class="dr-text-area" id="dr_work_details_${idx}" rows="2" placeholder="تفاصيل العمل">${row.work_details}</textarea>
+      <textarea class="dr-text-area" id="dr_notes_${idx}" rows="2" placeholder="الملاحظات">${row.notes}</textarea>
+    </div>
+  `).join('');
+}
+
+async function saveDailyReport() {
+  syncDailyReportRowsFromDOM();
+  const date = document.getElementById('dr_date').value;
+  if (!date) { showToast('⚠️ اختر التاريخ أولاً', 'error'); return; }
+  if (!dailyReportRows.length) { showToast('⚠️ لا توجد خطوط لحفظها', 'error'); return; }
+  try {
+    const res = await sbFetch('daily_reports', {
+      method: 'POST',
+      body: JSON.stringify({ report_date: date, rows: dailyReportRows, created_by: currentUser.full_name })
+    });
+    if (!res.ok) throw new Error();
+    showToast('✅ تم حفظ وأرشفة التقرير اليومي');
+  } catch { showToast('❌ تعذر حفظ التقرير', 'error'); }
+}
+
+function downloadDailyReportExcel() {
+  syncDailyReportRowsFromDOM();
+  const date = document.getElementById('dr_date').value;
+  if (!dailyReportRows.length) { showToast('⚠️ لا توجد خطوط للتنزيل', 'error'); return; }
+
+  const header1 = ['الموقف اليومي لاعمال صيانة خطوط نقل الطاقة الكهربائية', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+  const header2 = ['التاريخ', date, '', '', '', '', '', '', '', '', '', '', '', ''];
+  const header3 = ['ت','الشركة العامة لنقل الطاقة','الشبكة','الخط','الجهد kv','طول الخط km','السعة MVA',
+    'عدد ابراج الشد في الخط','النشاط','','','','',''];
+  const header4 = ['','','','','','','','كشف بصري','كشف حراري','صيانة مبرمجة بدون اطفاء','صيانة مبرمجة باطفاء الخط','صيانة طارئة باطفاء الخط','ازالة مسببات حرائق',''];
+  const header5 = ['','','','','','','','','','','','','طول المسار المكشوف بصرياً km','عدد ابراج الشد المكشوفة حرارياً'];
+
+  const aoa = [header1, header2,
+    ['ت','الشركة العامة لنقل الطاقة','الشبكة','الخط','الجهد kv','طول الخط km','السعة MVA','عدد ابراج الشد في الخط',
+     'كشف بصري','كشف حراري','صيانة مبرمجة بدون اطفاء','صيانة مبرمجة باطفاء الخط','صيانة طارئة باطفاء الخط','ازالة مسببات حرائق',
+     'طول المسار المكشوف بصرياً km','عدد ابراج الشد المكشوفة حرارياً','حمل الخط المكشوف حرارياً MW','تفاصيل العمل','الملاحظات']
+  ];
+  dailyReportRows.forEach((r, i) => {
+    aoa.push([
+      i+1, r.company, r.network, r.line_name, r.voltage, r.length, r.capacity, r.tension_towers,
+      r.visual ? '●' : '', r.thermal ? '●' : '', r.sched_no_outage ? '●' : '', r.sched_outage ? '●' : '',
+      r.emergency_outage ? '●' : '', r.fire_removal ? '●' : '',
+      r.visual_length, r.thermal_towers, r.thermal_load, r.work_details, r.notes
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = aoa[0].map(() => ({ wch: 14 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'الموقف اليومي');
+  XLSX.writeFile(wb, `الموقف_اليومي_${date}.xlsx`);
+  showToast('📥 تم تنزيل الملف، تكدر ترفعه بالواتساب من ملفات الجهاز');
+}
+
+async function loadStaffStats() {
+  const wrap = document.getElementById('staffStatsList');
+  wrap.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  try {
+    const [usersRes, inspRes, thermRes, lineThermRes, treatRes, emgRes, tgRes] = await Promise.all([
+      sbFetch('users?select=id,full_name,role'),
+      sbFetch('inspections?select=created_by_name,created_at'),
+      sbFetch('thermal_inspections?select=created_by_name,created_at'),
+      sbFetch('line_entry_thermal?select=created_by_name,created_at'),
+      sbFetch('treatments?select=treated_by,treatment_date'),
+      sbFetch('emergency_departures?select=created_by,treated_by,treatment_date,created_at'),
+      sbFetch('work_telegrams?select=created_by,created_at')
+    ]);
+    const [users, insp, therm, lineTherm, treat, emg, tg] = await Promise.all([
+      usersRes.json(), inspRes.json(), thermRes.json(), lineThermRes.json(), treatRes.json(), emgRes.json(), tgRes.json()
+    ]);
+
+    const stats = {}; // name -> { inspections, thermal, lineThermal, treatments, emergencyReported, emergencyResolved, telegrams, lastActivity }
+    function ensure(name) {
+      if (!name) return null;
+      if (!stats[name]) stats[name] = { inspections:0, thermal:0, lineThermal:0, treatments:0, emergencyReported:0, emergencyResolved:0, telegrams:0, lastActivity:null };
+      return stats[name];
+    }
+    function bump(name, key, dateStr) {
+      const s = ensure(name); if (!s) return;
+      s[key]++;
+      if (dateStr && (!s.lastActivity || dateStr > s.lastActivity)) s.lastActivity = dateStr;
+    }
+
+    insp.forEach(r => bump(r.created_by_name, 'inspections', r.created_at));
+    therm.forEach(r => bump(r.created_by_name, 'thermal', r.created_at));
+    lineTherm.forEach(r => bump(r.created_by_name, 'lineThermal', r.created_at));
+    treat.forEach(r => bump(r.treated_by, 'treatments', r.treatment_date));
+    emg.forEach(r => {
+      bump(r.created_by, 'emergencyReported', r.created_at);
+      if (r.treated_by) bump(r.treated_by, 'emergencyResolved', r.treatment_date);
+    });
+    tg.forEach(r => bump(r.created_by, 'telegrams', r.created_at));
+
+    // التأكد من ظهور كل الأعضاء حتى لو بدون أي نشاط
+    users.forEach(u => { if (u.role !== 'admin' || true) ensure(u.full_name); });
+
+    staffStatsCache = { stats, users };
+    renderStaffStats();
+  } catch {
+    wrap.innerHTML = '<div class="empty-state">❌ تعذر تحميل الإحصائيات</div>';
+  }
+}
+
+function staffStatTotal(s) {
+  return s.inspections + s.thermal + s.lineThermal + s.treatments + s.emergencyReported + s.emergencyResolved + s.telegrams;
+}
+
+function renderStaffStats() {
+  if (!staffStatsCache) return;
+  const { stats } = staffStatsCache;
+  const names = Object.keys(stats);
+  const now = new Date();
+  const rows = names.map(name => {
+    const s = stats[name];
+    const total = staffStatTotal(s);
+    let daysSince = null;
+    if (s.lastActivity) daysSince = Math.floor((now - new Date(s.lastActivity)) / 86400000);
+    const isActive = daysSince !== null && daysSince <= 30;
+    return { name, s, total, daysSince, isActive };
+  }).sort((a,b) => b.total - a.total);
+
+  const wrap = document.getElementById('staffStatsList');
+  if (!rows.length) { wrap.innerHTML = '<div class="empty-state">لا يوجد أعضاء بعد</div>'; return; }
+
+  wrap.innerHTML = rows.map(r => {
+    const safe = r.name.replace(/'/g, "\\'");
+    const badge = r.s.lastActivity
+      ? `<span class="staff-badge ${r.isActive ? 'active' : 'inactive'}">${r.isActive ? '🟢 نشط' : '🔴 غير نشط'}</span>`
+      : `<span class="staff-badge inactive">⚪ بدون نشاط</span>`;
+    const lastTxt = r.s.lastActivity ? `آخر نشاط: ${r.s.lastActivity.split('T')[0]}` : 'لا يوجد نشاط مسجل';
+    return `<div class="staff-stat-card" onclick="showStaffStatDetail('${safe}')">
+      <div>
+        <div class="staff-stat-name">👤 ${r.name}</div>
+        <div class="staff-stat-sub">${badge}${lastTxt}</div>
+      </div>
+      <div class="staff-stat-total">${r.total} عملية</div>
+    </div>`;
+  }).join('');
+}
+
+function showStaffStatDetail(name) {
+  if (!staffStatsCache) return;
+  const s = staffStatsCache.stats[name];
+  if (!s) return;
+  document.getElementById('ssDetailName').textContent = `📊 ${name}`;
+  const rows = [
+    ['📋 كشوفات أبراج (عادي)', s.inspections],
+    ['🌡️ كشوفات حرارية', s.thermal],
+    ['🌡️ كشف حراري (مدخل خط)', s.lineThermal],
+    ['🔧 معالجات منفذة', s.treatments],
+    ['🚨 مغادرات طارئة (تسجيل)', s.emergencyReported],
+    ['✅ مغادرات طارئة (معالجة)', s.emergencyResolved],
+    ['📨 برقيات عمل', s.telegrams],
+  ];
+  const lastTxt = s.lastActivity ? s.lastActivity.split('T')[0] : '—';
+  document.getElementById('ssDetailBody').innerHTML =
+    rows.map(([label, val]) => `<div class="ss-detail-row"><span>${label}</span><b>${val}</b></div>`).join('') +
+    `<div class="ss-detail-row"><span>📅 آخر نشاط</span><b>${lastTxt}</b></div>` +
+    `<div class="ss-detail-row"><span>الإجمالي</span><b>${staffStatTotal(s)}</b></div>`;
+  document.getElementById('staffStatsDetailModal').classList.add('show');
+}
+
 async function loadMembers() {
   const tbody = document.getElementById('membersBody');
   if (!tbody) return;
