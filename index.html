@@ -729,6 +729,35 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
+<!-- تصدير سجل المعالجات -->
+<div class="treat-modal-bg" id="depLogExportModalBg">
+  <div class="treat-modal">
+    <h3>📤 تصدير سجل المعالجات</h3>
+    <div class="field" style="margin-top:14px">
+      <label>اسم الخط</label>
+      <select id="depLogExportFilterLine" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+        <option value="">-- كل الخطوط --</option>
+      </select>
+    </div>
+    <div class="grid-2" style="margin-top:12px">
+      <div class="field">
+        <label>من تاريخ</label>
+        <input type="date" id="depLogExportFilterFrom" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+      </div>
+      <div class="field">
+        <label>إلى تاريخ</label>
+        <input type="date" id="depLogExportFilterTo" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+      </div>
+    </div>
+    <p id="depLogExportResultCount" style="margin-top:12px;color:#718096;font-size:0.82rem"></p>
+    <div class="form-actions" style="margin-top:18px;flex-direction:column;gap:10px">
+      <button class="btn btn-primary" style="width:100%;background:#922b21" onclick="exportDepLogPDF()">📄 PDF</button>
+      <button class="btn btn-primary" style="width:100%" onclick="exportDepLogExcel()">📊 Excel</button>
+      <button class="btn btn-secondary" onclick="closeDepLogExportModal()" style="width:100%">إغلاق</button>
+    </div>
+  </div>
+</div>
+
 <!-- DEPARTURES PAGE -->
 <div class="page" id="page-departures">
   <div class="page-title">🚨 المغادرات</div>
@@ -798,6 +827,14 @@ tbody tr:hover { background: #F7FAFC; }
 
   <!-- سجل المعالجات -->
   <div id="depLogView" style="display:none">
+    <div class="dep-filters" style="margin-bottom:12px">
+      <select id="depLogFilterLine" onchange="renderDepLog()">
+        <option value="">-- كل الخطوط --</option>
+      </select>
+      <input type="date" id="depLogFilterFrom" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+      <input type="date" id="depLogFilterTo" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+      <button class="btn-sm btn-primary" onclick="openDepLogExportModal()" style="background:#922b21">📤 تصدير</button>
+    </div>
     <div id="depLogBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
 
@@ -2934,6 +2971,155 @@ async function confirmExportPDF() {
 
   doc.save('Tower_Report_' + new Date().toISOString().split('T')[0] + '.pdf');
   showToast('✅ تم تصدير PDF (' + rows.length + ' سجل)');
+}
+
+// ========================
+// EXPORT MODAL — سجل المعالجات (PDF / Excel عبر قائمة المشاركة الأصلية)
+// ========================
+function openDepLogExportModal() {
+  const sel = document.getElementById('depLogExportFilterLine');
+  const uniqueLines = [...new Set(treatmentsCache.map(t => t.line_name).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
+    uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
+  // ينسخ فلتر الصفحة الحالي كقيمة مبدئية بنافذة التصدير
+  sel.value = document.getElementById('depLogFilterLine')?.value || '';
+  document.getElementById('depLogExportFilterFrom').value = document.getElementById('depLogFilterFrom')?.value || '';
+  document.getElementById('depLogExportFilterTo').value = document.getElementById('depLogFilterTo')?.value || '';
+  updateDepLogExportResultCount();
+  document.getElementById('depLogExportModalBg').classList.add('show');
+}
+function closeDepLogExportModal() {
+  document.getElementById('depLogExportModalBg').classList.remove('show');
+}
+function getDepLogExportFiltered() {
+  const line = document.getElementById('depLogExportFilterLine').value;
+  const from = document.getElementById('depLogExportFilterFrom').value;
+  const to = document.getElementById('depLogExportFilterTo').value;
+  return treatmentsCache.filter(t => {
+    const mLine = !line || t.line_name === line;
+    const mFrom = !from || (t.treatment_date||'') >= from;
+    const mTo = !to || (t.treatment_date||'') <= to;
+    return mLine && mFrom && mTo;
+  });
+}
+function updateDepLogExportResultCount() {
+  const n = getDepLogExportFiltered().length;
+  document.getElementById('depLogExportResultCount').textContent = `📋 عدد المعالجات المطابقة: ${n}`;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  ['depLogExportFilterLine','depLogExportFilterFrom','depLogExportFilterTo'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', updateDepLogExportResultCount);
+  });
+});
+
+// يشارك أو ينزّل ملف، حسب دعم المتصفح لقائمة المشاركة الأصلية (تتضمن خيارات الطباعة والإرسال على آيفون)
+async function shareOrDownloadFile(blob, filename, mimeType) {
+  try {
+    const file = new File([blob], filename, { type: mimeType });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: filename });
+      return;
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // المستخدم لغى المشاركة
+  }
+  // تنزيل مباشر كخيار احتياطي
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function exportDepLogPDF() {
+  const rows = getDepLogExportFiltered();
+  if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
+  showToast('⏳ جاري تحضير PDF...');
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  let y = 40;
+
+  doc.setFontSize(16);
+  doc.text('Treatments Log Report', pageW/2, y, { align: 'center' });
+  y += 22;
+  doc.setFontSize(10);
+  doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, y, { align: 'center' });
+  y += 20;
+
+  for (let i = 0; i < rows.length; i++) {
+    const t = rows[i];
+    if (y > 380) { doc.addPage(); y = 40; }
+
+    doc.setFontSize(11);
+    doc.setTextColor(20,40,70);
+    doc.text(`Line: ${t.line_name||'-'}  |  Tower: ${t.tower_number||'-'}  |  Date: ${t.treatment_date||'-'}  |  By: ${t.treated_by||'-'}`, 40, y);
+    y += 14;
+
+    const items = (t.items_treated||[]).map(it => it.label).join(', ');
+    if (items) {
+      doc.setFontSize(9);
+      doc.setTextColor(60,60,60);
+      const splitItems = doc.splitTextToSize('Treated: ' + items, pageW-80);
+      doc.text(splitItems, 40, y);
+      y += splitItems.length * 11 + 4;
+    }
+
+    // صور العوازل (R/S/T) إن وجدت
+    const svgs = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
+    if (svgs.length) {
+      let x = 40;
+      const imgH = 90;
+      for (const [label, svg] of svgs) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:white;padding:6px';
+        wrap.innerHTML = svg;
+        document.body.appendChild(wrap);
+        const rect = wrap.getBoundingClientRect();
+        const dataUrl = await elementToPNGDataURL(wrap);
+        document.body.removeChild(wrap);
+        if (dataUrl) {
+          const ratio = rect.width && rect.height ? (rect.width / rect.height) : 1;
+          const imgW = Math.min(imgH * ratio, 150) || 100;
+          try { doc.addImage(dataUrl, 'PNG', x, y, imgW, imgH); } catch(e) {}
+          doc.setFontSize(8);
+          doc.text(label, x + 4, y + imgH + 10);
+          x += 160;
+        }
+      }
+      y += imgH + 20;
+    }
+
+    doc.setDrawColor(220,220,220);
+    doc.line(40, y, pageW-40, y);
+    y += 16;
+  }
+
+  const blob = doc.output('blob');
+  const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.pdf';
+  await shareOrDownloadFile(blob, filename, 'application/pdf');
+  showToast('✅ تم تجهيز PDF (' + rows.length + ' معالجة)');
+  closeDepLogExportModal();
+}
+
+async function exportDepLogExcel() {
+  const rows = getDepLogExportFiltered();
+  if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
+  const data = rows.map(t => ({
+    'اسم الخط': t.line_name, 'رقم البرج': t.tower_number, 'تاريخ المعالجة': t.treatment_date,
+    'المعالج': t.treated_by||'', 'العناصر المعالجة': (t.items_treated||[]).map(it => it.label).join('، ')
+  }));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'سجل المعالجات');
+  const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.xlsx';
+  await shareOrDownloadFile(blob, filename, blob.type);
+  showToast('✅ تم تجهيز Excel (' + rows.length + ' معالجة)');
+  closeDepLogExportModal();
 }
 
 function updateAdminStats() {
@@ -5571,7 +5757,20 @@ async function renderDepLog() {
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   await loadTreatments();
   if (!treatmentsCache.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مسجلة بعد</div>'; return; }
-  body.innerHTML = treatmentsCache.map(t => {
+
+  // تحديث فلتر الخطوط (يحافظ على القيمة المختارة)
+  const lineSel = document.getElementById('depLogFilterLine');
+  if (lineSel) {
+    const currentLine = lineSel.value;
+    const uniqueLines = [...new Set(treatmentsCache.map(t => t.line_name).filter(Boolean))].sort();
+    lineSel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
+      uniqueLines.map(n => `<option value="${n}" ${n===currentLine?'selected':''}>${n}</option>`).join('');
+  }
+
+  const rows = getDepLogFiltered();
+  if (!rows.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مطابقة للفلتر</div>'; return; }
+
+  body.innerHTML = rows.map(t => {
     const items = t.items_treated||[];
     return `<div class="dep-card" style="border-right-color:#48BB78">
       <div class="dep-card-header">
@@ -5586,6 +5785,19 @@ async function renderDepLog() {
       ${items.length?`<div class="dep-items" style="margin-top:8px">${items.map(i=>`<span class="dep-item fixed">✅ ${i.label}</span>`).join('')}</div>`:''}
     </div>`;
   }).join('');
+}
+
+// يرجع سجلات سجل المعالجات بعد تطبيق فلتر الصفحة (خط + تاريخ المعالجة من/إلى)
+function getDepLogFiltered() {
+  const line = document.getElementById('depLogFilterLine')?.value || '';
+  const from = document.getElementById('depLogFilterFrom')?.value || '';
+  const to = document.getElementById('depLogFilterTo')?.value || '';
+  return treatmentsCache.filter(t => {
+    const mLine = !line || t.line_name === line;
+    const mFrom = !from || (t.treatment_date||'') >= from;
+    const mTo = !to || (t.treatment_date||'') <= to;
+    return mLine && mFrom && mTo;
+  });
 }
 
 // يرجع آخر سجل كشف فقط لكل برج بخط معين (الحقيقة المعتمدة لحالة البرج)
