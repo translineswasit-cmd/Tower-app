@@ -831,8 +831,14 @@ tbody tr:hover { background: #F7FAFC; }
       <select id="depLogFilterLine" onchange="renderDepLog()">
         <option value="">-- كل الخطوط --</option>
       </select>
-      <input type="date" id="depLogFilterFrom" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
-      <input type="date" id="depLogFilterTo" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="depLogFilterFrom" style="font-size:0.8rem;color:#4a5568;white-space:nowrap">📅 من</label>
+        <input type="date" id="depLogFilterFrom" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="depLogFilterTo" style="font-size:0.8rem;color:#4a5568;white-space:nowrap">📅 إلى</label>
+        <input type="date" id="depLogFilterTo" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+      </div>
       <button class="btn-sm btn-primary" onclick="openDepLogExportModal()" style="background:#922b21">📤 تصدير</button>
     </div>
     <div id="depLogBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
@@ -3032,94 +3038,141 @@ async function shareOrDownloadFile(blob, filename, mimeType) {
   URL.revokeObjectURL(url);
 }
 
+// يحول نص SVG (فيه width/height) مباشرة إلى صورة PNG base64 — أوثق من تحويل عناصر HTML عامة
+function svgStringToPNGDataURL(svgString, scale) {
+  scale = scale || 3;
+  return new Promise((resolve) => {
+    try {
+      const wMatch = svgString.match(/width="([\d.]+)"/);
+      const hMatch = svgString.match(/height="([\d.]+)"/);
+      const w = wMatch ? parseFloat(wMatch[1]) : 120;
+      const h = hMatch ? parseFloat(hMatch[1]) : 160;
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      const timer = setTimeout(() => { URL.revokeObjectURL(url); resolve(null); }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = w * scale; canvas.height = h * scale;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.scale(scale, scale);
+          ctx.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          resolve({ dataUrl: canvas.toDataURL('image/png'), w, h });
+        } catch (e) { URL.revokeObjectURL(url); resolve(null); }
+      };
+      img.onerror = () => { clearTimeout(timer); URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    } catch (e) { resolve(null); }
+  });
+}
+
 async function exportDepLogPDF() {
   const rows = getDepLogExportFiltered();
   if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
   showToast('⏳ جاري تحضير PDF...');
 
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-  const pageW = doc.internal.pageSize.getWidth();
-  let y = 40;
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    let y = 40;
 
-  doc.setFontSize(16);
-  doc.text('Treatments Log Report', pageW/2, y, { align: 'center' });
-  y += 22;
-  doc.setFontSize(10);
-  doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, y, { align: 'center' });
-  y += 20;
+    doc.setFontSize(16);
+    doc.text('Treatments Log Report', pageW/2, y, { align: 'center' });
+    y += 22;
+    doc.setFontSize(10);
+    doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, y, { align: 'center' });
+    y += 20;
 
-  for (let i = 0; i < rows.length; i++) {
-    const t = rows[i];
-    if (y > 380) { doc.addPage(); y = 40; }
+    for (let i = 0; i < rows.length; i++) {
+      const t = rows[i];
+      if (y > 380) { doc.addPage(); y = 40; }
 
-    doc.setFontSize(11);
-    doc.setTextColor(20,40,70);
-    doc.text(`Line: ${t.line_name||'-'}  |  Tower: ${t.tower_number||'-'}  |  Date: ${t.treatment_date||'-'}  |  By: ${t.treated_by||'-'}`, 40, y);
-    y += 14;
+      doc.setFontSize(11);
+      doc.setTextColor(20,40,70);
+      doc.text(`Line: ${t.line_name||'-'}  |  Tower: ${t.tower_number||'-'}  |  Date: ${t.treatment_date||'-'}  |  By: ${t.treated_by||'-'}`, 40, y);
+      y += 14;
 
-    const items = (t.items_treated||[]).map(it => it.label).join(', ');
-    if (items) {
-      doc.setFontSize(9);
-      doc.setTextColor(60,60,60);
-      const splitItems = doc.splitTextToSize('Treated: ' + items, pageW-80);
-      doc.text(splitItems, 40, y);
-      y += splitItems.length * 11 + 4;
-    }
-
-    // صور العوازل (R/S/T) إن وجدت
-    const svgs = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
-    if (svgs.length) {
-      let x = 40;
-      const imgH = 90;
-      for (const [label, svg] of svgs) {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:white;padding:6px';
-        wrap.innerHTML = svg;
-        document.body.appendChild(wrap);
-        const rect = wrap.getBoundingClientRect();
-        const dataUrl = await elementToPNGDataURL(wrap);
-        document.body.removeChild(wrap);
-        if (dataUrl) {
-          const ratio = rect.width && rect.height ? (rect.width / rect.height) : 1;
-          const imgW = Math.min(imgH * ratio, 150) || 100;
-          try { doc.addImage(dataUrl, 'PNG', x, y, imgW, imgH); } catch(e) {}
-          doc.setFontSize(8);
-          doc.text(label, x + 4, y + imgH + 10);
-          x += 160;
-        }
+      const items = (t.items_treated||[]).map(it => it.label).join(', ');
+      if (items) {
+        doc.setFontSize(9);
+        doc.setTextColor(60,60,60);
+        const splitItems = doc.splitTextToSize('Treated: ' + items, pageW-80);
+        doc.text(splitItems, 40, y);
+        y += splitItems.length * 11 + 4;
       }
-      y += imgH + 20;
+
+      // صور العوازل (R/S/T) إن وجدت
+      const svgs = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
+      if (svgs.length) {
+        const imgH = 90;
+        let x = 40;
+        for (const [label, svg] of svgs) {
+          const result = await svgStringToPNGDataURL(svg);
+          if (result) {
+            const ratio = result.w && result.h ? (result.w / result.h) : 1;
+            const imgW = Math.min(imgH * ratio, 150) || 100;
+            try { doc.addImage(result.dataUrl, 'PNG', x, y, imgW, imgH); } catch(e) {}
+            doc.setFontSize(8);
+            doc.text(label, x + 4, y + imgH + 10);
+            x += 160;
+          }
+        }
+        y += imgH + 20;
+      }
+
+      doc.setDrawColor(220,220,220);
+      doc.line(40, y, pageW-40, y);
+      y += 16;
     }
 
-    doc.setDrawColor(220,220,220);
-    doc.line(40, y, pageW-40, y);
-    y += 16;
+    const blob = doc.output('blob');
+    const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.pdf';
+    await shareOrDownloadFile(blob, filename, 'application/pdf');
+    showToast('✅ تم تجهيز PDF (' + rows.length + ' معالجة)');
+    closeDepLogExportModal();
+  } catch (err) {
+    showToast('❌ تعذر تجهيز PDF', 'error');
   }
-
-  const blob = doc.output('blob');
-  const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.pdf';
-  await shareOrDownloadFile(blob, filename, 'application/pdf');
-  showToast('✅ تم تجهيز PDF (' + rows.length + ' معالجة)');
-  closeDepLogExportModal();
 }
 
 async function exportDepLogExcel() {
   const rows = getDepLogExportFiltered();
   if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
-  const data = rows.map(t => ({
-    'اسم الخط': t.line_name, 'رقم البرج': t.tower_number, 'تاريخ المعالجة': t.treatment_date,
-    'المعالج': t.treated_by||'', 'العناصر المعالجة': (t.items_treated||[]).map(it => it.label).join('، ')
-  }));
-  const ws = XLSX.utils.json_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'سجل المعالجات');
-  const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.xlsx';
-  await shareOrDownloadFile(blob, filename, blob.type);
-  showToast('✅ تم تجهيز Excel (' + rows.length + ' معالجة)');
-  closeDepLogExportModal();
+  try {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('سجل المعالجات');
+    ws.views = [{ rightToLeft: true }];
+    ws.columns = [
+      { header: 'اسم الخط', key: 'line', width: 30 },
+      { header: 'رقم البرج', key: 'tower', width: 12 },
+      { header: 'تاريخ المعالجة', key: 'date', width: 16 },
+      { header: 'المعالج', key: 'by', width: 20 },
+      { header: 'العناصر المعالجة', key: 'items', width: 40 }
+    ];
+    ws.getRow(1).font = { bold: true };
+    rows.forEach(t => {
+      ws.addRow({
+        line: t.line_name || '',
+        tower: t.tower_number || '',
+        date: t.treatment_date || '',
+        by: t.treated_by || '',
+        items: (t.items_treated || []).map(it => it.label).join('، ')
+      });
+    });
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.xlsx';
+    await shareOrDownloadFile(blob, filename, blob.type);
+    showToast('✅ تم تجهيز Excel (' + rows.length + ' معالجة)');
+    closeDepLogExportModal();
+  } catch (err) {
+    showToast('❌ تعذر تجهيز Excel', 'error');
+  }
 }
 
 function updateAdminStats() {
