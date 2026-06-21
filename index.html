@@ -1348,9 +1348,10 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="dailyReportActions" style="display:none;margin-top:14px;gap:10px;flex-wrap:wrap" class="dep-tabs">
     <select id="dr_add_line_select" onchange="addDailyReportLine()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem;flex:1;min-width:160px"></select>
   </div>
-  <div id="dailyReportSaveBar" style="display:none;margin-top:14px;gap:10px">
-    <button class="btn btn-primary" style="flex:1" onclick="saveDailyReport()">💾 حفظ وأرشفة</button>
-    <button class="btn btn-secondary" style="flex:1" onclick="downloadDailyReportExcel()">📥 تنزيل Excel</button>
+  <div id="dailyReportSaveBar" style="display:none;margin-top:14px;gap:10px;flex-wrap:wrap">
+    <button class="btn btn-primary" style="flex:1;min-width:140px" onclick="saveDailyReport()">💾 حفظ وأرشفة</button>
+    <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="downloadDailyReportExcel()">📥 تنزيل Excel</button>
+    <button class="btn btn-secondary" id="dr_share_btn" style="flex:1;min-width:140px;display:none" onclick="shareDailyReportExcel()">📤 مشاركة / إرسال مباشر</button>
   </div>
 </div>
 
@@ -3482,6 +3483,8 @@ async function generateDailyReport() {
     populateAddLineSelect();
     document.getElementById('dailyReportActions').style.display = 'flex';
     document.getElementById('dailyReportSaveBar').style.display = 'flex';
+    const shareBtn = document.getElementById('dr_share_btn');
+    if (shareBtn) shareBtn.style.display = (navigator.canShare && navigator.share) ? '' : 'none';
     if (!dailyReportRows.length) showToast('ℹ️ ما لقينا أي نشاط مسجل بهذا التاريخ، تكدر تضيف خط يدوياً');
   } catch (e) {
     document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">❌ تعذر توليد التقرير</div>';
@@ -3674,11 +3677,8 @@ async function saveDailyReport() {
   } catch { showToast('❌ تعذر حفظ التقرير', 'error'); }
 }
 
-async function downloadDailyReportExcel() {
-  syncDailyReportRowsFromDOM();
+async function buildDailyReportExcelFile() {
   const date = document.getElementById('dr_date').value;
-  if (!dailyReportRows.length) { showToast('⚠️ لا توجد خطوط للتنزيل', 'error'); return; }
-
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('الموقف اليومي', { views: [{ rightToLeft: true }] });
 
@@ -3764,13 +3764,37 @@ async function downloadDailyReportExcel() {
   });
 
   const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/octet-stream' });
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const filename = `الموقف_اليومي_${date}.xlsx`;
+  return { blob, filename };
+}
+
+async function downloadDailyReportExcel() {
+  syncDailyReportRowsFromDOM();
+  if (!dailyReportRows.length) { showToast('⚠️ لا توجد خطوط للتنزيل', 'error'); return; }
+  const { blob, filename } = await buildDailyReportExcelFile();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `الموقف_اليومي_${date}.xlsx`;
+  a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   showToast('📥 تم تنزيل الملف، تكدر ترفعه بالواتساب من ملفات الجهاز');
+}
+
+async function shareDailyReportExcel() {
+  syncDailyReportRowsFromDOM();
+  if (!dailyReportRows.length) { showToast('⚠️ لا توجد خطوط للمشاركة', 'error'); return; }
+  try {
+    const { blob, filename } = await buildDailyReportExcelFile();
+    const file = new File([blob], filename, { type: blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: filename });
+    } else {
+      showToast('⚠️ المشاركة المباشرة غير مدعومة بهذا المتصفح، استخدم "تنزيل Excel"', 'error');
+    }
+  } catch (err) {
+    if (err && err.name !== 'AbortError') showToast('❌ تعذرت المشاركة', 'error');
+  }
 }
 
 // ========================
