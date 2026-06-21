@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v46';
+const CACHE_NAME = 'tower-app-v50';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -6,7 +6,8 @@ const ASSETS_TO_CACHE = [
   './icon-thermal.png',
   './icon-stats.png',
   './icon-lines.png',
-  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js'
 ];
 
 // Install: cache the app shell
