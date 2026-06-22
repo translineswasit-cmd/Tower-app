@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v62';
+const CACHE_NAME = 'tower-app-v63';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
