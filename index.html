@@ -3536,11 +3536,69 @@ async function openOfficialFormFromArchive(id) {
   } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
 }
 
+// يبني نسخة نصية ثابتة (بدون select/input فعلية) لتحويلها لصورة بثقة أكبر
+function buildOfficialFormPrintSnapshot() {
+  const v = id => document.getElementById(id).value || '';
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:white;padding:20px;width:700px;font-family:Arial,sans-serif;direction:rtl';
+  const rowsHTML = officialFormRows.map(row => `
+    <tr>
+      <td style="border:1px solid #999;padding:6px;text-align:center">${row.tower_number??''}</td>
+      <td style="border:1px solid #999;padding:6px;text-align:center">${row.distance??''}</td>
+      <td style="border:1px solid #999;padding:6px;text-align:center">${row.t??''}</td>
+      <td style="border:1px solid #999;padding:6px;text-align:center">${row.s??''}</td>
+      <td style="border:1px solid #999;padding:6px;text-align:center">${row.r??''}</td>
+      <td style="border:1px solid #999;padding:6px;text-align:center">${row.load_mw??''}</td>
+      <td style="border:1px solid #999;padding:6px;text-align:center">${row.notes??''}</td>
+    </tr>`).join('');
+  wrap.innerHTML = `
+    <div style="text-align:center;margin-bottom:10px">
+      <div style="font-weight:700;font-size:15px">الإصدار: 2 &nbsp;|&nbsp; استمارة: الكشف الحراري لخطوط نقل الطاقة &nbsp;|&nbsp; الشركة العامة لنقل الطاقة الكهربائية</div>
+      <div style="font-size:12px;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &nbsp;|&nbsp; الرمز: (MOE/T2-FO-177) &nbsp;|&nbsp; المنطقة الوسطى</div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:13px">
+      <tr>
+        <td style="border:1px solid #999;padding:6px;font-weight:700">اسم الخط</td><td style="border:1px solid #999;padding:6px">${v('tf_h_line')}</td>
+        <td style="border:1px solid #999;padding:6px;font-weight:700">نوع السلك</td><td style="border:1px solid #999;padding:6px">${v('tf_h_wire')}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #999;padding:6px;font-weight:700">تاريخ الفحص</td><td style="border:1px solid #999;padding:6px">${v('tf_h_date')}</td>
+        <td style="border:1px solid #999;padding:6px;font-weight:700">الوقت</td><td style="border:1px solid #999;padding:6px">${v('tf_h_time')}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #999;padding:6px;font-weight:700">درجة حرارة الجو</td><td style="border:1px solid #999;padding:6px" colspan="3">${v('tf_h_ambient')}°C</td>
+      </tr>
+    </table>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="background:#f0f0f0">
+          <th style="border:1px solid #999;padding:6px">رقم برج الشد</th>
+          <th style="border:1px solid #999;padding:6px">مسافة الفحص</th>
+          <th style="border:1px solid #999;padding:6px">T</th>
+          <th style="border:1px solid #999;padding:6px">S</th>
+          <th style="border:1px solid #999;padding:6px">R</th>
+          <th style="border:1px solid #999;padding:6px">حمل الخط MW</th>
+          <th style="border:1px solid #999;padding:6px">الملاحظات</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHTML || '<tr><td colspan="7" style="border:1px solid #999;padding:6px">لا توجد أبراج</td></tr>'}</tbody>
+    </table>
+    <div style="display:flex;justify-content:space-between;margin-top:28px;font-size:13px;color:#333">
+      <div>اسم وتوقيع الفاحص: ..............................</div>
+      <div>مصادقة رئيس القسم: ..............................</div>
+    </div>
+    <div style="margin-top:14px;font-size:13px;color:#333">لجنة الكشف الحراري: ..............................</div>
+  `;
+  document.body.appendChild(wrap);
+  return wrap;
+}
+
 async function exportOfficialFormPDF(mode) {
-  const area = document.getElementById('officialFormPrintArea');
   showToast('⏳ جاري تحضير الملف...');
+  const snapshot = buildOfficialFormPrintSnapshot();
   try {
-    const dataUrl = await elementToPNGDataURL(area);
+    const dataUrl = await elementToPNGDataURL(snapshot);
+    document.body.removeChild(snapshot);
     if (!dataUrl) throw new Error('capture failed');
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
@@ -3562,6 +3620,7 @@ async function exportOfficialFormPDF(mode) {
     }
     showToast('✅ تم تجهيز الملف');
   } catch (e) {
+    if (snapshot.parentNode) document.body.removeChild(snapshot);
     showToast('❌ تعذر تجهيز الملف', 'error');
   }
 }
