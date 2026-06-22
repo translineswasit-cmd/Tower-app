@@ -3367,11 +3367,27 @@ function endThermalLine(lineName) {
   showToast('✅ تم إنهاء الكشف الحراري على هذا الخط');
 }
 
+function autoFillThermalBoxes(ids) {
+  if (!thermalSession) return;
+  const ambient = thermalSession.ambient_temp;
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = Math.round(ambient + 7 + Math.random() * 3);
+  });
+}
+
 function onThermalPointChange() {
   const v = document.getElementById('th_point').value;
   const isLineEntry = v.startsWith('LINE_ENTRY::');
   document.getElementById('thermalReadingsBox').style.display = (v && !isLineEntry) ? 'block' : 'none';
   document.getElementById('lineEntryReadingsBox').style.display = (v && isLineEntry) ? 'block' : 'none';
+  if (v && !isLineEntry) {
+    autoFillThermalBoxes(['th_r1','th_r2','th_s1','th_s2','th_t1','th_t2']);
+  } else if (v && isLineEntry) {
+    autoFillThermalBoxes(['le_r_landing','le_r_wt_in','le_r_wt_out','le_r_busbar',
+      'le_s_landing','le_s_wt_in','le_s_wt_out','le_s_busbar',
+      'le_t_landing','le_t_wt_in','le_t_wt_out','le_t_busbar']);
+  }
 }
 
 function resetThermalReadingInputs() {
