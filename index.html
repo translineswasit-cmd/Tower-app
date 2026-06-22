@@ -502,6 +502,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">إحصائيات الموظفين</span></div>
     <div class="card" id="svcExportCard" onclick="showPage('records');loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span></div>
     <div class="card" id="svcDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span></div>
+    <div class="card" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
     <div class="card" onclick="showPage('account');loadAccountPage();"><span class="icon">👤</span><span class="label">الحساب</span></div>
@@ -1510,6 +1511,56 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
+<!-- FORMS HUB -->
+<div class="page" id="page-forms">
+  <div class="page-title">📑 الاستمارات</div>
+  <div class="thermal-cards">
+    <div class="card" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
+    <div class="card" onclick="showPage('memo');showMemoHome();"><span class="icon">📝</span><span class="label">مذكرة</span><span class="sublabel">مذكرة رسمية</span></div>
+  </div>
+</div>
+
+<!-- MEMO -->
+<div class="page" id="page-memo">
+
+  <div id="memoHomeView">
+    <div class="page-title">📝 مذكرة <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showPage('forms');showFormsHome();">⬅ رجوع</button></div>
+    <div class="thermal-cards">
+      <div class="card" onclick="showMemoNew()"><span class="icon">📝</span><span class="label">مذكرة جديدة</span></div>
+      <div class="card" onclick="showMemoArchive()"><span class="icon">📂</span><span class="label">أرشيف المذكرات</span></div>
+    </div>
+  </div>
+
+  <div id="memoNewView" style="display:none">
+    <div class="page-title">📝 مذكرة جديدة <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showMemoHome()">⬅ رجوع</button></div>
+    <div class="form-card">
+      <div class="grid-2">
+        <div class="field"><label>العدد</label><input type="text" id="memo_number"></div>
+        <div class="field"><label>التاريخ</label><input type="date" id="memo_date"></div>
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label>الموضوع (م/)</label>
+        <input type="text" id="memo_subject" placeholder="اكتب موضوع المذكرة">
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label>المحتوى</label>
+        <textarea id="memo_content" rows="8" placeholder="اكتب محتوى المذكرة"></textarea>
+      </div>
+    </div>
+    <div class="form-actions" style="margin-top:14px">
+      <button class="btn btn-primary" onclick="saveMemo()">💾 حفظ بالأرشيف</button>
+      <button class="btn btn-secondary" onclick="printMemo()">🖨️ طباعة</button>
+      <button class="btn btn-secondary" onclick="shareMemoWord()">📤 إرسال</button>
+    </div>
+  </div>
+
+  <div id="memoArchiveView" style="display:none">
+    <div class="page-title">📂 أرشيف المذكرات <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showMemoHome()">⬅ رجوع</button></div>
+    <div id="memoArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
+  </div>
+
+</div>
+
 <!-- ACCOUNT -->
 <div class="page" id="page-account">
   <div class="page-title">👤 الحساب</div>
@@ -1803,7 +1854,7 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport'];
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo'];
 let previousPageId = 'home';
 
 function navKeyForPage(id) {
@@ -4159,6 +4210,164 @@ async function changeAccountPassword() {
 // STAFF STATISTICS (إحصائيات الموظفين)
 // ========================
 let staffStatsCache = null;
+
+// ========================
+// FORMS HUB (الاستمارات)
+// ========================
+function showFormsHome() {
+  // صفحة وحيدة بدون عناصر فرعية تحتاج إخفاء/إظهار
+}
+
+// ========================
+// MEMO (مذكرة)
+// ========================
+let editingMemoId = null;
+
+function showMemoHome() {
+  document.getElementById('memoHomeView').style.display = 'block';
+  document.getElementById('memoNewView').style.display = 'none';
+  document.getElementById('memoArchiveView').style.display = 'none';
+}
+
+async function showMemoNew() {
+  document.getElementById('memoHomeView').style.display = 'none';
+  document.getElementById('memoNewView').style.display = 'block';
+  document.getElementById('memoArchiveView').style.display = 'none';
+  if (!editingMemoId) {
+    document.getElementById('memo_date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('memo_subject').value = '';
+    document.getElementById('memo_content').value = '';
+    document.getElementById('memo_number').value = await generateNextMemoNumber();
+  }
+}
+
+function showMemoArchive() {
+  document.getElementById('memoHomeView').style.display = 'none';
+  document.getElementById('memoNewView').style.display = 'none';
+  document.getElementById('memoArchiveView').style.display = 'block';
+  renderMemoArchive();
+}
+
+async function generateNextMemoNumber() {
+  try {
+    const res = await sbFetch('memos?select=memo_number&order=created_at.desc&limit=1');
+    const list = await res.json();
+    if (list.length) {
+      const n = parseInt(list[0].memo_number);
+      if (!isNaN(n)) return String(n + 1);
+    }
+  } catch (e) { /* تجاهل، يبقى فاضي للتعبئة اليدوية */ }
+  return '1';
+}
+
+async function saveMemo() {
+  const number = document.getElementById('memo_number').value;
+  const date = document.getElementById('memo_date').value;
+  const subject = document.getElementById('memo_subject').value;
+  const content = document.getElementById('memo_content').value;
+  if (!date || !subject || !content) { showToast('⚠️ اكمل التاريخ والموضوع والمحتوى', 'error'); return; }
+  const payload = { memo_number: number, memo_date: date, subject, content, created_by: currentUser.full_name };
+  try {
+    if (editingMemoId) {
+      const res = await sbFetch(`memos?id=eq.${editingMemoId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      showToast('✅ تم تحديث المذكرة');
+    } else {
+      const res = await sbFetch('memos', { method: 'POST', body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      showToast('✅ تم حفظ المذكرة بالأرشيف');
+    }
+  } catch (e) { showToast('❌ تعذر حفظ المذكرة', 'error'); }
+}
+
+async function renderMemoArchive() {
+  const body = document.getElementById('memoArchiveBody');
+  body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  try {
+    const res = await sbFetch('memos?select=id,memo_number,memo_date,subject,created_by&order=memo_date.desc');
+    const list = await res.json();
+    if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد مذكرات محفوظة بعد</div>'; return; }
+    body.innerHTML = list.map(m => `
+      <div class="dep-card" style="cursor:pointer" onclick="openMemoFromArchive('${m.id}')">
+        <div class="dep-card-header">
+          <div class="dep-card-title">📝 ${m.subject}</div>
+          <div class="dep-card-meta">🔢 العدد: ${m.memo_number||'—'} | 📅 ${m.memo_date} | 👤 ${m.created_by||'—'}</div>
+        </div>
+      </div>`).join('');
+  } catch (e) { body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>'; }
+}
+
+async function openMemoFromArchive(id) {
+  try {
+    const res = await sbFetch(`memos?id=eq.${id}`);
+    const list = await res.json();
+    if (!list.length) { showToast('❌ غير موجود', 'error'); return; }
+    const m = list[0];
+    editingMemoId = m.id;
+    document.getElementById('memoHomeView').style.display = 'none';
+    document.getElementById('memoNewView').style.display = 'block';
+    document.getElementById('memoArchiveView').style.display = 'none';
+    document.getElementById('memo_number').value = m.memo_number || '';
+    document.getElementById('memo_date').value = m.memo_date || '';
+    document.getElementById('memo_subject').value = m.subject || '';
+    document.getElementById('memo_content').value = m.content || '';
+    showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
+  } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
+}
+
+function buildMemoBodyHTML() {
+  const number = document.getElementById('memo_number').value || '';
+  const date = document.getElementById('memo_date').value || '';
+  const subject = document.getElementById('memo_subject').value || '';
+  const content = (document.getElementById('memo_content').value || '').replace(/\n/g, '<br>');
+  return `
+    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
+      <div style="text-align:right;font-weight:700">الى / السيد المدير المحترم</div>
+      <div style="text-align:left;margin-top:6px">العدد : ${number}</div>
+      <div style="text-align:left;margin-top:2px">التاريخ : ${date}</div>
+      <div style="text-align:center;font-weight:700;margin-top:36px">م / ${subject}</div>
+      <div style="margin-top:18px;text-indent:60px">${content}</div>
+      <div style="margin-top:18px">مع التقدير...</div>
+      <div style="margin-top:50px;text-align:left">
+        <div>مقدم الطلب</div>
+        <div style="margin-top:30px">..............................</div>
+      </div>
+    </div>
+  `;
+}
+
+function printMemo() {
+  const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+    <title>مذكرة</title><style>body{padding:30px}</style>
+    </head><body>${buildMemoBodyHTML()}</body></html>`;
+  let frame = document.getElementById('memoPrintFrame');
+  if (frame) frame.remove();
+  frame = document.createElement('iframe');
+  frame.id = 'memoPrintFrame';
+  frame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:0;height:0;border:0';
+  document.body.appendChild(frame);
+  const doc = frame.contentWindow.document;
+  doc.open(); doc.write(html); doc.close();
+  setTimeout(() => {
+    try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+    catch (e) { showToast('❌ تعذرت الطباعة', 'error'); }
+  }, 300);
+}
+
+async function shareMemoWord() {
+  showToast('⏳ جاري تحضير ملف Word...');
+  try {
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"><!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+      </head><body>${buildMemoBodyHTML()}</body></html>`;
+    const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+    const filename = 'مذكرة_' + (document.getElementById('memo_date').value || '') + '.doc';
+    await shareOrDownloadFile(blob, filename, 'application/msword');
+    showToast('✅ تم تجهيز ملف Word');
+  } catch (e) {
+    showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
+  }
+}
 
 // ========================
 // DAILY REPORT (الموقف اليومي للخطوط)
