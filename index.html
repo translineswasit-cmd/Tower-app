@@ -2995,14 +2995,19 @@ async function elementToPNGDataURL(el) {
     const svgBlob = new Blob([svgWrap], {type:'image/svg+xml;charset=utf-8'});
     const url = URL.createObjectURL(svgBlob);
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = w * 2; canvas.height = h * 2; // دقة أعلى
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'white'; ctx.fillRect(0,0,canvas.width,canvas.height);
-      ctx.scale(2,2);
-      ctx.drawImage(img, 0, 0, w, h);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL('image/png'));
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = w * 2; canvas.height = h * 2; // دقة أعلى
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white'; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.scale(2,2);
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/png'));
+      } catch (e) {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      }
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
@@ -3553,8 +3558,8 @@ function buildOfficialFormPrintSnapshot() {
     </tr>`).join('');
   wrap.innerHTML = `
     <div style="text-align:center;margin-bottom:10px">
-      <div style="font-weight:700;font-size:15px">الإصدار: 2 &nbsp;|&nbsp; استمارة: الكشف الحراري لخطوط نقل الطاقة &nbsp;|&nbsp; الشركة العامة لنقل الطاقة الكهربائية</div>
-      <div style="font-size:12px;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &nbsp;|&nbsp; الرمز: (MOE/T2-FO-177) &nbsp;|&nbsp; المنطقة الوسطى</div>
+      <div style="font-weight:700;font-size:15px">الإصدار: 2 &#160;|&#160; استمارة: الكشف الحراري لخطوط نقل الطاقة &#160;|&#160; الشركة العامة لنقل الطاقة الكهربائية</div>
+      <div style="font-size:12px;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &#160;|&#160; الرمز: (MOE/T2-FO-177) &#160;|&#160; المنطقة الوسطى</div>
     </div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:13px">
       <tr>
@@ -3621,7 +3626,7 @@ async function exportOfficialFormPDF(mode) {
     showToast('✅ تم تجهيز الملف');
   } catch (e) {
     if (snapshot.parentNode) document.body.removeChild(snapshot);
-    showToast('❌ تعذر تجهيز الملف', 'error');
+    showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
   }
 }
 
