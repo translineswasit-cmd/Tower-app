@@ -486,6 +486,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span><span class="sublabel">بانتظار الرفع</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
+    <div class="card" id="homeDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
   </div>
 </div>
 
@@ -501,7 +502,6 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
     <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">إحصائيات الموظفين</span></div>
     <div class="card" id="svcExportCard" onclick="showPage('records');loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span></div>
-    <div class="card" id="svcDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span></div>
     <div class="card" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
@@ -1515,7 +1515,7 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page" id="page-forms">
   <div class="page-title">📑 الاستمارات</div>
   <div class="thermal-cards">
-    <div class="card" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
+    <div class="card" id="formsDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
     <div class="card" onclick="showPage('memo');showMemoHome();"><span class="icon">📝</span><span class="label">مذكرة</span><span class="sublabel">مذكرة رسمية</span></div>
   </div>
 </div>
@@ -1545,6 +1545,17 @@ tbody tr:hover { background: #F7FAFC; }
       <div class="field" style="margin-top:10px">
         <label>المحتوى</label>
         <textarea id="memo_content" rows="8" placeholder="اكتب محتوى المذكرة"></textarea>
+      </div>
+      <div id="memoTableSection" style="margin-top:14px">
+        <button class="btn-sm btn-secondary" id="memoAddTableBtn" onclick="addMemoTable()">➕ إضافة جدول</button>
+        <div id="memoTableWrap" style="display:none;margin-top:10px">
+          <div style="overflow-x:auto"><table id="memoTableEl" style="border-collapse:collapse;width:100%"></table></div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm btn-secondary" onclick="addMemoTableRow()">➕ صف</button>
+            <button class="btn-sm btn-secondary" onclick="addMemoTableCol()">➕ عمود</button>
+            <button class="btn-sm btn-del" onclick="removeMemoTable()">🗑️ حذف الجدول</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="form-actions" style="margin-top:14px">
@@ -1842,8 +1853,10 @@ function applyRolePermissions() {
   const statsCard = document.getElementById('svcStatsCard');
   if (statsCard) statsCard.style.display = isAdminOrSupervisor ? '' : 'none';
   // التقرير اليومي: للمدير والمشرف فقط
-  const dailyReportCard = document.getElementById('svcDailyReportCard');
+  const dailyReportCard = document.getElementById('homeDailyReportCard');
   if (dailyReportCard) dailyReportCard.style.display = isAdminOrSupervisor ? '' : 'none';
+  const formsDailyReportCard = document.getElementById('formsDailyReportCard');
+  if (formsDailyReportCard) formsDailyReportCard.style.display = isAdminOrSupervisor ? '' : 'none';
   // تصدير التقارير (Excel/PDF): للمدير والمشرف فقط
   const recordsExportBtn = document.getElementById('recordsExportBtn');
   if (recordsExportBtn) recordsExportBtn.style.display = isAdminOrSupervisor ? '' : 'none';
@@ -4222,6 +4235,46 @@ function showFormsHome() {
 // MEMO (مذكرة)
 // ========================
 let editingMemoId = null;
+let memoTableData = null; // مصفوفة ثنائية اختيارية، null = لا يوجد جدول
+
+function addMemoTable() {
+  memoTableData = [['', ''], ['', '']];
+  renderMemoTableEditor();
+}
+function removeMemoTable() {
+  memoTableData = null;
+  renderMemoTableEditor();
+}
+function addMemoTableRow() {
+  if (!memoTableData) return;
+  memoTableData.push(memoTableData[0].map(() => ''));
+  renderMemoTableEditor();
+}
+function addMemoTableCol() {
+  if (!memoTableData) return;
+  memoTableData.forEach(row => row.push(''));
+  renderMemoTableEditor();
+}
+function updateMemoTableCell(r, c, val) {
+  if (memoTableData && memoTableData[r]) memoTableData[r][c] = val;
+}
+function renderMemoTableEditor() {
+  const wrap = document.getElementById('memoTableWrap');
+  const addBtn = document.getElementById('memoAddTableBtn');
+  if (!memoTableData) {
+    wrap.style.display = 'none';
+    addBtn.style.display = '';
+    return;
+  }
+  addBtn.style.display = 'none';
+  wrap.style.display = 'block';
+  const tableEl = document.getElementById('memoTableEl');
+  tableEl.innerHTML = memoTableData.map((row, r) =>
+    `<tr>${row.map((cell, c) => `<td style="border:1px solid #ddd;padding:2px">
+      <input type="text" value="${(cell||'').replace(/"/g,'&quot;')}" oninput="updateMemoTableCell(${r},${c},this.value)" style="width:100%;min-width:70px;border:none;padding:6px;text-align:center;font-family:inherit">
+    </td>`).join('')}</tr>`
+  ).join('');
+}
 
 function showMemoHome() {
   document.getElementById('memoHomeView').style.display = 'block';
@@ -4238,6 +4291,8 @@ async function showMemoNew() {
     document.getElementById('memo_subject').value = '';
     document.getElementById('memo_content').value = '';
     document.getElementById('memo_number').value = await generateNextMemoNumber();
+    memoTableData = null;
+    renderMemoTableEditor();
   }
 }
 
@@ -4266,7 +4321,7 @@ async function saveMemo() {
   const subject = document.getElementById('memo_subject').value;
   const content = document.getElementById('memo_content').value;
   if (!date || !subject || !content) { showToast('⚠️ اكمل التاريخ والموضوع والمحتوى', 'error'); return; }
-  const payload = { memo_number: number, memo_date: date, subject, content, created_by: currentUser.full_name };
+  const payload = { memo_number: number, memo_date: date, subject, content, table_data: memoTableData, created_by: currentUser.full_name };
   try {
     if (editingMemoId) {
       const res = await sbFetch(`memos?id=eq.${editingMemoId}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -4311,8 +4366,18 @@ async function openMemoFromArchive(id) {
     document.getElementById('memo_date').value = m.memo_date || '';
     document.getElementById('memo_subject').value = m.subject || '';
     document.getElementById('memo_content').value = m.content || '';
+    memoTableData = m.table_data || null;
+    renderMemoTableEditor();
     showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
   } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
+}
+
+function buildMemoTableHTML() {
+  if (!memoTableData || !memoTableData.length) return '';
+  const rowsHTML = memoTableData.map(row =>
+    `<tr>${row.map(cell => `<td style="border:1px solid #000;padding:6px;text-align:center">${cell || ''}</td>`).join('')}</tr>`
+  ).join('');
+  return `<table style="width:100%;border-collapse:collapse;margin-top:18px;font-size:14px">${rowsHTML}</table>`;
 }
 
 function buildMemoBodyHTML() {
@@ -4323,11 +4388,16 @@ function buildMemoBodyHTML() {
   return `
     <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
       <div style="text-align:right;font-weight:700">الى / السيد المدير المحترم</div>
-      <div style="text-align:left;margin-top:6px">العدد : ${number}</div>
-      <div style="text-align:left;margin-top:2px">التاريخ : ${date}</div>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <table style="border-collapse:collapse">
+          <tr><td style="white-space:nowrap;padding:0">العدد</td><td style="padding:0">&#160;:&#160;${number}</td></tr>
+          <tr><td style="white-space:nowrap;padding:0">التاريخ</td><td style="padding:0">&#160;:&#160;${date}</td></tr>
+        </table>
+      </div>
       <div style="text-align:center;font-weight:700;margin-top:36px">م / ${subject}</div>
       <div style="margin-top:18px;text-indent:60px">${content}</div>
-      <div style="margin-top:18px">مع التقدير...</div>
+      ${buildMemoTableHTML()}
+      <div style="text-align:center;margin-top:18px">مع التقدير...</div>
       <div style="margin-top:50px;text-align:left">
         <div>مقدم الطلب</div>
         <div style="margin-top:30px">..............................</div>
