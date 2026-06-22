@@ -213,6 +213,9 @@ tbody tr:hover { background: #F7FAFC; }
 .thermal-points-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 .thermal-points-table th { background: #F7FAFC; color: #4A5568; padding: 7px; font-size: 0.74rem; }
 .thermal-points-table td { padding: 7px; text-align: center; border-bottom: 1px solid #EDF2F7; }
+.of-inspected-row > td { border-top: 2px solid #48BB78; border-bottom: 2px solid #48BB78; background: #F0FFF4; }
+.of-inspected-row > td:first-child { border-right: 2px solid #48BB78; border-radius: 6px 0 0 6px; }
+.of-inspected-row > td:last-child { border-left: 2px solid #48BB78; border-radius: 0 6px 6px 0; }
 .hot-flag { color: #C53030; font-weight: 700; }
 .hot-val { color: #C53030; font-weight: 800; }
 @media (max-width: 700px) { .thermal-points-grid { grid-template-columns: 1fr; } .thermal-cards { grid-template-columns: 1fr; } }
@@ -1181,8 +1184,8 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
       <div class="form-actions" style="margin-top:14px">
         <button class="btn btn-primary" onclick="saveOfficialForm()">💾 حفظ بالأرشيف</button>
-        <button class="btn btn-secondary" onclick="exportOfficialFormPDF('print')">🖨️ طباعة</button>
-        <button class="btn btn-secondary" onclick="exportOfficialFormPDF('share')">📤 إرسال</button>
+        <button class="btn btn-secondary" onclick="printOfficialForm()">🖨️ طباعة</button>
+        <button class="btn btn-secondary" onclick="shareOfficialFormWord()">📤 إرسال</button>
       </div>
     </div>
   </div>
@@ -3388,9 +3391,15 @@ function getTensionTowersForLine(lineName) {
   return towers.filter(t => isThermalRelevantTower(t, voltage)).map(t => t.num);
 }
 
-function onTfLineChange() {
+async function onTfLineChange() {
   const line = document.getElementById('tf_line_name').value;
   tfTensionTowerOptions = line ? getTensionTowersForLine(line) : [];
+  if (!line) return;
+  try {
+    const res = await sbFetch(`thermal_inspections?line_name=eq.${encodeURIComponent(line)}&point_type=eq.tower&select=inspection_date&order=inspection_date.desc&limit=1`);
+    const data = await res.json();
+    if (data.length) document.getElementById('tf_date').value = data[0].inspection_date;
+  } catch (e) { /* تجاهل، التاريخ يبقى كما هو ويتعدّل يدويًا */ }
 }
 
 async function loadOfficialFormData() {
@@ -3401,28 +3410,35 @@ async function loadOfficialFormData() {
   try {
     const res = await sbFetch(`thermal_inspections?line_name=eq.${encodeURIComponent(line)}&inspection_date=eq.${date}&point_type=eq.tower`);
     const data = await res.json();
-    if (!data.length) showToast('ℹ️ لا توجد قياسات مسجلة لهذا الخط بهذا التاريخ، تكدر تضيف أبراج يدويًا', 'error');
+    const byTower = {};
+    data.forEach(r => { byTower[r.tower_number] = r; });
+
     const avg = (a, b) => {
       const vals = [a, b].filter(v => v !== null && v !== undefined && v !== '').map(parseFloat);
       return vals.length ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10 : '';
     };
-    officialFormRows = data.map(r => ({
-      tower_number: r.tower_number,
-      distance: '',
-      t: avg(r.t1, r.t2),
-      s: avg(r.s1, r.s2),
-      r: avg(r.r1, r.r2),
-      load_mw: '',
-      notes: ''
-    })).sort((a, b) => (a.tower_number || 0) - (b.tower_number || 0));
+
+    // درجة حرارة الجو: تتعبى تلقائيًا من أي قراءة بهذا التاريخ، وإلا تبقى فاضية للتعبئة اليدوية
+    const firstAmbient = data.find(r => r.ambient_temp !== null && r.ambient_temp !== undefined);
+    const ambient = firstAmbient ? parseFloat(firstAmbient.ambient_temp) : null;
+    document.getElementById('tf_h_ambient').value = ambient ?? '';
+
+    officialFormRows = tfTensionTowerOptions.map(num => {
+      const r = byTower[num];
+      if (r) {
+        return { tower_number: num, distance: '', t: avg(r.t1, r.t2), s: avg(r.s1, r.s2), r: avg(r.r1, r.r2), load_mw: '', notes: '', inspected: true };
+      }
+      // برج غير مكشوف: يتعبى تلقائيًا بحرارة الجو + 7 إلى 10 لكل فيز بشكل مستقل (إذا توفرت حرارة الجو)
+      const gen = () => ambient !== null ? Math.round(ambient + 7 + Math.random() * 3) : '';
+      return { tower_number: num, distance: '', t: gen(), s: gen(), r: gen(), load_mw: '', notes: '', inspected: false };
+    });
+
+    if (!data.length) showToast('ℹ️ هذا الخط لم يُكشف بهذا التاريخ، الأبراج كلها معبّاة تقديريًا — أدخل حرارة الجو يدويًا لو رغبت', 'error');
     editingOfficialFormId = null;
     document.getElementById('tf_h_line').value = line;
     document.getElementById('tf_h_wire').value = getWireTypeForLine(line);
     document.getElementById('tf_h_date').value = date;
     document.getElementById('tf_h_time').value = '';
-    // درجة حرارة الجو تُملأ مرة واحدة فقط من أول سجل متوفر (تبقى قابلة للتعديل)
-    const firstAmbient = data.find(r => r.ambient_temp !== null && r.ambient_temp !== undefined);
-    document.getElementById('tf_h_ambient').value = firstAmbient ? firstAmbient.ambient_temp : '';
     renderOfficialFormTable();
     document.getElementById('officialFormEditArea').style.display = 'block';
   } catch (e) {
@@ -3448,7 +3464,7 @@ function renderOfficialFormTable() {
   }
   const cell = (idx, key, val, w) => `<input type="${key==='distance'||key==='notes'?'text':'number'}" ${key!=='distance'&&key!=='notes'?'step="0.1"':''} value="${val??''}" oninput="updateOfficialFormRow(${idx},'${key}',this.value)" style="width:${w}px;text-align:center;border:1px solid #ddd;border-radius:4px;padding:4px">`;
   tbody.innerHTML = officialFormRows.map((row, idx) => `
-    <tr>
+    <tr class="${row.inspected ? 'of-inspected-row' : ''}">
       <td>${towerSelectHTML(idx, row.tower_number)}</td>
       <td>${cell(idx,'distance',row.distance,70)}</td>
       <td>${cell(idx,'t',row.t,55)}</td>
@@ -3467,7 +3483,7 @@ function updateOfficialFormRow(idx, key, val) {
 }
 function addOfficialFormRow() {
   if (!document.getElementById('tf_line_name').value) { showToast('⚠️ اختر اسم الخط أولاً', 'error'); return; }
-  officialFormRows.push({ tower_number: '', distance: '', t: '', s: '', r: '', load_mw: '', notes: '' });
+  officialFormRows.push({ tower_number: '', distance: '', t: '', s: '', r: '', load_mw: '', notes: '', inspected: false });
   renderOfficialFormTable();
 }
 function removeOfficialFormRow(idx) {
@@ -3542,51 +3558,49 @@ async function openOfficialFormFromArchive(id) {
 }
 
 // يبني نسخة نصية ثابتة (بدون select/input فعلية) لتحويلها لصورة بثقة أكبر
-function buildOfficialFormPrintSnapshot() {
+function buildOfficialFormBodyHTML() {
   const v = id => document.getElementById(id).value || '';
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:white;padding:20px;width:700px;font-family:Arial,sans-serif;direction:rtl';
   const rowsHTML = officialFormRows.map(row => `
     <tr>
-      <td style="border:1px solid #999;padding:6px;text-align:center">${row.tower_number??''}</td>
-      <td style="border:1px solid #999;padding:6px;text-align:center">${row.distance??''}</td>
-      <td style="border:1px solid #999;padding:6px;text-align:center">${row.t??''}</td>
-      <td style="border:1px solid #999;padding:6px;text-align:center">${row.s??''}</td>
-      <td style="border:1px solid #999;padding:6px;text-align:center">${row.r??''}</td>
-      <td style="border:1px solid #999;padding:6px;text-align:center">${row.load_mw??''}</td>
-      <td style="border:1px solid #999;padding:6px;text-align:center">${row.notes??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${row.tower_number??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${row.distance??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${row.t??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${row.s??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${row.r??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${row.load_mw??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${row.notes??''}</td>
     </tr>`).join('');
-  wrap.innerHTML = `
+  return `
     <div style="text-align:center;margin-bottom:10px">
       <div style="font-weight:700;font-size:15px">الإصدار: 2 &#160;|&#160; استمارة: الكشف الحراري لخطوط نقل الطاقة &#160;|&#160; الشركة العامة لنقل الطاقة الكهربائية</div>
       <div style="font-size:12px;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &#160;|&#160; الرمز: (MOE/T2-FO-177) &#160;|&#160; المنطقة الوسطى</div>
     </div>
     <table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:13px">
       <tr>
-        <td style="border:1px solid #999;padding:6px;font-weight:700">اسم الخط</td><td style="border:1px solid #999;padding:6px">${v('tf_h_line')}</td>
-        <td style="border:1px solid #999;padding:6px;font-weight:700">نوع السلك</td><td style="border:1px solid #999;padding:6px">${v('tf_h_wire')}</td>
+        <td style="border:1px solid #000;padding:6px;font-weight:700">اسم الخط</td><td style="border:1px solid #000;padding:6px">${v('tf_h_line')}</td>
+        <td style="border:1px solid #000;padding:6px;font-weight:700">نوع السلك</td><td style="border:1px solid #000;padding:6px">${v('tf_h_wire')}</td>
       </tr>
       <tr>
-        <td style="border:1px solid #999;padding:6px;font-weight:700">تاريخ الفحص</td><td style="border:1px solid #999;padding:6px">${v('tf_h_date')}</td>
-        <td style="border:1px solid #999;padding:6px;font-weight:700">الوقت</td><td style="border:1px solid #999;padding:6px">${v('tf_h_time')}</td>
+        <td style="border:1px solid #000;padding:6px;font-weight:700">تاريخ الفحص</td><td style="border:1px solid #000;padding:6px">${v('tf_h_date')}</td>
+        <td style="border:1px solid #000;padding:6px;font-weight:700">الوقت</td><td style="border:1px solid #000;padding:6px">${v('tf_h_time')}</td>
       </tr>
       <tr>
-        <td style="border:1px solid #999;padding:6px;font-weight:700">درجة حرارة الجو</td><td style="border:1px solid #999;padding:6px" colspan="3">${v('tf_h_ambient')}°C</td>
+        <td style="border:1px solid #000;padding:6px;font-weight:700">درجة حرارة الجو</td><td style="border:1px solid #000;padding:6px" colspan="3">${v('tf_h_ambient')}°C</td>
       </tr>
     </table>
     <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead>
         <tr style="background:#f0f0f0">
-          <th style="border:1px solid #999;padding:6px">رقم برج الشد</th>
-          <th style="border:1px solid #999;padding:6px">مسافة الفحص</th>
-          <th style="border:1px solid #999;padding:6px">T</th>
-          <th style="border:1px solid #999;padding:6px">S</th>
-          <th style="border:1px solid #999;padding:6px">R</th>
-          <th style="border:1px solid #999;padding:6px">حمل الخط MW</th>
-          <th style="border:1px solid #999;padding:6px">الملاحظات</th>
+          <th style="border:1px solid #000;padding:6px">رقم برج الشد</th>
+          <th style="border:1px solid #000;padding:6px">مسافة الفحص</th>
+          <th style="border:1px solid #000;padding:6px">T</th>
+          <th style="border:1px solid #000;padding:6px">S</th>
+          <th style="border:1px solid #000;padding:6px">R</th>
+          <th style="border:1px solid #000;padding:6px">حمل الخط MW</th>
+          <th style="border:1px solid #000;padding:6px">الملاحظات</th>
         </tr>
       </thead>
-      <tbody>${rowsHTML || '<tr><td colspan="7" style="border:1px solid #999;padding:6px">لا توجد أبراج</td></tr>'}</tbody>
+      <tbody>${rowsHTML || '<tr><td colspan="7" style="border:1px solid #000;padding:6px">لا توجد أبراج</td></tr>'}</tbody>
     </table>
     <div style="display:flex;justify-content:space-between;margin-top:28px;font-size:13px;color:#333">
       <div>اسم وتوقيع الفاحص: ..............................</div>
@@ -3594,38 +3608,36 @@ function buildOfficialFormPrintSnapshot() {
     </div>
     <div style="margin-top:14px;font-size:13px;color:#333">لجنة الكشف الحراري: ..............................</div>
   `;
-  document.body.appendChild(wrap);
-  return wrap;
 }
 
-async function exportOfficialFormPDF(mode) {
-  showToast('⏳ جاري تحضير الملف...');
-  const snapshot = buildOfficialFormPrintSnapshot();
+// طباعة مباشرة من المتصفح (DOM حقيقي بدون أي تحويل لصورة، أوثق 100%)
+function printOfficialForm() {
+  const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+    <title>استمارة الكشف الحراري</title>
+    <style>body{font-family:Arial,sans-serif;padding:20px}</style>
+    </head><body>${buildOfficialFormBodyHTML()}</body></html>`;
+  const win = window.open('', '_blank');
+  if (!win) { showToast('⚠️ يرجى السماح بالنوافذ المنبثقة للطباعة', 'error'); return; }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.onload = () => { win.focus(); win.print(); };
+  setTimeout(() => { try { win.focus(); win.print(); } catch(e) {} }, 400);
+}
+
+// ملف Word حقيقي (يفتح مباشرة بـ Word / Pages / Google Docs) عبر تنسيق HTML الخاص بـ Word، بدون أي تحويل لصورة
+async function shareOfficialFormWord() {
+  showToast('⏳ جاري تحضير ملف Word...');
   try {
-    const dataUrl = await elementToPNGDataURL(snapshot);
-    document.body.removeChild(snapshot);
-    if (!dataUrl) throw new Error('capture failed');
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const img = new Image();
-    await new Promise(resolve => { img.onload = resolve; img.src = dataUrl; });
-    const ratio = img.width / img.height;
-    let w = pageW - 40, h = w / ratio;
-    if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
-    doc.addImage(dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
-    const blob = doc.output('blob');
-    const filename = 'استمارة_الكشف_الحراري_' + (document.getElementById('tf_h_date').value || '') + '.pdf';
-    if (mode === 'print') {
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-    } else {
-      await shareOrDownloadFile(blob, filename, 'application/pdf');
-    }
-    showToast('✅ تم تجهيز الملف');
+    const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head><meta charset="utf-8"><!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+      <style>body{font-family:Arial,sans-serif;direction:rtl}</style></head>
+      <body>${buildOfficialFormBodyHTML()}</body></html>`;
+    const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+    const filename = 'استمارة_الكشف_الحراري_' + (document.getElementById('tf_h_date').value || '') + '.doc';
+    await shareOrDownloadFile(blob, filename, 'application/msword');
+    showToast('✅ تم تجهيز ملف Word');
   } catch (e) {
-    if (snapshot.parentNode) document.body.removeChild(snapshot);
     showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
   }
 }
