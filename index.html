@@ -986,6 +986,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="thermal-cards">
       <div class="card" onclick="showThermalNew()"><span class="icon">➕</span><span class="label">الكشف الجديد</span><span class="sublabel">تسجيل قياسات حرارة</span></div>
       <div class="card" onclick="showThermalArchive()"><span class="icon">📂</span><span class="label">الكشوفات السابقة</span><span class="sublabel">أرشيف القياسات</span></div>
+      <div class="card" onclick="showThermalOfficialFormHome()"><span class="icon">📄</span><span class="label">الاستمارة الرسمية</span><span class="sublabel">MOE/T2-FO-177</span></div>
     </div>
   </div>
 
@@ -1108,6 +1109,86 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
     </div>
     <div id="thermalArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
+  </div>
+
+  <!-- Thermal: official form (MOE/T2-FO-177) -->
+  <div id="thermalOfficialFormView" style="display:none">
+    <div class="records-toolbar">
+      <div class="page-title" style="margin:0">📄 الاستمارة الرسمية <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
+      <div class="toolbar-right">
+        <button class="btn-excel" onclick="showThermalOfficialFormArchive()">📂 الأرشيف</button>
+      </div>
+    </div>
+
+    <div class="form-card">
+      <h3>تحميل القياسات تلقائياً</h3>
+      <div class="grid-3">
+        <div class="field">
+          <label>اسم الخط *</label>
+          <select id="tf_line_name"><option value="">-- اختر الخط --</option></select>
+        </div>
+        <div class="field"><label>تاريخ الفحص *</label><input type="date" id="tf_date"></div>
+        <div class="field" style="justify-content:flex-end">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" onclick="loadOfficialFormData()">🔄 تحميل القياسات</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="officialFormEditArea" style="display:none">
+      <div class="form-card" id="officialFormPrintArea">
+        <div style="text-align:center;margin-bottom:10px">
+          <div style="font-weight:700;font-size:0.95rem">الإصدار: 2 &nbsp; | &nbsp; استمارة: الكشف الحراري لخطوط نقل الطاقة &nbsp; | &nbsp; الشركة العامة لنقل الطاقة الكهربائية</div>
+          <div style="font-size:0.8rem;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &nbsp; | &nbsp; الرمز: (MOE/T2-FO-177) &nbsp; | &nbsp; المنطقة الوسطى</div>
+        </div>
+        <div class="grid-2" style="margin-bottom:6px">
+          <div class="field"><label>اسم الخط</label><input id="tf_h_line" readonly></div>
+          <div class="field"><label>نوع السلك</label><input id="tf_h_wire"></div>
+        </div>
+        <div class="grid-2" style="margin-bottom:10px">
+          <div class="field"><label>تاريخ الفحص</label><input id="tf_h_date" readonly></div>
+          <div class="field"><label>الوقت</label><input id="tf_h_time" placeholder="مثال: 10:30 صباحاً"></div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="thermal-points-table" id="officialFormTable" style="min-width:760px">
+            <thead>
+              <tr>
+                <th rowspan="2">رقم برج الشد</th>
+                <th rowspan="2">مسافة الفحص</th>
+                <th colspan="3">أعلى درجة حرارة للطور</th>
+                <th rowspan="2">حمل الخط MW</th>
+                <th rowspan="2">درجة حرارة الجو</th>
+                <th rowspan="2">الملاحظات</th>
+                <th rowspan="2"></th>
+              </tr>
+              <tr><th>T</th><th>S</th><th>R</th></tr>
+            </thead>
+            <tbody id="officialFormBody"></tbody>
+          </table>
+        </div>
+        <div style="margin-top:10px">
+          <button class="btn-sm btn-secondary" onclick="addOfficialFormRow()">➕ إضافة برج</button>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:28px;font-size:0.82rem;color:#333">
+          <div>اسم وتوقيع الفاحص: ..............................</div>
+          <div>مصادقة رئيس القسم: ..............................</div>
+        </div>
+        <div style="margin-top:14px;font-size:0.82rem;color:#333">لجنة الكشف الحراري: ..............................</div>
+      </div>
+      <div class="form-actions" style="margin-top:14px">
+        <button class="btn btn-primary" onclick="saveOfficialForm()">💾 حفظ بالأرشيف</button>
+        <button class="btn btn-secondary" onclick="exportOfficialFormPDF('print')">🖨️ طباعة</button>
+        <button class="btn btn-secondary" onclick="exportOfficialFormPDF('share')">📤 إرسال</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thermal: official form archive -->
+  <div id="thermalOfficialFormArchiveView" style="display:none">
+    <div class="records-toolbar">
+      <div class="page-title" style="margin:0">📂 أرشيف الاستمارات الرسمية <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalOfficialFormHome()">⬅ رجوع</button></div>
+    </div>
+    <div id="officialFormArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
 
 </div>
@@ -1585,6 +1666,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const thSel = document.getElementById('th_line_name');
   Object.keys(LINES_DATA).forEach(name => {
     const o = document.createElement('option'); o.value = name; o.textContent = name; thSel.appendChild(o);
+  });
+
+  const tfSel = document.getElementById('tf_line_name');
+  Object.keys(LINES_DATA).forEach(name => {
+    const o = document.createElement('option'); o.value = name; o.textContent = name; tfSel.appendChild(o);
   });
 
   // Try restore session
@@ -3217,11 +3303,15 @@ function showThermalHome() {
   document.getElementById('thermalHomeView').style.display = 'block';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormView').style.display = 'none';
+  document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
 }
 function showThermalNew() {
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'block';
   document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormView').style.display = 'none';
+  document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
   renderActiveThermalTabs();
   if (!currentThermalLine) {
     document.getElementById('thermalSessionForm').style.display = 'block';
@@ -3234,7 +3324,201 @@ function showThermalArchive() {
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'block';
+  document.getElementById('thermalOfficialFormView').style.display = 'none';
+  document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
   loadThermalArchive();
+}
+function showThermalOfficialFormHome() {
+  document.getElementById('thermalHomeView').style.display = 'none';
+  document.getElementById('thermalNewView').style.display = 'none';
+  document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormView').style.display = 'block';
+  document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
+  document.getElementById('officialFormEditArea').style.display = 'none';
+  document.getElementById('tf_date').value = new Date().toISOString().split('T')[0];
+  editingOfficialFormId = null;
+}
+function showThermalOfficialFormArchive() {
+  document.getElementById('thermalHomeView').style.display = 'none';
+  document.getElementById('thermalNewView').style.display = 'none';
+  document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormView').style.display = 'none';
+  document.getElementById('thermalOfficialFormArchiveView').style.display = 'block';
+  renderOfficialFormArchive();
+}
+
+// ========================
+// الاستمارة الرسمية للكشف الحراري (MOE/T2-FO-177)
+// ========================
+let editingOfficialFormId = null;
+let officialFormRows = [];
+
+function getWireTypeForLine(lineName) {
+  const li = LINES_INFO.find(l => lineName.startsWith(l.name));
+  return li ? (li.wire_type || '') : '';
+}
+
+async function loadOfficialFormData() {
+  const line = document.getElementById('tf_line_name').value;
+  const date = document.getElementById('tf_date').value;
+  if (!line || !date) { showToast('⚠️ اختر الخط والتاريخ', 'error'); return; }
+  try {
+    const res = await sbFetch(`thermal_inspections?line_name=eq.${encodeURIComponent(line)}&inspection_date=eq.${date}&point_type=eq.tower`);
+    const data = await res.json();
+    if (!data.length) showToast('ℹ️ لا توجد قياسات مسجلة لهذا الخط بهذا التاريخ، تكدر تضيف أبراج يدويًا', 'error');
+    const avg = (a, b) => {
+      const vals = [a, b].filter(v => v !== null && v !== undefined && v !== '').map(parseFloat);
+      return vals.length ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10 : '';
+    };
+    officialFormRows = data.map(r => ({
+      tower_number: r.tower_number,
+      distance: '',
+      t: avg(r.t1, r.t2),
+      s: avg(r.s1, r.s2),
+      r: avg(r.r1, r.r2),
+      load_mw: '',
+      ambient: r.ambient_temp ?? '',
+      notes: ''
+    })).sort((a, b) => (a.tower_number || 0) - (b.tower_number || 0));
+    editingOfficialFormId = null;
+    document.getElementById('tf_h_line').value = line;
+    document.getElementById('tf_h_wire').value = getWireTypeForLine(line);
+    document.getElementById('tf_h_date').value = date;
+    document.getElementById('tf_h_time').value = '';
+    renderOfficialFormTable();
+    document.getElementById('officialFormEditArea').style.display = 'block';
+  } catch (e) {
+    showToast('❌ تعذر تحميل القياسات', 'error');
+  }
+}
+
+function renderOfficialFormTable() {
+  const tbody = document.getElementById('officialFormBody');
+  if (!officialFormRows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:10px;color:#999">لا توجد أبراج، اضغط "إضافة برج"</td></tr>';
+    return;
+  }
+  const cell = (idx, key, val, w) => `<input type="${key==='distance'||key==='notes'?'text':'number'}" ${key!=='distance'&&key!=='notes'?'step="0.1"':''} value="${val??''}" oninput="updateOfficialFormRow(${idx},'${key}',this.value)" style="width:${w}px;text-align:center;border:1px solid #ddd;border-radius:4px;padding:4px">`;
+  tbody.innerHTML = officialFormRows.map((row, idx) => `
+    <tr>
+      <td>${cell(idx,'tower_number',row.tower_number,60)}</td>
+      <td>${cell(idx,'distance',row.distance,70)}</td>
+      <td>${cell(idx,'t',row.t,55)}</td>
+      <td>${cell(idx,'s',row.s,55)}</td>
+      <td>${cell(idx,'r',row.r,55)}</td>
+      <td>${cell(idx,'load_mw',row.load_mw,65)}</td>
+      <td>${cell(idx,'ambient',row.ambient,55)}</td>
+      <td>${cell(idx,'notes',row.notes,110)}</td>
+      <td><button class="btn-sm btn-del" onclick="removeOfficialFormRow(${idx})">🗑️</button></td>
+    </tr>`).join('');
+}
+
+function updateOfficialFormRow(idx, key, val) {
+  if (!officialFormRows[idx]) return;
+  if (key === 'distance' || key === 'notes') officialFormRows[idx][key] = val;
+  else officialFormRows[idx][key] = val === '' ? '' : (key === 'tower_number' ? parseInt(val) : parseFloat(val));
+}
+function addOfficialFormRow() {
+  officialFormRows.push({ tower_number: '', distance: '', t: '', s: '', r: '', load_mw: '', ambient: '', notes: '' });
+  renderOfficialFormTable();
+}
+function removeOfficialFormRow(idx) {
+  officialFormRows.splice(idx, 1);
+  renderOfficialFormTable();
+}
+
+async function saveOfficialForm() {
+  if (!officialFormRows.length) { showToast('⚠️ لا توجد أبراج لحفظها', 'error'); return; }
+  const payload = {
+    line_name: document.getElementById('tf_h_line').value,
+    wire_type: document.getElementById('tf_h_wire').value,
+    inspection_date: document.getElementById('tf_h_date').value,
+    inspection_time: document.getElementById('tf_h_time').value,
+    rows: officialFormRows,
+    created_by: currentUser.full_name
+  };
+  try {
+    if (editingOfficialFormId) {
+      const res = await sbFetch(`thermal_official_forms?id=eq.${editingOfficialFormId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      showToast('✅ تم تحديث الاستمارة المحفوظة');
+    } else {
+      const res = await sbFetch('thermal_official_forms', { method: 'POST', body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      showToast('✅ تم حفظ الاستمارة بالأرشيف');
+    }
+  } catch (e) { showToast('❌ تعذر الحفظ', 'error'); }
+}
+
+async function renderOfficialFormArchive() {
+  const body = document.getElementById('officialFormArchiveBody');
+  body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  try {
+    const res = await sbFetch('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
+    const list = await res.json();
+    if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد استمارات محفوظة بعد</div>'; return; }
+    body.innerHTML = list.map(f => {
+      const n = Array.isArray(f.rows) ? f.rows.length : 0;
+      return `<div class="dep-card" style="cursor:pointer" onclick="openOfficialFormFromArchive('${f.id}')">
+        <div class="dep-card-header">
+          <div class="dep-card-title">📄 ${f.line_name}</div>
+          <div class="dep-card-meta">📅 ${f.inspection_date} | 🗼 ${n} برج | 👤 ${f.created_by||'—'}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>'; }
+}
+
+async function openOfficialFormFromArchive(id) {
+  try {
+    const res = await sbFetch(`thermal_official_forms?id=eq.${id}`);
+    const list = await res.json();
+    if (!list.length) { showToast('❌ غير موجود', 'error'); return; }
+    const f = list[0];
+    editingOfficialFormId = f.id;
+    officialFormRows = Array.isArray(f.rows) ? f.rows : [];
+    showThermalOfficialFormHome();
+    document.getElementById('tf_line_name').value = f.line_name;
+    document.getElementById('tf_date').value = f.inspection_date;
+    document.getElementById('tf_h_line').value = f.line_name;
+    document.getElementById('tf_h_wire').value = f.wire_type || '';
+    document.getElementById('tf_h_date').value = f.inspection_date;
+    document.getElementById('tf_h_time').value = f.inspection_time || '';
+    editingOfficialFormId = f.id; // showThermalOfficialFormHome resets it, re-set after
+    renderOfficialFormTable();
+    document.getElementById('officialFormEditArea').style.display = 'block';
+    showToast('📂 تم تحميل الاستمارة، تكدر تعدّلها');
+  } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
+}
+
+async function exportOfficialFormPDF(mode) {
+  const area = document.getElementById('officialFormPrintArea');
+  showToast('⏳ جاري تحضير الملف...');
+  try {
+    const dataUrl = await elementToPNGDataURL(area);
+    if (!dataUrl) throw new Error('capture failed');
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const img = new Image();
+    await new Promise(resolve => { img.onload = resolve; img.src = dataUrl; });
+    const ratio = img.width / img.height;
+    let w = pageW - 40, h = w / ratio;
+    if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
+    doc.addImage(dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
+    const blob = doc.output('blob');
+    const filename = 'استمارة_الكشف_الحراري_' + (document.getElementById('tf_h_date').value || '') + '.pdf';
+    if (mode === 'print') {
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } else {
+      await shareOrDownloadFile(blob, filename, 'application/pdf');
+    }
+    showToast('✅ تم تجهيز الملف');
+  } catch (e) {
+    showToast('❌ تعذر تجهيز الملف', 'error');
+  }
 }
 
 // Parse the two station names from a line name like "عزيزية - صويرة 132 ك.ف"
