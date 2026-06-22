@@ -1390,23 +1390,35 @@ tbody tr:hover { background: #F7FAFC; }
 <!-- DAILY REPORT -->
 <div class="page" id="page-dailyReport">
   <div class="page-title">📅 التقرير اليومي (الموقف اليومي للخطوط)</div>
-  <div class="form-card">
-    <div class="field">
-      <label>التاريخ</label>
-      <input type="date" id="dr_date" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+
+  <div class="dep-tabs" style="margin-bottom:14px">
+    <button class="dep-tab active" id="drTabNewBtn" onclick="startNewDailyReport()">🆕 تقرير جديد</button>
+    <button class="dep-tab" id="drTabArchiveBtn" onclick="switchDailyReportTab('archive')">📂 الأرشيف</button>
+  </div>
+
+  <div id="drNewView">
+    <div class="form-card">
+      <div class="field">
+        <label>التاريخ</label>
+        <input type="date" id="dr_date" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+      </div>
+      <button class="btn btn-primary" style="margin-top:10px" onclick="generateDailyReport()">🔍 توليد التقرير</button>
     </div>
-    <button class="btn btn-primary" style="margin-top:10px" onclick="generateDailyReport()">🔍 توليد التقرير</button>
+
+    <div id="dailyReportRowsWrap" style="margin-top:16px"></div>
+
+    <div id="dailyReportActions" style="display:none;margin-top:14px;gap:10px;flex-wrap:wrap" class="dep-tabs">
+      <select id="dr_add_line_select" onchange="addDailyReportLine()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem;flex:1;min-width:160px"></select>
+    </div>
+    <div id="dailyReportSaveBar" style="display:none;margin-top:14px;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" style="flex:1;min-width:140px" onclick="saveDailyReport()">💾 حفظ وأرشفة</button>
+      <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="downloadDailyReportExcel()">📥 تنزيل Excel</button>
+      <button class="btn btn-secondary" id="dr_share_btn" style="flex:1;min-width:140px;display:none" onclick="shareDailyReportExcel()">📤 مشاركة / إرسال مباشر</button>
+    </div>
   </div>
 
-  <div id="dailyReportRowsWrap" style="margin-top:16px"></div>
-
-  <div id="dailyReportActions" style="display:none;margin-top:14px;gap:10px;flex-wrap:wrap" class="dep-tabs">
-    <select id="dr_add_line_select" onchange="addDailyReportLine()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem;flex:1;min-width:160px"></select>
-  </div>
-  <div id="dailyReportSaveBar" style="display:none;margin-top:14px;gap:10px;flex-wrap:wrap">
-    <button class="btn btn-primary" style="flex:1;min-width:140px" onclick="saveDailyReport()">💾 حفظ وأرشفة</button>
-    <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="downloadDailyReportExcel()">📥 تنزيل Excel</button>
-    <button class="btn btn-secondary" id="dr_share_btn" style="flex:1;min-width:140px;display:none" onclick="shareDailyReportExcel()">📤 مشاركة / إرسال مباشر</button>
+  <div id="drArchiveView" style="display:none">
+    <div id="drArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
 </div>
 
@@ -3145,25 +3157,33 @@ async function exportDepLogExcel() {
   if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
   try {
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('سجل المعالجات');
-    ws.views = [{ rightToLeft: true }];
-    ws.columns = [
-      { header: 'اسم الخط', key: 'line', width: 30 },
-      { header: 'رقم البرج', key: 'tower', width: 12 },
-      { header: 'تاريخ المعالجة', key: 'date', width: 16 },
-      { header: 'المعالج', key: 'by', width: 20 },
-      { header: 'العناصر المعالجة', key: 'items', width: 40 }
-    ];
-    ws.getRow(1).font = { bold: true };
-    rows.forEach(t => {
-      ws.addRow({
-        line: t.line_name || '',
-        tower: t.tower_number || '',
-        date: t.treatment_date || '',
-        by: t.treated_by || '',
-        items: (t.items_treated || []).map(it => it.label).join('، ')
+    const ws = wb.addWorksheet('سجل المعالجات', { views: [{ rightToLeft: true }] });
+    ws.columns = [{ width: 30 },{ width: 12 },{ width: 16 },{ width: 20 },{ width: 45 }];
+
+    const headers = ['اسم الخط', 'رقم البرج', 'تاريخ المعالجة', 'المعالج', 'العناصر المعالجة'];
+    headers.forEach((label, i) => {
+      const cell = ws.getCell(1, i + 1);
+      cell.value = label;
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    });
+
+    rows.forEach((t, rIdx) => {
+      const rowNum = rIdx + 2;
+      const values = [
+        t.line_name || '',
+        t.tower_number || '',
+        t.treatment_date || '',
+        t.treated_by || '',
+        (t.items_treated || []).map(it => it.label).join('، ')
+      ];
+      values.forEach((val, ci) => {
+        const cell = ws.getCell(rowNum, ci + 1);
+        cell.value = val;
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: ci === 4 };
       });
     });
+
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.xlsx';
@@ -3698,13 +3718,76 @@ let staffStatsCache = null;
 // DAILY REPORT (الموقف اليومي للخطوط)
 // ========================
 let dailyReportRows = [];
+let editingDailyReportId = null;
 
 function showDailyReportHome() {
+  switchDailyReportTab('new');
+  resetDailyReportForm();
+}
+
+function startNewDailyReport() {
+  resetDailyReportForm();
+  switchDailyReportTab('new');
+}
+
+function resetDailyReportForm() {
+  editingDailyReportId = null;
   document.getElementById('dr_date').value = new Date().toISOString().split('T')[0];
   document.getElementById('dailyReportRowsWrap').innerHTML = '';
   document.getElementById('dailyReportActions').style.display = 'none';
   document.getElementById('dailyReportSaveBar').style.display = 'none';
   dailyReportRows = [];
+}
+
+function switchDailyReportTab(tab) {
+  document.getElementById('drTabNewBtn').classList.toggle('active', tab === 'new');
+  document.getElementById('drTabArchiveBtn').classList.toggle('active', tab === 'archive');
+  document.getElementById('drNewView').style.display = tab === 'new' ? '' : 'none';
+  document.getElementById('drArchiveView').style.display = tab === 'archive' ? '' : 'none';
+  if (tab === 'archive') renderDailyReportArchive();
+}
+
+async function renderDailyReportArchive() {
+  const body = document.getElementById('drArchiveBody');
+  body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  try {
+    const res = await sbFetch('daily_reports?select=id,report_date,rows,created_by,created_at&order=report_date.desc');
+    const list = await res.json();
+    if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد تقارير محفوظة بعد</div>'; return; }
+    body.innerHTML = list.map(rep => {
+      const rowCount = Array.isArray(rep.rows) ? rep.rows.length : 0;
+      return `<div class="dep-card" style="cursor:pointer" onclick="openDailyReportFromArchive('${rep.id}')">
+        <div class="dep-card-header">
+          <div class="dep-card-title">📅 ${rep.report_date}</div>
+          <div class="dep-card-meta">📋 ${rowCount} خط | 👤 ${rep.created_by||'—'}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>';
+  }
+}
+
+async function openDailyReportFromArchive(id) {
+  try {
+    const res = await sbFetch(`daily_reports?id=eq.${id}&select=id,report_date,rows`);
+    const list = await res.json();
+    if (!list.length) { showToast('❌ التقرير غير موجود', 'error'); return; }
+    const rep = list[0];
+    editingDailyReportId = rep.id;
+    document.getElementById('dr_date').value = rep.report_date;
+    dailyReportRows = Array.isArray(rep.rows) ? rep.rows : [];
+    renderDailyReportRows();
+    populateAddLineSelect();
+    document.getElementById('dailyReportActions').style.display = 'flex';
+    document.getElementById('dailyReportSaveBar').style.display = 'flex';
+    const shareBtn = document.getElementById('dr_share_btn');
+    if (shareBtn) shareBtn.style.display = (navigator.canShare && navigator.share) ? '' : 'none';
+    switchDailyReportTab('new');
+    showToast('📂 تم تحميل التقرير، تكدر تعدّله وتحفظه');
+  } catch (e) {
+    showToast('❌ تعذر فتح التقرير', 'error');
+  }
 }
 
 function findLineInfo(lineName) {
@@ -3714,6 +3797,7 @@ function findLineInfo(lineName) {
 async function generateDailyReport() {
   const date = document.getElementById('dr_date').value;
   if (!date) { showToast('⚠️ اختر التاريخ أولاً', 'error'); return; }
+  editingDailyReportId = null;
   const nextDay = new Date(date + 'T00:00:00'); nextDay.setDate(nextDay.getDate() + 1);
   const nextDayStr = nextDay.toISOString().split('T')[0];
   const gte = `created_at=gte.${date}T00:00:00`;
@@ -3936,6 +4020,33 @@ async function saveDailyReport() {
   if (!date) { showToast('⚠️ اختر التاريخ أولاً', 'error'); return; }
   if (!dailyReportRows.length) { showToast('⚠️ لا توجد خطوط لحفظها', 'error'); return; }
   try {
+    // إذا كنا نعدّل تقريرًا مفتوحًا من الأرشيف، نحدّثه مباشرة بنفس السجل
+    if (editingDailyReportId) {
+      const res = await sbFetch(`daily_reports?id=eq.${editingDailyReportId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ report_date: date, rows: dailyReportRows, created_by: currentUser.full_name })
+      });
+      if (!res.ok) throw new Error();
+      showToast('✅ تم تحديث التقرير المحفوظ');
+      return;
+    }
+
+    // تقرير جديد: نتحقق أولاً هل يوجد تقرير محفوظ بنفس التاريخ لتجنب التكرار
+    const checkRes = await sbFetch(`daily_reports?report_date=eq.${date}&select=id`);
+    const existing = await checkRes.json();
+    if (existing.length) {
+      const proceed = confirm('⚠️ يوجد تقرير محفوظ مسبقاً لهذا التاريخ. هل تريد استبداله بالبيانات الحالية؟');
+      if (!proceed) { showToast('ℹ️ تم إلغاء الحفظ', 'error'); return; }
+      const res = await sbFetch(`daily_reports?id=eq.${existing[0].id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ report_date: date, rows: dailyReportRows, created_by: currentUser.full_name })
+      });
+      if (!res.ok) throw new Error();
+      editingDailyReportId = existing[0].id;
+      showToast('✅ تم استبدال التقرير المحفوظ بنفس التاريخ');
+      return;
+    }
+
     const res = await sbFetch('daily_reports', {
       method: 'POST',
       body: JSON.stringify({ report_date: date, rows: dailyReportRows, created_by: currentUser.full_name })
