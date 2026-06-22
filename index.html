@@ -1557,9 +1557,15 @@ tbody tr:hover { background: #F7FAFC; }
           </div>
         </div>
       </div>
-      <div class="field" style="margin-top:14px">
-        <label>اسم مقدم الطلب (اختياري)</label>
-        <input type="text" id="memo_signee_name" placeholder="اتركه فاضي أو اكتب الاسم">
+      <div class="grid-2" style="margin-top:14px">
+        <div class="field">
+          <label>صفة مقدم الطلب</label>
+          <input type="text" id="memo_signee_title" placeholder="مقدم الطلب" value="مقدم الطلب">
+        </div>
+        <div class="field">
+          <label>اسم مقدم الطلب (اختياري)</label>
+          <input type="text" id="memo_signee_name" placeholder="اتركه فاضي أو اكتب الاسم">
+        </div>
       </div>
     </div>
     <div class="form-actions" style="margin-top:14px">
@@ -4296,6 +4302,7 @@ async function showMemoNew() {
     document.getElementById('memo_content').value = '';
     document.getElementById('memo_number').value = await generateNextMemoNumber();
     document.getElementById('memo_signee_name').value = '';
+    document.getElementById('memo_signee_title').value = 'مقدم الطلب';
     memoTableData = null;
     renderMemoTableEditor();
   }
@@ -4327,7 +4334,8 @@ async function saveMemo() {
   const content = document.getElementById('memo_content').value;
   if (!date || !subject || !content) { showToast('⚠️ اكمل التاريخ والموضوع والمحتوى', 'error'); return; }
   const signeeName = document.getElementById('memo_signee_name').value;
-  const payload = { memo_number: number, memo_date: date, subject, content, table_data: memoTableData, signee_name: signeeName, created_by: currentUser.full_name };
+  const signeeTitle = document.getElementById('memo_signee_title').value;
+  const payload = { memo_number: number, memo_date: date, subject, content, table_data: memoTableData, signee_name: signeeName, signee_title: signeeTitle, created_by: currentUser.full_name };
   try {
     if (editingMemoId) {
       const res = await sbFetch(`memos?id=eq.${editingMemoId}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -4373,6 +4381,7 @@ async function openMemoFromArchive(id) {
     document.getElementById('memo_subject').value = m.subject || '';
     document.getElementById('memo_content').value = m.content || '';
     document.getElementById('memo_signee_name').value = m.signee_name || '';
+    document.getElementById('memo_signee_title').value = m.signee_title || 'مقدم الطلب';
     memoTableData = m.table_data || null;
     renderMemoTableEditor();
     showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
@@ -4393,10 +4402,11 @@ function buildMemoBodyHTML() {
   const subject = document.getElementById('memo_subject').value || '';
   const content = (document.getElementById('memo_content').value || '').replace(/\n/g, '<br>');
   const signeeName = document.getElementById('memo_signee_name').value || '';
+  const signeeTitle = document.getElementById('memo_signee_title').value || 'مقدم الطلب';
   return `
-    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
+    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9;display:flex;flex-direction:column;min-height:172mm">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div style="font-weight:700">الى / السيد المدير المحترم ...</div>
+        <div style="font-weight:700">الى / الســيد المديــر المحتـــرم ...</div>
         <div>
           <div style="white-space:nowrap">العدد&#160;:&#160;${number}</div>
           <div style="white-space:nowrap;margin-top:2px">التاريخ&#160;:&#160;${date}</div>
@@ -4406,10 +4416,10 @@ function buildMemoBodyHTML() {
       <div style="margin-top:18px;text-indent:60px">${content}</div>
       ${buildMemoTableHTML()}
       <div style="text-align:center;margin-top:18px">مع التقدير...</div>
-      <div style="margin-top:40px;display:flex;justify-content:flex-end">
+      <div style="margin-top:auto;padding-top:40px;display:flex;justify-content:flex-end">
         <div style="display:flex;flex-direction:column;align-items:center">
-          <div>مقدم الطلب</div>
-          <div style="margin-top:6px">${signeeName ? signeeName : '..............................'}</div>
+          <div>${signeeTitle}</div>
+          ${signeeName ? `<div style="margin-top:6px">${signeeName}</div>` : '<div style="margin-top:24px"></div>'}
         </div>
       </div>
     </div>
@@ -4418,7 +4428,7 @@ function buildMemoBodyHTML() {
 
 function printMemo() {
   const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-    <title>مذكرة</title><style>body{padding:30px}</style>
+    <title></title><style>@page{margin:0}body{padding:30px;margin:0}</style>
     </head><body>${buildMemoBodyHTML()}</body></html>`;
   let frame = document.getElementById('memoPrintFrame');
   if (frame) frame.remove();
