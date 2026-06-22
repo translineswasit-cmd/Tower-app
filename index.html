@@ -986,7 +986,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="thermal-cards">
       <div class="card" onclick="showThermalNew()"><span class="icon">➕</span><span class="label">الكشف الجديد</span><span class="sublabel">تسجيل قياسات حرارة</span></div>
       <div class="card" onclick="showThermalArchive()"><span class="icon">📂</span><span class="label">الكشوفات السابقة</span><span class="sublabel">أرشيف القياسات</span></div>
-      <div class="card" onclick="showThermalOfficialFormHome()"><span class="icon">📄</span><span class="label">الاستمارة الرسمية</span><span class="sublabel">MOE/T2-FO-177</span></div>
+      <div class="card" onclick="showThermalOfficialFormHome()"><span class="icon">📄</span><span class="label">استمارة الكشف الحراري</span><span class="sublabel">MOE/T2-FO-177</span></div>
     </div>
   </div>
 
@@ -1111,21 +1111,25 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="thermalArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
 
-  <!-- Thermal: official form (MOE/T2-FO-177) -->
-  <div id="thermalOfficialFormView" style="display:none">
-    <div class="records-toolbar">
-      <div class="page-title" style="margin:0">📄 الاستمارة الرسمية <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
-      <div class="toolbar-right">
-        <button class="btn-excel" onclick="showThermalOfficialFormArchive()">📂 الأرشيف</button>
-      </div>
+  <!-- Thermal: official form hub (MOE/T2-FO-177) -->
+  <div id="thermalOfficialFormHomeView" style="display:none">
+    <div class="page-title">📄 استمارة الكشف الحراري <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
+    <div class="thermal-cards">
+      <div class="card" onclick="showThermalOfficialFormNew()"><span class="icon">📝</span><span class="label">استمارة جديدة</span><span class="sublabel">MOE/T2-FO-177</span></div>
+      <div class="card" onclick="showThermalOfficialFormArchive()"><span class="icon">📂</span><span class="label">أرشيف الاستمارات</span><span class="sublabel">الاستمارات المحفوظة</span></div>
     </div>
+  </div>
+
+  <!-- Thermal: official form editor -->
+  <div id="thermalOfficialFormView" style="display:none">
+    <div class="page-title">📝 استمارة الكشف الحراري <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalOfficialFormHome()">⬅ رجوع</button></div>
 
     <div class="form-card">
       <h3>تحميل القياسات تلقائياً</h3>
       <div class="grid-3">
         <div class="field">
           <label>اسم الخط *</label>
-          <select id="tf_line_name"><option value="">-- اختر الخط --</option></select>
+          <select id="tf_line_name" onchange="onTfLineChange()"><option value="">-- اختر الخط --</option></select>
         </div>
         <div class="field"><label>تاريخ الفحص *</label><input type="date" id="tf_date"></div>
         <div class="field" style="justify-content:flex-end">
@@ -1145,19 +1149,19 @@ tbody tr:hover { background: #F7FAFC; }
           <div class="field"><label>اسم الخط</label><input id="tf_h_line" readonly></div>
           <div class="field"><label>نوع السلك</label><input id="tf_h_wire"></div>
         </div>
-        <div class="grid-2" style="margin-bottom:10px">
+        <div class="grid-3" style="margin-bottom:10px">
           <div class="field"><label>تاريخ الفحص</label><input id="tf_h_date" readonly></div>
           <div class="field"><label>الوقت</label><input id="tf_h_time" placeholder="مثال: 10:30 صباحاً"></div>
+          <div class="field"><label>درجة حرارة الجو °C</label><input type="number" step="0.1" id="tf_h_ambient" placeholder="مثال: 38"></div>
         </div>
         <div style="overflow-x:auto">
-          <table class="thermal-points-table" id="officialFormTable" style="min-width:760px">
+          <table class="thermal-points-table" id="officialFormTable" style="min-width:680px">
             <thead>
               <tr>
                 <th rowspan="2">رقم برج الشد</th>
                 <th rowspan="2">مسافة الفحص</th>
                 <th colspan="3">أعلى درجة حرارة للطور</th>
                 <th rowspan="2">حمل الخط MW</th>
-                <th rowspan="2">درجة حرارة الجو</th>
                 <th rowspan="2">الملاحظات</th>
                 <th rowspan="2"></th>
               </tr>
@@ -3303,6 +3307,7 @@ function showThermalHome() {
   document.getElementById('thermalHomeView').style.display = 'block';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormHomeView').style.display = 'none';
   document.getElementById('thermalOfficialFormView').style.display = 'none';
   document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
 }
@@ -3310,6 +3315,7 @@ function showThermalNew() {
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'block';
   document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormHomeView').style.display = 'none';
   document.getElementById('thermalOfficialFormView').style.display = 'none';
   document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
   renderActiveThermalTabs();
@@ -3324,6 +3330,7 @@ function showThermalArchive() {
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'block';
+  document.getElementById('thermalOfficialFormHomeView').style.display = 'none';
   document.getElementById('thermalOfficialFormView').style.display = 'none';
   document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
   loadThermalArchive();
@@ -3332,6 +3339,15 @@ function showThermalOfficialFormHome() {
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormHomeView').style.display = 'block';
+  document.getElementById('thermalOfficialFormView').style.display = 'none';
+  document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
+}
+function showThermalOfficialFormNew() {
+  document.getElementById('thermalHomeView').style.display = 'none';
+  document.getElementById('thermalNewView').style.display = 'none';
+  document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormHomeView').style.display = 'none';
   document.getElementById('thermalOfficialFormView').style.display = 'block';
   document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
   document.getElementById('officialFormEditArea').style.display = 'none';
@@ -3342,26 +3358,41 @@ function showThermalOfficialFormArchive() {
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'none';
+  document.getElementById('thermalOfficialFormHomeView').style.display = 'none';
   document.getElementById('thermalOfficialFormView').style.display = 'none';
   document.getElementById('thermalOfficialFormArchiveView').style.display = 'block';
   renderOfficialFormArchive();
 }
 
 // ========================
-// الاستمارة الرسمية للكشف الحراري (MOE/T2-FO-177)
+// استمارة الكشف الحراري (MOE/T2-FO-177)
 // ========================
 let editingOfficialFormId = null;
 let officialFormRows = [];
+let tfTensionTowerOptions = []; // أرقام أبراج الشد المتاحة للخط المختار
 
 function getWireTypeForLine(lineName) {
   const li = LINES_INFO.find(l => lineName.startsWith(l.name));
   return li ? (li.wire_type || '') : '';
 }
 
+// نفس منطق "الأبراج التي تستحق فحص حراري" المستخدم بالكشف العادي (أبراج الشد فقط)
+function getTensionTowersForLine(lineName) {
+  const towers = LINES_DATA[lineName] || [];
+  const voltage = LINE_VOLTAGE[lineName];
+  return towers.filter(t => isThermalRelevantTower(t, voltage)).map(t => t.num);
+}
+
+function onTfLineChange() {
+  const line = document.getElementById('tf_line_name').value;
+  tfTensionTowerOptions = line ? getTensionTowersForLine(line) : [];
+}
+
 async function loadOfficialFormData() {
   const line = document.getElementById('tf_line_name').value;
   const date = document.getElementById('tf_date').value;
   if (!line || !date) { showToast('⚠️ اختر الخط والتاريخ', 'error'); return; }
+  tfTensionTowerOptions = getTensionTowersForLine(line);
   try {
     const res = await sbFetch(`thermal_inspections?line_name=eq.${encodeURIComponent(line)}&inspection_date=eq.${date}&point_type=eq.tower`);
     const data = await res.json();
@@ -3377,7 +3408,6 @@ async function loadOfficialFormData() {
       s: avg(r.s1, r.s2),
       r: avg(r.r1, r.r2),
       load_mw: '',
-      ambient: r.ambient_temp ?? '',
       notes: ''
     })).sort((a, b) => (a.tower_number || 0) - (b.tower_number || 0));
     editingOfficialFormId = null;
@@ -3385,6 +3415,9 @@ async function loadOfficialFormData() {
     document.getElementById('tf_h_wire').value = getWireTypeForLine(line);
     document.getElementById('tf_h_date').value = date;
     document.getElementById('tf_h_time').value = '';
+    // درجة حرارة الجو تُملأ مرة واحدة فقط من أول سجل متوفر (تبقى قابلة للتعديل)
+    const firstAmbient = data.find(r => r.ambient_temp !== null && r.ambient_temp !== undefined);
+    document.getElementById('tf_h_ambient').value = firstAmbient ? firstAmbient.ambient_temp : '';
     renderOfficialFormTable();
     document.getElementById('officialFormEditArea').style.display = 'block';
   } catch (e) {
@@ -3392,22 +3425,31 @@ async function loadOfficialFormData() {
   }
 }
 
+function towerSelectHTML(idx, selected) {
+  const opts = ['<option value="">--</option>']
+    .concat(tfTensionTowerOptions.map(n => `<option value="${n}" ${String(n)===String(selected)?'selected':''}>${n}</option>`));
+  // لو القيمة الحالية ماهي بنفس قائمة أبراج الشد (مثلاً استمارة قديمة أو خط لم يُحمّل)، نضيفها حتى ما تضيع
+  if (selected !== '' && selected != null && !tfTensionTowerOptions.includes(Number(selected))) {
+    opts.push(`<option value="${selected}" selected>${selected}</option>`);
+  }
+  return `<select onchange="updateOfficialFormRow(${idx},'tower_number',this.value)" style="width:90px;text-align:center;border:1px solid #ddd;border-radius:4px;padding:4px">${opts.join('')}</select>`;
+}
+
 function renderOfficialFormTable() {
   const tbody = document.getElementById('officialFormBody');
   if (!officialFormRows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="padding:10px;color:#999">لا توجد أبراج، اضغط "إضافة برج"</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="padding:10px;color:#999">لا توجد أبراج، اضغط "إضافة برج"</td></tr>';
     return;
   }
   const cell = (idx, key, val, w) => `<input type="${key==='distance'||key==='notes'?'text':'number'}" ${key!=='distance'&&key!=='notes'?'step="0.1"':''} value="${val??''}" oninput="updateOfficialFormRow(${idx},'${key}',this.value)" style="width:${w}px;text-align:center;border:1px solid #ddd;border-radius:4px;padding:4px">`;
   tbody.innerHTML = officialFormRows.map((row, idx) => `
     <tr>
-      <td>${cell(idx,'tower_number',row.tower_number,60)}</td>
+      <td>${towerSelectHTML(idx, row.tower_number)}</td>
       <td>${cell(idx,'distance',row.distance,70)}</td>
       <td>${cell(idx,'t',row.t,55)}</td>
       <td>${cell(idx,'s',row.s,55)}</td>
       <td>${cell(idx,'r',row.r,55)}</td>
       <td>${cell(idx,'load_mw',row.load_mw,65)}</td>
-      <td>${cell(idx,'ambient',row.ambient,55)}</td>
       <td>${cell(idx,'notes',row.notes,110)}</td>
       <td><button class="btn-sm btn-del" onclick="removeOfficialFormRow(${idx})">🗑️</button></td>
     </tr>`).join('');
@@ -3419,7 +3461,8 @@ function updateOfficialFormRow(idx, key, val) {
   else officialFormRows[idx][key] = val === '' ? '' : (key === 'tower_number' ? parseInt(val) : parseFloat(val));
 }
 function addOfficialFormRow() {
-  officialFormRows.push({ tower_number: '', distance: '', t: '', s: '', r: '', load_mw: '', ambient: '', notes: '' });
+  if (!document.getElementById('tf_line_name').value) { showToast('⚠️ اختر اسم الخط أولاً', 'error'); return; }
+  officialFormRows.push({ tower_number: '', distance: '', t: '', s: '', r: '', load_mw: '', notes: '' });
   renderOfficialFormTable();
 }
 function removeOfficialFormRow(idx) {
@@ -3434,6 +3477,7 @@ async function saveOfficialForm() {
     wire_type: document.getElementById('tf_h_wire').value,
     inspection_date: document.getElementById('tf_h_date').value,
     inspection_time: document.getElementById('tf_h_time').value,
+    ambient_temp: document.getElementById('tf_h_ambient').value === '' ? null : parseFloat(document.getElementById('tf_h_ambient').value),
     rows: officialFormRows,
     created_by: currentUser.full_name
   };
@@ -3475,16 +3519,17 @@ async function openOfficialFormFromArchive(id) {
     const list = await res.json();
     if (!list.length) { showToast('❌ غير موجود', 'error'); return; }
     const f = list[0];
-    editingOfficialFormId = f.id;
     officialFormRows = Array.isArray(f.rows) ? f.rows : [];
-    showThermalOfficialFormHome();
+    tfTensionTowerOptions = f.line_name ? getTensionTowersForLine(f.line_name) : [];
+    showThermalOfficialFormNew();
     document.getElementById('tf_line_name').value = f.line_name;
     document.getElementById('tf_date').value = f.inspection_date;
     document.getElementById('tf_h_line').value = f.line_name;
     document.getElementById('tf_h_wire').value = f.wire_type || '';
     document.getElementById('tf_h_date').value = f.inspection_date;
     document.getElementById('tf_h_time').value = f.inspection_time || '';
-    editingOfficialFormId = f.id; // showThermalOfficialFormHome resets it, re-set after
+    document.getElementById('tf_h_ambient').value = f.ambient_temp ?? '';
+    editingOfficialFormId = f.id; // showThermalOfficialFormNew يصفّرها، نعيد ضبطها بعده
     renderOfficialFormTable();
     document.getElementById('officialFormEditArea').style.display = 'block';
     showToast('📂 تم تحميل الاستمارة، تكدر تعدّلها');
