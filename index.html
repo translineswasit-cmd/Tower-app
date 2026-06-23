@@ -4388,6 +4388,41 @@ async function openMemoFromArchive(id) {
   } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
 }
 
+// نسخة Word: جداول HTML تقليدية فقط بدون أي Flexbox أو خصائص حديثة (برامج Word/WPS لا تدعمها وتكسر التنسيق)
+function buildMemoWordHTML() {
+  const number = document.getElementById('memo_number').value || '';
+  const date = document.getElementById('memo_date').value || '';
+  const subject = document.getElementById('memo_subject').value || '';
+  const content = (document.getElementById('memo_content').value || '').replace(/\n/g, '<br>');
+  const signeeName = document.getElementById('memo_signee_name').value || '';
+  const signeeTitle = document.getElementById('memo_signee_title').value || 'مقدم الطلب';
+  const signeeLine = signeeName
+    ? `<tr><td align="center">${signeeName}</td></tr>`
+    : `<tr><td>&#160;</td></tr><tr><td>&#160;</td></tr>`;
+  return `
+    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td style="font-weight:700" align="right">الى / الســيد المديــر المحتـــرم ...</td>
+          <td align="left" style="white-space:nowrap">العدد&#160;:&#160;${number}</td>
+        </tr>
+        <tr>
+          <td>&#160;</td>
+          <td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;${date}</td>
+        </tr>
+      </table>
+      <p align="center" style="font-weight:700;margin-top:30px">م / ${subject}</p>
+      <p style="margin-top:18px;text-indent:60px">${content}</p>
+      ${buildMemoTableHTML()}
+      <p align="center" style="margin-top:18px">مع التقدير...</p>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:40px">
+        <tr><td align="left">${signeeTitle}</td></tr>
+        ${signeeLine}
+      </table>
+    </div>
+  `;
+}
+
 function buildMemoTableHTML() {
   if (!memoTableData || !memoTableData.length) return '';
   const rowsHTML = memoTableData.map(row =>
@@ -4449,7 +4484,7 @@ async function shareMemoWord() {
   try {
     const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"><!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
-      </head><body>${buildMemoBodyHTML()}</body></html>`;
+      </head><body>${buildMemoWordHTML()}</body></html>`;
     const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
     const filename = 'مذكرة_' + (document.getElementById('memo_date').value || '') + '.doc';
     await shareOrDownloadFile(blob, filename, 'application/msword');
