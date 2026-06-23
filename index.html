@@ -1524,7 +1524,7 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page" id="page-memo">
 
   <div id="memoHomeView">
-    <div class="page-title">📝 مذكرة <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showPage('forms');showFormsHome();">⬅ رجوع</button></div>
+    <div class="page-title">📝 مذكرة <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="goToParentPage('forms');showFormsHome();">⬅ رجوع</button></div>
     <div class="thermal-cards">
       <div class="card" onclick="showMemoNew()"><span class="icon">📝</span><span class="label">مذكرة جديدة</span></div>
       <div class="card" onclick="showMemoArchive()"><span class="icon">📂</span><span class="label">أرشيف المذكرات</span></div>
@@ -1897,6 +1897,11 @@ let isGoingBack = false;
 function goBackFromOperation() {
   isGoingBack = true;
   showPage(previousPageId);
+}
+// تُستخدم من أي زر "⬅ رجوع" داخل الصفحة يحتاج ينتقل لصفحة أخرى (لا يُحسب كتنقّل جديد)
+function goToParentPage(id) {
+  isGoingBack = true;
+  showPage(id);
 }
 
 function showPage(id, btn) {
