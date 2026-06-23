@@ -4443,15 +4443,33 @@ async function openMemoFromArchive(id) {
 }
 
 // نسخة Word: جداول HTML تقليدية فقط بدون أي Flexbox أو خصائص حديثة (برامج Word/WPS لا تدعمها وتكسر التنسيق)
+function buildMemoFormattedParagraphsHTML(lines) {
+  let afterSignoff = false;
+  return lines.map(line => {
+    const t = line.trim();
+    if (afterSignoff) return `<p align="left">${t || '&#160;'}</p>`;
+    if (t.startsWith('م /') || t.startsWith('م/')) return `<p align="center" style="font-weight:700">${t}</p>`;
+    if (t.startsWith('مع التقدير')) return `<p align="center">${t}</p>`;
+    if (t === 'مقدم الطلب') { afterSignoff = true; return `<p align="left">${t}</p>`; }
+    return `<p>${t || '&#160;'}</p>`;
+  }).join('');
+}
+
 function buildMemoWordHTML() {
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  const body = (document.getElementById('memo_body').value || '').replace(/\n/g, '<br>');
+  let lines = (document.getElementById('memo_body').value || '').split('\n');
+  let greetingLine = '';
+  const firstIdx = lines.findIndex(l => l.trim() !== '');
+  if (firstIdx !== -1 && lines[firstIdx].includes('الى')) {
+    greetingLine = lines[firstIdx].trim();
+    lines = lines.filter((_, i) => i !== firstIdx);
+  }
   return `
     <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td>&#160;</td>
+          <td style="font-weight:700" align="right">${greetingLine}</td>
           <td align="left" style="white-space:nowrap">العدد&#160;:&#160;${number}</td>
         </tr>
         <tr>
@@ -4459,7 +4477,7 @@ function buildMemoWordHTML() {
           <td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;${date}</td>
         </tr>
       </table>
-      <p style="margin-top:18px">${body}</p>
+      <div style="margin-top:18px">${buildMemoFormattedParagraphsHTML(lines)}</div>
       ${buildMemoTableHTML()}
     </div>
   `;
@@ -4476,14 +4494,23 @@ function buildMemoTableHTML() {
 function buildMemoBodyHTML() {
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  const body = (document.getElementById('memo_body').value || '').replace(/\n/g, '<br>');
+  let lines = (document.getElementById('memo_body').value || '').split('\n');
+  let greetingLine = '';
+  const firstIdx = lines.findIndex(l => l.trim() !== '');
+  if (firstIdx !== -1 && lines[firstIdx].includes('الى')) {
+    greetingLine = lines[firstIdx].trim();
+    lines = lines.filter((_, i) => i !== firstIdx);
+  }
   return `
     <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
-      <div style="display:flex;justify-content:flex-end;gap:4px;flex-direction:column;align-items:flex-end">
-        <div style="white-space:nowrap">العدد&#160;:&#160;${number}</div>
-        <div style="white-space:nowrap">التاريخ&#160;:&#160;${date}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div style="font-weight:700">${greetingLine}</div>
+        <div>
+          <div style="white-space:nowrap">العدد&#160;:&#160;${number}</div>
+          <div style="white-space:nowrap;margin-top:2px">التاريخ&#160;:&#160;${date}</div>
+        </div>
       </div>
-      <div style="margin-top:18px">${body}</div>
+      <div style="margin-top:18px">${buildMemoFormattedParagraphsHTML(lines)}</div>
       ${buildMemoTableHTML()}
     </div>
   `;
@@ -4547,18 +4574,26 @@ async function buildMemoDocxBlob() {
   const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, AlignmentType, BorderStyle, WidthType } = docx;
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  const bodyLines = (document.getElementById('memo_body').value || '').split('\n');
+  let lines = (document.getElementById('memo_body').value || '').split('\n');
 
   const noBorder = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
   const noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
   const rtlRun = (text, opts) => new TextRun({ text, rightToLeft: true, ...opts });
   const rtlP = (children, opts) => new Paragraph({ bidirectional: true, children, ...opts });
 
+  // أول سطر فيه "الى" نعرضه بجانب العدد بنفس الصف (نفس التصميم الأصلي)
+  let greetingLine = '';
+  const firstIdx = lines.findIndex(l => l.trim() !== '');
+  if (firstIdx !== -1 && lines[firstIdx].includes('الى')) {
+    greetingLine = lines[firstIdx].trim();
+    lines = lines.filter((_, i) => i !== firstIdx);
+  }
+
   const headerTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
       new TableRow({ children: [
-        new TableCell({ borders: noBorders, children: [new Paragraph({ text: '' })] }),
+        new TableCell({ borders: noBorders, children: [rtlP([rtlRun(greetingLine, { bold: true })], { alignment: AlignmentType.RIGHT })] }),
         new TableCell({ borders: noBorders, children: [rtlP([rtlRun(`العدد : ${number}`)], { alignment: AlignmentType.LEFT })] })
       ]}),
       new TableRow({ children: [
@@ -4570,8 +4605,21 @@ async function buildMemoDocxBlob() {
 
   const children = [headerTable, new Paragraph({ text: '' })];
 
-  bodyLines.forEach(line => {
-    children.push(rtlP([rtlRun(line)]));
+  let afterSignoff = false;
+  lines.forEach(line => {
+    const t = line.trim();
+    if (afterSignoff) {
+      children.push(rtlP([rtlRun(t)], { alignment: AlignmentType.LEFT }));
+    } else if (t.startsWith('م /') || t.startsWith('م/')) {
+      children.push(rtlP([rtlRun(t, { bold: true })], { alignment: AlignmentType.CENTER }));
+    } else if (t.startsWith('مع التقدير')) {
+      children.push(rtlP([rtlRun(t)], { alignment: AlignmentType.CENTER }));
+    } else if (t === 'مقدم الطلب') {
+      children.push(rtlP([rtlRun(t)], { alignment: AlignmentType.LEFT }));
+      afterSignoff = true;
+    } else {
+      children.push(rtlP([rtlRun(line)]));
+    }
   });
 
   if (memoTableData && memoTableData.length) {
