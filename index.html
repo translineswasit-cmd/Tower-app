@@ -1556,7 +1556,8 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
     <div class="form-actions" style="margin-top:14px">
       <button class="btn btn-primary" onclick="saveMemo()">💾 حفظ بالأرشيف</button>
-      <button class="btn btn-secondary" onclick="shareMemoWord()">🖨️ طباعة / إرسال</button>
+      <button class="btn btn-secondary" onclick="printMemo()">🖨️ طباعة</button>
+      <button class="btn btn-secondary" onclick="shareMemoWord()">📤 إرسال (ملف Word)</button>
     </div>
   </div>
 
@@ -3697,8 +3698,7 @@ function buildOfficialFormBodyHTML() {
 // طباعة مباشرة من المتصفح (DOM حقيقي بدون أي تحويل لصورة، أوثق 100%)
 function printOfficialForm() {
   const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
-    <title>استمارة الكشف الحراري</title>
-    <style>body{font-family:Arial,sans-serif;padding:20px}</style>
+    <title></title><style>@page{margin:0}body{font-family:Arial,sans-serif;padding:20px;margin:0}</style>
     </head><body>${buildOfficialFormBodyHTML()}</body></html>`;
   let frame = document.getElementById('officialFormPrintFrame');
   if (frame) frame.remove();
