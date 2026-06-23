@@ -1,35 +1,45 @@
-const CACHE_NAME = 'tower-app-v85';
-const ASSETS_TO_CACHE = [
+const CACHE_NAME = 'tower-app-v88';
+const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './icon-thermal.png',
   './icon-stats.png',
-  './icon-lines.png',
+  './icon-lines.png'
+];
+const EXTRA_ASSETS = [
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js',
   'https://unpkg.com/docx@8.5.0/build/index.js'
 ];
 
-// Install: cache the app shell
+// Install: cache the app shell — الأساسيات يجب أن تنجح، والمكتبات الخارجية اختيارية
+// (لو فشلت مكتبة خارجية بالتحميل، ما نوقف حفظ باقي التطبيق بسببها)
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE).catch(err => {
-        console.log('Cache addAll error (non-critical):', err);
-      });
+    caches.open(CACHE_NAME).then(async (cache) => {
+      await cache.addAll(CORE_ASSETS); // يجب أن تنجح هذي، وإلا التثبيت يفشل بالكامل (أمان)
+      await Promise.all(EXTRA_ASSETS.map(url =>
+        cache.add(url).catch(err => console.log('Optional asset failed (non-critical):', url, err))
+      ));
     })
   );
   self.skipWaiting();
 });
 
-// Activate: clean up old caches
+// Activate: clean up old caches — لكن فقط بعد التأكد إن النسخة الجديدة فيها صفحة رئيسية صالحة
+// (لو فشل تحميل النسخة الجديدة بسبب انقطاع الإنترنت، نحتفظ بالنسخة القديمة الشغالة كخطة بديلة)
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
-      );
+    caches.open(CACHE_NAME).then(async (newCache) => {
+      const hasValidIndex = await newCache.match('./index.html');
+      if (hasValidIndex) {
+        const keys = await caches.keys();
+        return Promise.all(
+          keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
+        );
+      }
+      console.log('New cache incomplete (offline during update?) — keeping old cache as fallback');
     })
   );
   self.clients.claim();

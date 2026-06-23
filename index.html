@@ -2072,7 +2072,10 @@ function getTowerCriticalityLevel(rec) {
     (rec.tower_attachments && rec.tower_attachments.trim() && rec.tower_attachments.trim() !== 'سليم') ||
     (rec.ground_1 && rec.ground_1.trim() && rec.ground_1.trim() !== 'سليم') ||
     (rec.ground_2 && rec.ground_2.trim() && rec.ground_2.trim() !== 'سليم') ||
-    (rec.fire_causes && rec.fire_causes !== 'لا يوجد' && rec.fire_causes !== '');
+    (rec.fire_causes && rec.fire_causes !== 'لا يوجد' && rec.fire_causes !== '') ||
+    (rec.fire_causes_notes && rec.fire_causes_notes.trim()) ||
+    (rec.road_access && rec.road_access !== 'متاح' && rec.road_access !== '') ||
+    (rec.road_access_notes && rec.road_access_notes.trim());
   if (hasAnyIssue) return 'yellow';
   return 'green';
 }
@@ -5979,13 +5982,21 @@ function renderTowerDetail(lineName, towerNum) {
     ['tower_attachments', 'ملحقات البرج'],
     ['wires_r1', 'أسلاك R'], ['wires_s1', 'أسلاك S'], ['wires_t1', 'أسلاك T'],
     ['ground_1', 'الأرضي 1'], ['ground_2', 'الأرضي 2'],
-    ['fire_causes', 'مسببات الحرائق'], ['road_access', 'الطريق'], ['notes', 'ملاحظات']
+    ['fire_causes', 'مسببات الحرائق', 'fire_causes_notes'],
+    ['road_access', 'الطريق', 'road_access_notes'],
+    ['notes', 'ملاحظات']
   ];
   html += `<div class="form-card"><h3>📝 تفاصيل الكشف</h3><div style="display:flex;flex-direction:column;gap:8px">`;
   let hasAny = false;
-  textFields.forEach(([field, label]) => {
-    const val = r[field];
-    if (val == null || val === '' || val === 'سليم') return;
+  textFields.forEach(([field, label, notesField]) => {
+    let val = r[field];
+    const notesVal = notesField ? r[notesField] : null;
+    if (field === 'fire_causes' && val === 'لا يوجد') val = '';
+    if (field === 'road_access' && val === 'متاح') val = '';
+    if (val === 'سليم') val = '';
+    // لو القائمة المنسدلة فاضية بس فيه ملاحظة مكتوبة، نعرض الملاحظة بدلها
+    const display = val && notesVal ? `${val} — ${notesVal}` : (val || notesVal);
+    if (!display) return;
     hasAny = true;
     const key = field === 'iron_intersections' ? 'iron' : field === 'tower_foundations' ? 'foundation' : field === 'tower_attachments' ? 'attachment' :
       field.startsWith('wires_') ? 'wire_' + field.replace('wires_','') : field;
@@ -5993,7 +6004,7 @@ function renderTowerDetail(lineName, towerNum) {
     const color = treated ? '#48BB78' : '#FC4444';
     const icon = treated ? '✅' : '🔴';
     html += `<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;padding:8px;background:#F8FAFC;border-radius:8px;border-right:3px solid ${color}">
-      <div><strong style="color:#2E4057">${label}:</strong> <span style="color:#4A5568">${val}</span></div>
+      <div><strong style="color:#2E4057">${label}:</strong> <span style="color:#4A5568">${display}</span></div>
       <span style="font-size:0.78rem;font-weight:700;color:${color};white-space:nowrap">${icon} ${treated?'معالج':'قيد المعالجة'}</span>
     </div>`;
   });
@@ -6576,6 +6587,9 @@ function extractDepsFromRecord(r) {
   if (r.ground_1&&r.ground_1.trim()) deps.push({type:'ground',label:'الأرضي 1: '+r.ground_1,key:'ground_1'});
   if (r.ground_2&&r.ground_2.trim()) deps.push({type:'ground',label:'الأرضي 2: '+r.ground_2,key:'ground_2'});
   if (r.fire_causes&&r.fire_causes!=='لا يوجد'&&r.fire_causes!=='') deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes,key:'fire'});
+  else if (r.fire_causes_notes&&r.fire_causes_notes.trim()) deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes_notes.trim(),key:'fire'});
+  if (r.road_access&&r.road_access!=='متاح'&&r.road_access!=='') deps.push({type:'road',label:'الطريق: '+r.road_access,key:'road'});
+  else if (r.road_access_notes&&r.road_access_notes.trim()) deps.push({type:'road',label:'الطريق: '+r.road_access_notes.trim(),key:'road'});
   return deps;
 }
 
