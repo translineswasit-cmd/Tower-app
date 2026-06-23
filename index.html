@@ -1570,7 +1570,7 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
     <div class="form-actions" style="margin-top:14px">
       <button class="btn btn-primary" onclick="saveMemo()">💾 حفظ بالأرشيف</button>
-      <button class="btn btn-secondary" onclick="printMemo()">🖨️ طباعة</button>
+      <button class="btn btn-secondary" onclick="exportMemoPDF()">🖨️ طباعة</button>
       <button class="btn btn-secondary" onclick="shareMemoWord()">📤 إرسال</button>
     </div>
   </div>
@@ -4534,6 +4534,38 @@ function buildMemoBodyHTML() {
       </div>
     </div>
   `;
+}
+
+// طباعة نظيفة بدون أي نص زائد (رابط/تاريخ) يضيفه نظام iOS تلقائيًا عند الطباعة المباشرة:
+// نولّد ملف PDF حقيقي من تصميم المذكرة نفسه، ثم نشاركه (تظهر خيارات الطباعة والإرسال ضمن القائمة الأصلية)
+async function exportMemoPDF() {
+  showToast('⏳ جاري تحضير ملف PDF...');
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:white;padding:30px;width:700px';
+  wrap.innerHTML = buildMemoBodyHTML();
+  document.body.appendChild(wrap);
+  try {
+    const dataUrl = await elementToPNGDataURL(wrap);
+    document.body.removeChild(wrap);
+    if (!dataUrl) throw new Error('فشل تحويل المذكرة لصورة');
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const img = new Image();
+    await new Promise(resolve => { img.onload = resolve; img.src = dataUrl; });
+    const ratio = img.width / img.height;
+    let w = pageW - 40, h = w / ratio;
+    if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
+    doc.addImage(dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
+    const blob = doc.output('blob');
+    const filename = 'مذكرة_' + (document.getElementById('memo_date').value || '') + '.pdf';
+    await shareOrDownloadFile(blob, filename, 'application/pdf');
+    showToast('✅ تم تجهيز ملف PDF (بدون أي نص زائد)');
+  } catch (e) {
+    if (wrap.parentNode) document.body.removeChild(wrap);
+    showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
+  }
 }
 
 function printMemo() {
