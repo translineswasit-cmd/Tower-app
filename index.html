@@ -1539,12 +1539,8 @@ tbody tr:hover { background: #F7FAFC; }
         <div class="field"><label>التاريخ</label><input type="date" id="memo_date"></div>
       </div>
       <div class="field" style="margin-top:10px">
-        <label>الموضوع (م/)</label>
-        <input type="text" id="memo_subject" placeholder="اكتب موضوع المذكرة">
-      </div>
-      <div class="field" style="margin-top:10px">
-        <label>المحتوى</label>
-        <textarea id="memo_content" rows="8" placeholder="اكتب محتوى المذكرة"></textarea>
+        <label>نص المذكرة (تكتب وتعدّل براحتك)</label>
+        <textarea id="memo_body" rows="18" style="font-size:1rem;line-height:1.8"></textarea>
       </div>
       <div id="memoTableSection" style="margin-top:14px">
         <button class="btn-sm btn-secondary" id="memoAddTableBtn" onclick="addMemoTable()">➕ إضافة جدول</button>
@@ -1555,16 +1551,6 @@ tbody tr:hover { background: #F7FAFC; }
             <button class="btn-sm btn-secondary" onclick="addMemoTableCol()">➕ عمود</button>
             <button class="btn-sm btn-del" onclick="removeMemoTable()">🗑️ حذف الجدول</button>
           </div>
-        </div>
-      </div>
-      <div class="grid-2" style="margin-top:14px">
-        <div class="field">
-          <label>صفة مقدم الطلب</label>
-          <input type="text" id="memo_signee_title" placeholder="مقدم الطلب" value="مقدم الطلب">
-        </div>
-        <div class="field">
-          <label>اسم مقدم الطلب (اختياري)</label>
-          <input type="text" id="memo_signee_name" placeholder="اتركه فاضي أو اكتب الاسم">
         </div>
       </div>
     </div>
@@ -4373,11 +4359,8 @@ async function showMemoNew() {
   document.getElementById('memoArchiveView').style.display = 'none';
   if (!editingMemoId) {
     document.getElementById('memo_date').value = new Date().toISOString().split('T')[0];
-    document.getElementById('memo_subject').value = '';
-    document.getElementById('memo_content').value = '';
     document.getElementById('memo_number').value = await generateNextMemoNumber();
-    document.getElementById('memo_signee_name').value = '';
-    document.getElementById('memo_signee_title').value = 'مقدم الطلب';
+    document.getElementById('memo_body').value = 'الى / السيد المدير المحترم ...\n\nم / \n\n\n\n\nمع التقدير...\n\nمقدم الطلب';
     memoTableData = null;
     renderMemoTableEditor();
   }
@@ -4405,12 +4388,9 @@ async function generateNextMemoNumber() {
 async function saveMemo() {
   const number = document.getElementById('memo_number').value;
   const date = document.getElementById('memo_date').value;
-  const subject = document.getElementById('memo_subject').value;
-  const content = document.getElementById('memo_content').value;
-  if (!date || !subject || !content) { showToast('⚠️ اكمل التاريخ والموضوع والمحتوى', 'error'); return; }
-  const signeeName = document.getElementById('memo_signee_name').value;
-  const signeeTitle = document.getElementById('memo_signee_title').value;
-  const payload = { memo_number: number, memo_date: date, subject, content, table_data: memoTableData, signee_name: signeeName, signee_title: signeeTitle, created_by: currentUser.full_name };
+  const body = document.getElementById('memo_body').value;
+  if (!date || !body.trim()) { showToast('⚠️ اكمل التاريخ ونص المذكرة', 'error'); return; }
+  const payload = { memo_number: number, memo_date: date, subject: '', content: body, table_data: memoTableData, created_by: currentUser.full_name };
   try {
     if (editingMemoId) {
       const res = await sbFetch(`memos?id=eq.${editingMemoId}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -4428,16 +4408,19 @@ async function renderMemoArchive() {
   const body = document.getElementById('memoArchiveBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   try {
-    const res = await sbFetch('memos?select=id,memo_number,memo_date,subject,created_by&order=memo_date.desc');
+    const res = await sbFetch('memos?select=id,memo_number,memo_date,content,created_by&order=memo_date.desc');
     const list = await res.json();
     if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد مذكرات محفوظة بعد</div>'; return; }
-    body.innerHTML = list.map(m => `
+    body.innerHTML = list.map(m => {
+      const preview = (m.content || '').split('\n').map(l => l.trim()).filter(l => l && l !== 'الى / السيد المدير المحترم ...')[0] || 'بدون عنوان';
+      return `
       <div class="dep-card" style="cursor:pointer" onclick="openMemoFromArchive('${m.id}')">
         <div class="dep-card-header">
-          <div class="dep-card-title">📝 ${m.subject}</div>
+          <div class="dep-card-title">📝 ${preview}</div>
           <div class="dep-card-meta">🔢 العدد: ${m.memo_number||'—'} | 📅 ${m.memo_date} | 👤 ${m.created_by||'—'}</div>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (e) { body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>'; }
 }
 
@@ -4453,10 +4436,7 @@ async function openMemoFromArchive(id) {
     document.getElementById('memoArchiveView').style.display = 'none';
     document.getElementById('memo_number').value = m.memo_number || '';
     document.getElementById('memo_date').value = m.memo_date || '';
-    document.getElementById('memo_subject').value = m.subject || '';
-    document.getElementById('memo_content').value = m.content || '';
-    document.getElementById('memo_signee_name').value = m.signee_name || '';
-    document.getElementById('memo_signee_title').value = m.signee_title || 'مقدم الطلب';
+    document.getElementById('memo_body').value = m.content || '';
     memoTableData = m.table_data || null;
     renderMemoTableEditor();
     showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
@@ -4467,18 +4447,12 @@ async function openMemoFromArchive(id) {
 function buildMemoWordHTML() {
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  const subject = document.getElementById('memo_subject').value || '';
-  const content = (document.getElementById('memo_content').value || '').replace(/\n/g, '<br>');
-  const signeeName = document.getElementById('memo_signee_name').value || '';
-  const signeeTitle = document.getElementById('memo_signee_title').value || 'مقدم الطلب';
-  const signeeLine = signeeName
-    ? `<tr><td align="center">${signeeName}</td></tr>`
-    : `<tr><td>&#160;</td></tr><tr><td>&#160;</td></tr>`;
+  const body = (document.getElementById('memo_body').value || '').replace(/\n/g, '<br>');
   return `
     <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="font-weight:700" align="right">الى / الســيد المديــر المحتـــرم ...</td>
+          <td>&#160;</td>
           <td align="left" style="white-space:nowrap">العدد&#160;:&#160;${number}</td>
         </tr>
         <tr>
@@ -4486,14 +4460,8 @@ function buildMemoWordHTML() {
           <td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;${date}</td>
         </tr>
       </table>
-      <p align="center" style="font-weight:700;margin-top:30px">م / ${subject}</p>
-      <p style="margin-top:18px;text-indent:60px">${content}</p>
+      <p style="margin-top:18px">${body}</p>
       ${buildMemoTableHTML()}
-      <p align="center" style="margin-top:18px">مع التقدير...</p>
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:40px">
-        <tr><td align="left">${signeeTitle}</td></tr>
-        ${signeeLine}
-      </table>
     </div>
   `;
 }
@@ -4509,29 +4477,15 @@ function buildMemoTableHTML() {
 function buildMemoBodyHTML() {
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  const subject = document.getElementById('memo_subject').value || '';
-  const content = (document.getElementById('memo_content').value || '').replace(/\n/g, '<br>');
-  const signeeName = document.getElementById('memo_signee_name').value || '';
-  const signeeTitle = document.getElementById('memo_signee_title').value || 'مقدم الطلب';
+  const body = (document.getElementById('memo_body').value || '').replace(/\n/g, '<br>');
   return `
-    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9;display:flex;flex-direction:column;min-height:172mm">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div style="font-weight:700">الى / الســيد المديــر المحتـــرم ...</div>
-        <div>
-          <div style="white-space:nowrap">العدد&#160;:&#160;${number}</div>
-          <div style="white-space:nowrap;margin-top:2px">التاريخ&#160;:&#160;${date}</div>
-        </div>
+    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
+      <div style="display:flex;justify-content:flex-end;gap:4px;flex-direction:column;align-items:flex-end">
+        <div style="white-space:nowrap">العدد&#160;:&#160;${number}</div>
+        <div style="white-space:nowrap">التاريخ&#160;:&#160;${date}</div>
       </div>
-      <div style="text-align:center;font-weight:700;margin-top:36px">م / ${subject}</div>
-      <div style="margin-top:18px;text-indent:60px">${content}</div>
+      <div style="margin-top:18px">${body}</div>
       ${buildMemoTableHTML()}
-      <div style="text-align:center;margin-top:18px">مع التقدير...</div>
-      <div style="margin-top:auto;padding-top:40px;display:flex;justify-content:flex-end">
-        <div style="display:flex;flex-direction:column;align-items:center">
-          <div>${signeeTitle}</div>
-          ${signeeName ? `<div style="margin-top:6px">${signeeName}</div>` : '<div style="margin-top:24px"></div>'}
-        </div>
-      </div>
     </div>
   `;
 }
@@ -4594,10 +4548,7 @@ async function buildMemoDocxBlob() {
   const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, AlignmentType, BorderStyle, WidthType } = docx;
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  const subject = document.getElementById('memo_subject').value || '';
-  const contentLines = (document.getElementById('memo_content').value || '').split('\n');
-  const signeeName = document.getElementById('memo_signee_name').value || '';
-  const signeeTitle = document.getElementById('memo_signee_title').value || 'مقدم الطلب';
+  const bodyLines = (document.getElementById('memo_body').value || '').split('\n');
 
   const noBorder = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
   const noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
@@ -4608,7 +4559,7 @@ async function buildMemoDocxBlob() {
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
       new TableRow({ children: [
-        new TableCell({ borders: noBorders, children: [rtlP([rtlRun('الى / الســيد المديــر المحتـــرم ...', { bold: true })], { alignment: AlignmentType.RIGHT })] }),
+        new TableCell({ borders: noBorders, children: [new Paragraph({ text: '' })] }),
         new TableCell({ borders: noBorders, children: [rtlP([rtlRun(`العدد : ${number}`)], { alignment: AlignmentType.LEFT })] })
       ]}),
       new TableRow({ children: [
@@ -4618,15 +4569,10 @@ async function buildMemoDocxBlob() {
     ]
   });
 
-  const children = [
-    headerTable,
-    new Paragraph({ text: '' }),
-    rtlP([rtlRun(`م / ${subject}`, { bold: true })], { alignment: AlignmentType.CENTER }),
-    new Paragraph({ text: '' })
-  ];
+  const children = [headerTable, new Paragraph({ text: '' })];
 
-  contentLines.forEach((line, i) => {
-    children.push(rtlP([rtlRun(line)], i === 0 ? { indent: { firstLine: 700 } } : {}));
+  bodyLines.forEach(line => {
+    children.push(rtlP([rtlRun(line)]));
   });
 
   if (memoTableData && memoTableData.length) {
@@ -4640,18 +4586,6 @@ async function buildMemoDocxBlob() {
       }))
     }));
     children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: tblRows }));
-  }
-
-  children.push(new Paragraph({ text: '' }));
-  children.push(rtlP([rtlRun('مع التقدير...')], { alignment: AlignmentType.CENTER }));
-  children.push(new Paragraph({ text: '' }));
-  children.push(new Paragraph({ text: '' }));
-  children.push(rtlP([rtlRun(signeeTitle)], { alignment: AlignmentType.LEFT }));
-  if (signeeName) {
-    children.push(rtlP([rtlRun(signeeName)], { alignment: AlignmentType.LEFT }));
-  } else {
-    children.push(new Paragraph({ text: '' }));
-    children.push(new Paragraph({ text: '' }));
   }
 
   const doc = new Document({ sections: [{ properties: {}, children }] });
