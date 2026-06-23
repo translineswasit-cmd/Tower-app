@@ -4541,11 +4541,14 @@ function buildMemoBodyHTML() {
 async function exportMemoPDF() {
   showToast('⏳ جاري تحضير ملف PDF...');
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px;background:white;padding:30px;width:700px';
-  wrap.innerHTML = buildMemoBodyHTML();
+  wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+  const inner = document.createElement('div');
+  inner.style.cssText = 'background:white;padding:30px;width:700px';
+  inner.innerHTML = buildMemoWordHTML();
+  wrap.appendChild(inner);
   document.body.appendChild(wrap);
   try {
-    const dataUrl = await elementToPNGDataURL(wrap);
+    const dataUrl = await elementToPNGDataURL(inner);
     document.body.removeChild(wrap);
     if (!dataUrl) throw new Error('فشل تحويل المذكرة لصورة');
     const { jsPDF } = window.jspdf;
