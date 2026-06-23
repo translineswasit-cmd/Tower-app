@@ -34,7 +34,7 @@ body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #
 .login-error.show { display: block; }
 
 /* HEADER */
-.header { background: linear-gradient(135deg, #1a2e4a 0%, #2E4057 60%, #3a5a8a 100%); color: white; position: sticky; top: 0; z-index: 200; box-shadow: 0 3px 16px rgba(0,0,0,0.25); }
+.header { background: linear-gradient(135deg, #1a2e4a 0%, #2E4057 60%, #3a5a8a 100%); color: white; position: sticky; top: 0; z-index: 700; box-shadow: 0 3px 16px rgba(0,0,0,0.25); }
 .header-top { display: flex; flex-direction: column; padding: 12px 20px; gap: 6px; }
 .header-brand { display: flex; align-items: center; gap: 12px; }
 .header-brand .logo { font-size: 2rem; flex-shrink: 0; }
@@ -1893,6 +1893,7 @@ function goToParentPage(id) {
 function showPage(id, btn) {
   // صلاحية القراءة فقط: ممنوع الدخول لصفحة إضافة كشف
   if (id === 'form' && currentUser && currentUser.role === 'readonly') {
+    isGoingBack = false;
     showToast('⚠️ صلاحية القراءة فقط، لا يمكنك إضافة كشف', 'error');
     return;
   }
