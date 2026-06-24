@@ -583,18 +583,12 @@ tbody tr:hover { background: #F7FAFC; }
         </div>
       </div>
   <div class="form-card">
-    <h3>🔧 ملحقات البرج</h3>
-    <div class="field"><label>ملاحظات</label>
-      <textarea id="f_tower_attachments" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
-    </div>
-  </div>
-  <div class="form-card">
     <h3>⚡ الأسلاك</h3>
     <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد الفقرة</p>
     <div class="grid-3">
-      <div class="field"><label id="wireLbl_r1">الطور R</label><textarea id="f_wires_r1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea></div>
-      <div class="field"><label id="wireLbl_s1">الطور S</label><textarea id="f_wires_s1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea></div>
-      <div class="field"><label id="wireLbl_t1">الطور T</label><textarea id="f_wires_t1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea></div>
+      <div class="field"><label id="wireLbl_r1">الطور R</label><textarea id="f_wires_r1" rows="2" placeholder="دوّن اي ضربة بالسلك او نقص بالمباعدات ومخمدات الاهتزاز هنا، واكتب سليم بحالة لا توجد مشاكل"></textarea></div>
+      <div class="field"><label id="wireLbl_s1">الطور S</label><textarea id="f_wires_s1" rows="2" placeholder="دوّن اي ضربة بالسلك او نقص بالمباعدات ومخمدات الاهتزاز هنا، واكتب سليم بحالة لا توجد مشاكل"></textarea></div>
+      <div class="field"><label id="wireLbl_t1">الطور T</label><textarea id="f_wires_t1" rows="2" placeholder="دوّن اي ضربة بالسلك او نقص بالمباعدات ومخمدات الاهتزاز هنا، واكتب سليم بحالة لا توجد مشاكل"></textarea></div>
     </div>
     <!-- حقول r2/s2/t2 مخفية — تُحفظ بنفس قيمة r1/s1/t1 تلقائياً -->
     <input type="hidden" id="f_wires_r2">
@@ -1311,8 +1305,8 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
     <div style="overflow-x:auto">
     <table class="records-table" style="width:100%;background:white;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05)">
-      <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">الحجم</th><th style="padding:10px">تعمل</th><th style="padding:10px">عاطلة</th><th style="padding:10px">الإجمالي</th><th style="padding:10px">ملاحظات</th><th style="padding:10px">إجراء</th></tr></thead>
-      <tbody id="toolsBody"><tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+      <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">الحجم</th><th style="padding:10px">تعمل</th><th style="padding:10px">عاطلة</th><th style="padding:10px">الإجمالي</th><th style="padding:10px">مكان الخزن</th><th style="padding:10px">ملاحظات</th><th style="padding:10px">إجراء</th></tr></thead>
+      <tbody id="toolsBody"><tr><td colspan="8" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
     </table>
     </div>
   </div>
@@ -1332,8 +1326,8 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
     <div style="overflow-x:auto">
     <table class="records-table" style="width:100%;background:white;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05)">
-      <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">الجهد</th><th style="padding:10px">النوع/الحجم</th><th style="padding:10px">الكمية</th><th style="padding:10px">الوحدة</th><th style="padding:10px">ملاحظات</th><th style="padding:10px">إجراء</th></tr></thead>
-      <tbody id="materialsBody"><tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+      <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">الجهد</th><th style="padding:10px">النوع/الحجم</th><th style="padding:10px">الكمية</th><th style="padding:10px">الوحدة</th><th style="padding:10px">مكان الخزن</th><th style="padding:10px">ملاحظات</th><th style="padding:10px">إجراء</th></tr></thead>
+      <tbody id="materialsBody"><tr><td colspan="8" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
     </table>
     </div>
   </div>
@@ -1363,6 +1357,7 @@ tbody tr:hover { background: #F7FAFC; }
         <div class="field"><label>تعمل</label><input id="et_working" type="number" min="0"></div>
         <div class="field"><label>عاطلة</label><input id="et_broken" type="number" min="0"></div>
       </div>
+      <div class="field"><label>مكان الخزن</label><input id="et_location" placeholder="مثال: مخزن واسط - رف 2"></div>
       <div class="field"><label>ملاحظات</label><textarea id="et_notes" rows="2"></textarea></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:18px;justify-content:space-between">
@@ -1404,6 +1399,7 @@ tbody tr:hover { background: #F7FAFC; }
           <select id="em_unit"><option value="قطعة">قطعة</option><option value="متر">متر</option><option value="كم">كم</option><option value="طن">طن</option></select>
         </div>
       </div>
+      <div class="field"><label>مكان الخزن</label><input id="em_location" placeholder="مثال: مخزن واسط - رف 2"></div>
       <div class="field"><label>ملاحظات</label><textarea id="em_notes" rows="2"></textarea></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:18px;justify-content:space-between">
@@ -2582,7 +2578,7 @@ function renderInsulatorSVG(svgStr) { return svgStr || '—'; }
 // ========================
 // FORM
 // ========================
-const FIELDS = ['iron_intersections','tower_foundations','tower_attachments',
+const FIELDS = ['iron_intersections','tower_foundations',
   'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
   'ground_1','ground_2','fire_causes','fire_causes_notes','road_access','road_access_notes','notes'];
 
@@ -7496,20 +7492,20 @@ function showInventoryMaterials() {
 // ---- TOOLS ----
 async function loadInventoryTools() {
   const tbody = document.getElementById('toolsBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
     const res = await sbFetch('inventory_tools?select=*&order=name.asc');
     if (!res.ok) throw new Error();
     allTools = await res.json();
     renderTools();
   } catch {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
   }
 }
 
 function renderTools() {
   const tbody = document.getElementById('toolsBody');
-  if (!allTools.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">لا توجد مواد مضافة</td></tr>'; return; }
+  if (!allTools.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">لا توجد مواد مضافة</td></tr>'; return; }
   const canEdit = canManageInventory();
   tbody.innerHTML = allTools.map(t => {
     const working = t.qty_working || 0, broken = t.qty_broken || 0;
@@ -7520,6 +7516,7 @@ function renderTools() {
       <td style="padding:8px;color:#1e8449;font-weight:700">${working}</td>
       <td style="padding:8px;color:${broken>0?'#c0392b':'#999'};font-weight:700">${broken}</td>
       <td style="padding:8px;font-weight:700">${working+broken}</td>
+      <td style="padding:8px;font-size:12px;color:#555">${t.storage_location||'—'}</td>
       <td style="padding:8px;font-size:12px;color:#777">${t.notes||'—'}</td>
       <td style="padding:8px">${editBtn}</td>
     </tr>`;
@@ -7550,6 +7547,7 @@ function addToolRow() {
       <div class="field"><label>تعمل</label><input class="tr_working" type="number" min="0" value="0"></div>
       <div class="field"><label>عاطلة</label><input class="tr_broken" type="number" min="0" value="0"></div>
     </div>
+    <div class="field" style="margin-top:10px"><label>مكان الخزن</label><input class="tr_location" placeholder="مثال: مخزن واسط - رف 2"></div>
     <div class="field" style="margin-top:10px"><label>ملاحظات</label><input class="tr_notes" placeholder="اختياري"></div>
     <button class="btn btn-del btn-sm" style="margin-top:8px" onclick="document.getElementById('${id}').remove()">🗑️ إزالة هذا الصف</button>`;
   document.getElementById('toolRowsWrap').appendChild(div);
@@ -7566,6 +7564,7 @@ async function saveToolRows() {
       size: row.querySelector('.tr_size').value.trim() || null,
       qty_working: parseInt(row.querySelector('.tr_working').value) || 0,
       qty_broken: parseInt(row.querySelector('.tr_broken').value) || 0,
+      storage_location: row.querySelector('.tr_location').value.trim() || null,
       notes: row.querySelector('.tr_notes').value.trim() || null
     });
   }
@@ -7587,6 +7586,7 @@ function openEditToolModal(id) {
   document.getElementById('et_size').value = t.size || '';
   document.getElementById('et_working').value = t.qty_working || 0;
   document.getElementById('et_broken').value = t.qty_broken || 0;
+  document.getElementById('et_location').value = t.storage_location || '';
   document.getElementById('et_notes').value = t.notes || '';
   document.getElementById('editToolModal').style.display = '';
 }
@@ -7599,6 +7599,7 @@ async function saveEditTool() {
     size: document.getElementById('et_size').value.trim() || null,
     qty_working: parseInt(document.getElementById('et_working').value) || 0,
     qty_broken: parseInt(document.getElementById('et_broken').value) || 0,
+    storage_location: document.getElementById('et_location').value.trim() || null,
     notes: document.getElementById('et_notes').value.trim() || null
   };
   try {
@@ -7624,14 +7625,14 @@ async function deleteToolRow() {
 // ---- MATERIALS ----
 async function loadInventoryMaterials() {
   const tbody = document.getElementById('materialsBody');
-  tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
     const res = await sbFetch('inventory_materials?select=*&order=name.asc');
     if (!res.ok) throw new Error();
     allMaterials = await res.json();
     renderMaterials();
   } catch {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
   }
 }
 
@@ -7641,7 +7642,7 @@ function renderMaterials() {
   const filter = document.getElementById('materialVoltageFilter').value;
   const tbody = document.getElementById('materialsBody');
   const filtered = allMaterials.filter(m => filter === 'all' || String(m.voltage) === filter);
-  if (!filtered.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">لا توجد مواد مضافة</td></tr>'; return; }
+  if (!filtered.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">لا توجد مواد مضافة</td></tr>'; return; }
   const canEdit = canManageInventory();
   tbody.innerHTML = filtered.map(m => {
     const vc = m.voltage === '400' ? '#c0392b' : (m.voltage === '132' ? '#1a5276' : '#6c3483');
@@ -7652,6 +7653,7 @@ function renderMaterials() {
       <td style="padding:8px">${m.type_size||'—'}</td>
       <td style="padding:8px;font-weight:700">${m.qty}</td>
       <td style="padding:8px">${m.unit||'—'}</td>
+      <td style="padding:8px;font-size:12px;color:#555">${m.storage_location||'—'}</td>
       <td style="padding:8px;font-size:12px;color:#777">${m.notes||'—'}</td>
       <td style="padding:8px">${editBtn}</td>
     </tr>`;
@@ -7689,6 +7691,7 @@ function addMaterialRow() {
         <select class="mr_unit"><option value="قطعة">قطعة</option><option value="متر">متر</option><option value="كم">كم</option><option value="طن">طن</option></select>
       </div>
     </div>
+    <div class="field" style="margin-top:10px"><label>مكان الخزن</label><input class="mr_location" placeholder="مثال: مخزن واسط - رف 2"></div>
     <div class="field" style="margin-top:10px"><label>ملاحظات</label><input class="mr_notes" placeholder="اختياري"></div>
     <button class="btn btn-del btn-sm" style="margin-top:8px" onclick="document.getElementById('${id}').remove()">🗑️ إزالة هذا الصف</button>`;
   document.getElementById('materialRowsWrap').appendChild(div);
@@ -7706,6 +7709,7 @@ async function saveMaterialRows() {
       type_size: row.querySelector('.mr_size').value.trim() || null,
       qty: parseFloat(row.querySelector('.mr_qty').value) || 0,
       unit: row.querySelector('.mr_unit').value,
+      storage_location: row.querySelector('.mr_location').value.trim() || null,
       notes: row.querySelector('.mr_notes').value.trim() || null
     });
   }
@@ -7728,6 +7732,7 @@ function openEditMaterialModal(id) {
   document.getElementById('em_size').value = m.type_size || '';
   document.getElementById('em_qty').value = m.qty || 0;
   document.getElementById('em_unit').value = m.unit || 'قطعة';
+  document.getElementById('em_location').value = m.storage_location || '';
   document.getElementById('em_notes').value = m.notes || '';
   document.getElementById('editMaterialModal').style.display = '';
 }
@@ -7741,6 +7746,7 @@ async function saveEditMaterial() {
     type_size: document.getElementById('em_size').value.trim() || null,
     qty: parseFloat(document.getElementById('em_qty').value) || 0,
     unit: document.getElementById('em_unit').value,
+    storage_location: document.getElementById('em_location').value.trim() || null,
     notes: document.getElementById('em_notes').value.trim() || null
   };
   try {
