@@ -6375,7 +6375,9 @@ function loadPreviousInspection() {
     try {
       mergedInsulatorState = JSON.parse(r.insulator_state);
       // أحدث معالجة لكل فيز تحتوي insulator_state_after — نطبقها إذا موجودة
-      previousTreatmentsForLoad.forEach(t => {
+      // مهم: previousTreatmentsForLoad مرتبة الأحدث أولاً (created_at.desc)، لذا نعكس الترتيب
+      // هنا لنطبّق الأقدم أولاً والأحدث أخيراً — فتكون بيانات المعالجة الأحدث هي الفائزة بالنتيجة النهائية
+      [...previousTreatmentsForLoad].reverse().forEach(t => {
         if (t.insulator_state_after) {
           try {
             const after = JSON.parse(t.insulator_state_after);
@@ -6431,19 +6433,20 @@ async function loadTreatments() {
   } catch { treatmentsCache = []; }
 }
 
-// مهم: لمفاتيح العوازل (ins_R/ins_S/ins_T) لا نعتمد فقط على وجود معالجة سابقة بنفس المفتاح،
-// لأن معالجة جزئية (مثلاً 3 من 9 متضرر) تُسجَّل بنفس المفتاح وتُعتبر "معالجة بالكامل" خطأً.
-// لذا نحسب: مجموع العدد المعالج فعلياً (count) مقارنة بعدد المتضرر الحالي بهذا الفيز من r.insulator_state.
+// مهم: لمفاتيح العوازل (ins_R/ins_S/ins_T) لا نعتمد على جمع أعداد كل المعالجات (طريقة هشّة تنكسر
+// لو انحفظت نفس المعالجة مرتين بالخطأ — خلل التكرار المعروف بنظام الحفظ أوف لاين). بدلها نعتمد فقط
+// على أحدث معالجة (آخر insulator_state_after) ونقرأ منها مباشرة "كم متبقي متضرر فعلياً" بهذا الفيز.
 function isTreatedInDB(inspectionId, key, r) {
   if (r && key && key.startsWith('ins_')) {
     const phase = key.split('_')[1];
-    let damaged = 0;
-    try { const st = JSON.parse(r.insulator_state || '{}'); damaged = (st[phase] || []).filter(Boolean).length; } catch (e) {}
-    if (!damaged) return true; // لا يوجد تضرر أصلاً بهذا الفيز
-    const treatedCount = treatmentsCache
-      .filter(t => t.inspection_id === inspectionId)
-      .reduce((sum, t) => sum + (Array.isArray(t.items_treated) ? t.items_treated.filter(i => i.key === key).reduce((s, i) => s + (i.count || 0), 0) : 0), 0);
-    return treatedCount >= damaged;
+    // treatmentsCache مرتبة created_at.desc أصلاً (من loadTreatments) — أول عنصر مطابق = الأحدث
+    const latest = treatmentsCache.find(t => t.inspection_id === inspectionId && t.insulator_state_after);
+    if (!latest) return false; // لا توجد أي معالجة مسجلة لهذا الفيز إطلاقاً
+    try {
+      const after = JSON.parse(latest.insulator_state_after);
+      const remaining = (after[phase] || []).filter(Boolean).length;
+      return remaining === 0;
+    } catch (e) { return false; }
   }
   return treatmentsCache.some(t => t.inspection_id === inspectionId && Array.isArray(t.items_treated) && t.items_treated.some(i => i.key === key));
 }
