@@ -4755,17 +4755,13 @@ async function generateDailyReport() {
   const date = document.getElementById('dr_date').value;
   if (!date) { showToast('⚠️ اختر التاريخ أولاً', 'error'); return; }
   editingDailyReportId = null;
-  const nextDay = new Date(date + 'T00:00:00'); nextDay.setDate(nextDay.getDate() + 1);
-  const nextDayStr = nextDay.toISOString().split('T')[0];
-  const gte = `created_at=gte.${date}T00:00:00`;
-  const lt = `created_at=lt.${nextDayStr}T00:00:00`;
 
   document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">⏳ جاري التوليد...</div>';
   try {
     const [inspRes, thermRes, lineThermRes, treatRes] = await Promise.all([
-      sbFetch(`inspections?select=line_name,tower_number&${gte}&${lt}`),
-      sbFetch(`thermal_inspections?select=line_name,tower_number&${gte}&${lt}`),
-      sbFetch(`line_entry_thermal?select=line_name&${gte}&${lt}`),
+      sbFetch(`inspections?select=line_name,tower_number&inspection_date=eq.${date}`),
+      sbFetch(`thermal_inspections?select=line_name,tower_number&inspection_date=eq.${date}`),
+      sbFetch(`line_entry_thermal?select=line_name&inspection_date=eq.${date}`),
       sbFetch(`treatments?select=line_name,items_treated&treatment_date=eq.${date}`)
     ]);
     const [insp, therm, lineTherm, treat] = await Promise.all([
