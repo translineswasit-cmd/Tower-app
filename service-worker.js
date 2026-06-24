@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v106';
+const CACHE_NAME = 'tower-app-v107';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -18,9 +18,13 @@ const EXTRA_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(CORE_ASSETS); // يجب أن تنجح هذي، وإلا التثبيت يفشل بالكامل (أمان)
+      // مهم: نفرض تجاوز ذاكرة التخزين المؤقت للمتصفح (cache:'reload') حتى نضمن جلب أحدث نسخة فعلية
+      // من الشبكة، وليس نسخة قديمة محفوظة بذاكرة المتصفح رغم تغيّر اسم الكاش
+      await Promise.all(CORE_ASSETS.map(url =>
+        cache.add(new Request(url, { cache: 'reload' }))
+      )); // يجب أن تنجح هذي، وإلا التثبيت يفشل بالكامل (أمان)
       await Promise.all(EXTRA_ASSETS.map(url =>
-        cache.add(url).catch(err => console.log('Optional asset failed (non-critical):', url, err))
+        cache.add(new Request(url, { cache: 'reload' })).catch(err => console.log('Optional asset failed (non-critical):', url, err))
       ));
     })
   );
