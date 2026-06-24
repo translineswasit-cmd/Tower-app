@@ -6509,17 +6509,15 @@ async function exportOpenDeparturesPDF() {
       if (!first) doc.addPage();
       first = false;
 
-      // عنوان الخط — كصورة (HTML) لضمان عربي صحيح
-      const lineHeaderDataUrl = await buildArabicTextImage(
-        `<div style="font-family:Tahoma,Arial,sans-serif;direction:rtl;text-align:right;padding:6px 10px;background:#1a2e4a;color:#fff;border-radius:8px;font-size:18px;font-weight:700">🚨 خط: ${lineName} — ${activeTowers.length} برج فيه مغادرات مفتوحة</div>`,
-        pageW - margin*2
-      );
+      // عنوان الخط — نص مرسوم مباشرة بالـ Canvas (يدعم العربي بشكل سليم)
+      const lineHeaderImg = drawArabicTextPNG([
+        { text: `🚨 خط: ${lineName} — ${activeTowers.length} برج فيه مغادرات مفتوحة`, fontSize: 16, fontWeight: 'bold', color: '#fff', bg: '#1a2e4a', padY: 10 }
+      ], pageW - margin*2);
       let y = margin;
-      if (lineHeaderDataUrl) {
-        const imgProps = doc.getImageProperties(lineHeaderDataUrl.dataUrl);
+      if (lineHeaderImg) {
         const w = pageW - margin*2;
-        const h = w * (imgProps.height / imgProps.width);
-        doc.addImage(lineHeaderDataUrl.dataUrl, 'PNG', margin, y, w, h);
+        const h = w * (lineHeaderImg.h / lineHeaderImg.w);
+        doc.addImage(lineHeaderImg.dataUrl, 'PNG', margin, y, w, h);
         y += h + 14;
       }
 
@@ -6528,17 +6526,17 @@ async function exportOpenDeparturesPDF() {
         if (!openDeps.length) continue;
         totalTowersExported++;
 
-        // نص تفاصيل البرج (كصورة HTML بالعربي)
         const otherDeps = openDeps.filter(d => d.type !== 'insulator');
-        const depsHTML = otherDeps.length
-          ? otherDeps.map(d => `<div style="margin-top:4px;color:#922b21;font-size:13px">🔴 ${d.label}</div>`).join('')
-          : '<div style="margin-top:4px;color:#1e8449;font-size:13px">✅ لا توجد مغادرات نصية أخرى</div>';
-        const towerHTML = `<div style="font-family:Tahoma,Arial,sans-serif;direction:rtl;text-align:right;padding:10px;background:#fff;border:1.5px solid #E2E8F0;border-radius:8px">
-          <div style="font-weight:700;font-size:15px;color:#1a2e4a">🗼 برج ${r.tower_number} — ${TOWER_TYPES[r.tower_type]||r.tower_type||''} — ${r.voltage||LINE_VOLTAGE[lineName]||''} ك.ف</div>
-          <div style="font-size:12px;color:#718096;margin-top:2px">📅 آخر كشف: ${r.inspection_date||'—'} | 👤 ${r.created_by_name||'—'}</div>
-          ${depsHTML}
-        </div>`;
-        const towerImg = await buildArabicTextImage(towerHTML, pageW - margin*2);
+        const items = [
+          { text: `🗼 برج ${r.tower_number} — ${TOWER_TYPES[r.tower_type]||r.tower_type||''} — ${r.voltage||LINE_VOLTAGE[lineName]||''} ك.ف`, fontSize: 14, fontWeight: 'bold', color: '#1a2e4a', padY: 6 },
+          { text: `📅 آخر كشف: ${r.inspection_date||'—'}  |  👤 ${r.created_by_name||'—'}`, fontSize: 11, color: '#718096', padY: 2 }
+        ];
+        if (otherDeps.length) {
+          otherDeps.forEach(d => items.push({ text: `🔴 ${d.label}`, fontSize: 12, color: '#922b21', padY: 3 }));
+        } else {
+          items.push({ text: '✅ لا توجد مغادرات نصية أخرى', fontSize: 12, color: '#1e8449', padY: 3 });
+        }
+        const towerImg = drawArabicTextPNG(items, pageW - margin*2, { border: true });
 
         // صور العوازل (فقط لو فيها مغادرة عازل مفتوحة)
         const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator');
@@ -6593,28 +6591,88 @@ async function exportOpenDeparturesPDF() {
   }
 }
 
-// يحوّل أي مقطع HTML (نص عربي عادي) إلى صورة PNG — يستخدم نفس تقنية elementToPNGDataURL
-// لضمان ظهور النص العربي بشكل صحيح ومتصل (jsPDF لا يدعم تشكيل الحروف العربية مباشرة)
-async function buildArabicTextImage(html, widthPx) {
-  const wrap = document.createElement('div');
-  wrap.style.cssText = `position:fixed;left:-9999px;top:-9999px`;
-  const inner = document.createElement('div');
-  inner.style.cssText = `width:${widthPx}px;background:#fff`;
-  inner.innerHTML = html;
-  wrap.appendChild(inner);
-  document.body.appendChild(wrap);
-  try {
-    const dataUrl = await elementToPNGDataURL(inner);
-    const rect = inner.getBoundingClientRect();
-    const w = Math.max(rect.width, inner.scrollWidth, 100);
-    const h = Math.max(rect.height, inner.scrollHeight, 40);
-    document.body.removeChild(wrap);
-    if (!dataUrl) return null;
-    return { dataUrl, w, h };
-  } catch (e) {
-    if (wrap.parentNode) document.body.removeChild(wrap);
-    return null;
+// يبني صورة PNG من نص عربي عبر Canvas 2D مباشرة (fillText مع direction:'rtl') —
+// أوثق من تقنية HTML/SVG foreignObject (تفشل بإظهار محتوى فاضي على بعض أجهزة iOS Safari)
+// items: [{text, fontSize, fontWeight, color, bg, padY}]
+function drawArabicTextPNG(items, widthCss, opts) {
+  opts = opts || {};
+  const scale = 2; // دقة أعلى للطباعة
+  const sidePadding = 14;
+  const lineHeightFactor = 1.45;
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+
+  function wrapText(ctx, text, maxWidth) {
+    const words = String(text).split(' ');
+    const out = [];
+    let line = '';
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        out.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if (line) out.push(line);
+    return out;
   }
+
+  const drawOps = []; // {type:'rect'|'text', ...}
+  let y = 8;
+  items.forEach(item => {
+    const fontSize = item.fontSize || 13;
+    const fontWeight = item.fontWeight || 'normal';
+    mctx.font = `${fontWeight} ${fontSize}px Tahoma, Arial, sans-serif`;
+    const maxTextWidth = widthCss - sidePadding*2;
+    const wrapped = wrapText(mctx, item.text, maxTextWidth);
+    const lineHeight = fontSize * lineHeightFactor;
+    const padY = item.padY != null ? item.padY : 4;
+    const blockTop = y;
+    const blockHeight = wrapped.length * lineHeight + padY*2;
+    if (item.bg) drawOps.push({ type:'rect', y: blockTop, height: blockHeight, color: item.bg });
+    wrapped.forEach((ln, i) => {
+      drawOps.push({
+        type: 'text', text: ln,
+        x: widthCss - sidePadding,
+        y: blockTop + padY + i*lineHeight + lineHeight*0.78,
+        fontSize, fontWeight, color: item.color || '#1a1a1a'
+      });
+    });
+    y = blockTop + blockHeight;
+  });
+  const totalHeight = Math.max(y + 8, 30);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(widthCss * scale);
+  canvas.height = Math.round(totalHeight * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, widthCss, totalHeight);
+  ctx.direction = 'rtl';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+
+  drawOps.forEach(op => {
+    if (op.type === 'rect') {
+      ctx.fillStyle = op.color;
+      ctx.fillRect(0, op.y, widthCss, op.height);
+    } else {
+      ctx.font = `${op.fontWeight} ${op.fontSize}px Tahoma, Arial, sans-serif`;
+      ctx.fillStyle = op.color;
+      ctx.fillText(op.text, op.x, op.y);
+    }
+  });
+
+  if (opts.border) {
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(0.75, 0.75, widthCss - 1.5, totalHeight - 1.5);
+  }
+
+  return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
 }
 
 
@@ -6953,6 +7011,7 @@ function buildTreatVisual(phase, mode) {
       const pts=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]].map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)]);
       const el=document.createElementNS('http://www.w3.org/2000/svg','polygon');
       el.setAttribute('points',pts.map(p=>p.join(',')).join(' '));
+      el.dataset.idx = idx;
       const dmg=treatInsulatorState[phase][idx];
       el.setAttribute('fill',dmg?'#FC4444':'white'); el.setAttribute('stroke',dmg?'#9B0000':'#555'); el.setAttribute('stroke-width','0.8');
       el.style.cursor=dmg?'pointer':'default';
@@ -7059,7 +7118,10 @@ async function saveTreatment() {
       const phase = ['R','S','T'][pi]; if (!phase) return;
       let treatedCount = 0;
       if (mode === 'v') {
-        block.querySelectorAll('polygon').forEach((el,i) => { if(el.getAttribute('fill')==='#48BB78'){stateAfter[phase][i]=false; treatedIndices[phase].push(i); treatedCount++;} });
+        block.querySelectorAll('polygon').forEach((el) => {
+          const idx = parseInt(el.dataset.idx, 10);
+          if (el.getAttribute('fill')==='#48BB78'){stateAfter[phase][idx]=false; treatedIndices[phase].push(idx); treatedCount++;}
+        });
       } else {
         block.querySelectorAll('.ins-rect').forEach((el,i) => { if(el.style.background==='rgb(72, 187, 120)'){stateAfter[phase][i]=false; treatedIndices[phase].push(i); treatedCount++;} });
       }
