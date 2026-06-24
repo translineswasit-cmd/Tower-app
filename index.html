@@ -2798,6 +2798,7 @@ async function syncQueue() {
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
+    if (!rec.client_uuid) rec.client_uuid = genUUID();
     try {
       const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
       if (res.ok) synced++; else remaining.push(rec);
@@ -4214,6 +4215,7 @@ async function syncLineEntryQueue() {
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
+    if (!rec.client_uuid) rec.client_uuid = genUUID();
     try {
       const res = await sbFetch('line_entry_thermal?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
       if (res.ok) synced++; else remaining.push(rec);
@@ -4241,6 +4243,7 @@ async function syncThermalQueue() {
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
+    if (!rec.client_uuid) rec.client_uuid = genUUID();
     try {
       const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
       if (res.ok) synced++; else remaining.push(rec);
@@ -7398,6 +7401,7 @@ async function syncTreatmentQueue() {
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
+    if (!rec.client_uuid) rec.client_uuid = genUUID();
     try {
       const res = await sbFetch('treatments?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
       if (res.ok) synced++; else remaining.push(rec);
