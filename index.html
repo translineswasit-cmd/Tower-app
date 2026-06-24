@@ -6597,14 +6597,17 @@ async function exportOpenDeparturesPDF() {
 // لضمان ظهور النص العربي بشكل صحيح ومتصل (jsPDF لا يدعم تشكيل الحروف العربية مباشرة)
 async function buildArabicTextImage(html, widthPx) {
   const wrap = document.createElement('div');
-  wrap.style.cssText = `position:fixed;left:-9999px;top:-9999px;width:${widthPx}px`;
-  wrap.innerHTML = html;
+  wrap.style.cssText = `position:fixed;left:-9999px;top:-9999px`;
+  const inner = document.createElement('div');
+  inner.style.cssText = `width:${widthPx}px;background:#fff`;
+  inner.innerHTML = html;
+  wrap.appendChild(inner);
   document.body.appendChild(wrap);
   try {
-    const dataUrl = await elementToPNGDataURL(wrap);
-    const rect = wrap.getBoundingClientRect();
-    const w = Math.max(rect.width, wrap.scrollWidth, 100);
-    const h = Math.max(rect.height, wrap.scrollHeight, 40);
+    const dataUrl = await elementToPNGDataURL(inner);
+    const rect = inner.getBoundingClientRect();
+    const w = Math.max(rect.width, inner.scrollWidth, 100);
+    const h = Math.max(rect.height, inner.scrollHeight, 40);
     document.body.removeChild(wrap);
     if (!dataUrl) return null;
     return { dataUrl, w, h };
