@@ -1963,7 +1963,7 @@ function updateStatus(online) {
 }
 
 function getTotalPendingCount() {
-  return getQueue().length + getThermalQueue().length + getTreatmentQueue().length + getLineEntryQueue().length;
+  return getQueue().length + getThermalQueue().length + getTreatmentQueue().length + getLineEntryQueue().length + getInspectionPatchQueue().length;
 }
 
 function updatePendingBadge() {
@@ -1992,6 +1992,7 @@ async function syncAllQueues() {
     await syncThermalQueue();
     await syncTreatmentQueue();
     await syncLineEntryQueue();
+    await syncInspectionPatchQueue();
   } finally {
     syncInProgress = false;
   }
@@ -2713,7 +2714,9 @@ function setFormData(d) {
       el.insertAdjacentElement('afterend', badge);
     });
     const saved = d.insulator_state ? JSON.parse(d.insulator_state) : null;
-    buildInsulatorUI(currentVoltage, d.tower_type, saved, d._mergedCycle || null);
+    let savedCycle = d._mergedCycle;
+    if (!savedCycle && d.insulator_cycle) { try { savedCycle = JSON.parse(d.insulator_cycle); } catch(e) {} }
+    buildInsulatorUI(currentVoltage, d.tower_type, saved, savedCycle || null);
     updateWiresGroundUI();
   }, 60);
 }
@@ -3149,9 +3152,9 @@ function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerTyp
   if (!hasDamage) return null; // سليمة، ما نحتاج صورة
   const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['',''];
-  let baselineCycle = null;
-  if (insulatorCycleJSON) { try { baselineCycle = JSON.parse(insulatorCycleJSON); } catch(e) {} }
-  const { cycle: insCycle, treatedIdx: insTreated } = computeInsulatorCycleAndTreated(inspectionId, state, baselineCycle);
+  let insCycle = {R:[],S:[],T:[]};
+  if (insulatorCycleJSON) { try { insCycle = JSON.parse(insulatorCycleJSON); } catch(e) {} }
+  const insTreated = getInsulatorTreatedIdx(state, insCycle);
 
   // طبقة خارجية مخفية (تحمل position:fixed للإخفاء فقط) — لا تُمرَّر هذي مباشرة للترسيم،
   // بل العنصر الداخلي (container) العادي بدون أي تموضع خاص، لتجنّب نفس خلل "الصورة الفاضية"
@@ -6134,10 +6137,10 @@ function renderTowerDetail(lineName, towerNum) {
     let state;
     try { state = JSON.parse(r.insulator_state); } catch(e) { state = null; }
     if (state) {
-      // نطرح المعالجات المرتبطة بهذا السجل + نحسب مستوى دورة كل عازل (موروث + من هذا السجل)
-      let baselineCycle = null;
-      if (r.insulator_cycle) { try { baselineCycle = JSON.parse(r.insulator_cycle); } catch(e) {} }
-      const { cycle: insCycle, treatedIdx } = computeInsulatorCycleAndTreated(r.id, state, baselineCycle);
+      // مستوى الدورة + المعالَج يُقرآن مباشرة من السجل (يعكسان الحقيقة الحالية الفعلية دائماً)
+      let insCycle = {R:[],S:[],T:[]};
+      if (r.insulator_cycle) { try { insCycle = JSON.parse(r.insulator_cycle); } catch(e) {} }
+      const treatedIdx = getInsulatorTreatedIdx(state, insCycle);
 
       html += `<div class="form-card" style="margin-bottom:14px">
         <h3>🔘 العوازل</h3>
@@ -6308,47 +6311,6 @@ function renderReadonlyV(state, treatedIdx, cycleArr) {
   return svg;
 }
 
-// يحسب مستوى دورة كل عازل (كم مرة عولج تاريخياً) + قائمة المؤشرات "المعالجة سابقاً وسليمة حالياً" (تظهر أخضر)
-// baselineCycle: القيمة المتوارثة من r.insulator_cycle (محفوظة وقت إنشاء هذا السجل) — تضمن استمرار اللون الأخضر
-// عبر أجيال الكشوفات المتلاحقة، مو فقط داخل نفس السجل
-function computeInsulatorCycleAndTreated(inspectionId, state, baselineCycle) {
-  const cycle = {R:[],S:[],T:[]}, treatedIdx = {R:[],S:[],T:[]};
-  ['R','S','T'].forEach(phase => {
-    const base = (baselineCycle && baselineCycle[phase]) || [];
-    const len = (state && state[phase] || []).length;
-    cycle[phase] = Array(len).fill(0).map((v,i) => base[i]||0);
-  });
-  // معالجات مرتبطة مباشرة بهذا السجل تحديداً — هذي تُعتبر "معالجة" دائماً، بغض النظر عن insulator_state
-  // الخام (لا يتغيّر تلقائياً عند معالجة نفس السجل، فلا يصح الاعتماد عليه لتحديد المعالَج من نفس السجل)
-  const ownTreatedSet = {R:new Set(), S:new Set(), T:new Set()};
-  const towerTreatments = treatmentsCache.filter(t => t.inspection_id === inspectionId).slice().reverse(); // الأقدم أولاً
-  towerTreatments.forEach(t => {
-    (t.items_treated||[]).forEach(item => {
-      const m = item.key && item.key.match(/^ins_([RST])$/);
-      if (m) {
-        try {
-          const before = JSON.parse(t.insulator_state_before||'{}');
-          const after = JSON.parse(t.insulator_state_after||'{}');
-          const phase = m[1];
-          (before[phase]||[]).forEach((wasDamaged, i) => {
-            if (wasDamaged && after[phase] && !after[phase][i]) {
-              cycle[phase][i] = (cycle[phase][i]||0) + 1;
-              ownTreatedSet[phase].add(i);
-            }
-          });
-        } catch(e) {}
-      }
-    });
-  });
-  // معالج بهذا السجل تحديداً (دائماً أخضر) — أو سليم حالياً وعنده مستوى دورة موروث من سجل أقدم
-  ['R','S','T'].forEach(phase => {
-    (state && state[phase] || []).forEach((dmg, i) => {
-      if (ownTreatedSet[phase].has(i) || (!dmg && (cycle[phase][i]||0) > 0)) treatedIdx[phase].push(i);
-    });
-  });
-  return { cycle, treatedIdx };
-}
-
 let editingLineIdx = null;
 
 function openAddLineModal() {
@@ -6428,7 +6390,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
 
   if (navigator.onLine) {
     try {
-      const res = await sbFetch(`inspections?line_name=eq.${encodeURIComponent(lineName)}&tower_number=eq.${encodeURIComponent(towerNumber)}&order=inspection_date.desc&limit=1`);
+      const res = await sbFetch(`inspections?line_name=eq.${encodeURIComponent(lineName)}&tower_number=eq.${encodeURIComponent(towerNumber)}&order=inspection_date.desc,created_at.desc&limit=1`);
       const data = await res.json();
       if (data.length) last = data[0];
     } catch(e) {}
@@ -6497,39 +6459,9 @@ function loadPreviousInspection(silent) {
   if (!previousInspectionForLoad) return;
   const r = previousInspectionForLoad;
 
-  // نحسب حالة العوازل بعد طرح كل العناصر المعالجة (تتحول سليمة/أبيض) + مستوى دورة المعالجة لكل موضع
-  let mergedInsulatorState = null;
-  let mergedCycle = null;
-  if (r.insulator_state) {
-    try {
-      mergedInsulatorState = JSON.parse(r.insulator_state);
-      mergedCycle = { R: Array((mergedInsulatorState.R||[]).length).fill(0), S: Array((mergedInsulatorState.S||[]).length).fill(0), T: Array((mergedInsulatorState.T||[]).length).fill(0) };
-      // أحدث معالجة لكل فيز تحتوي insulator_state_after — نطبقها إذا موجودة
-      // مهم: previousTreatmentsForLoad مرتبة الأحدث أولاً (created_at.desc)، لذا نعكس الترتيب
-      // هنا لنطبّق الأقدم أولاً والأحدث أخيراً — فتكون بيانات المعالجة الأحدث هي الفائزة بالنتيجة النهائية
-      [...previousTreatmentsForLoad].reverse().forEach(t => {
-        if (t.insulator_state_after) {
-          try {
-            const after = JSON.parse(t.insulator_state_after);
-            ['R','S','T'].forEach(phase => {
-              if (after[phase]) mergedInsulatorState[phase] = after[phase];
-            });
-          } catch(e) {}
-        }
-        if (t.insulator_cycle_after) {
-          try {
-            const cyc = JSON.parse(t.insulator_cycle_after);
-            ['R','S','T'].forEach(phase => {
-              if (cyc[phase]) mergedCycle[phase] = cyc[phase];
-            });
-          } catch(e) {}
-        }
-      });
-    } catch(e) { mergedInsulatorState = null; mergedCycle = null; }
-  }
-
-  // العناصر النصية (قواعد، حديد، أسلاك...) المعالجة سابقاً — نرجعها لقيمتها السليمة + نعلّمها لإظهار ملصق
-  const rForLoad = { ...r, insulator_state: mergedInsulatorState ? JSON.stringify(mergedInsulatorState) : r.insulator_state, _mergedCycle: mergedCycle };
+  // r.insulator_state و r.insulator_cycle يعكسان الحقيقة الحالية الفعلية مباشرة (يتحدّثان وقت كل معالجة) —
+  // فقط ننقلهما كما هما بدون أي حساب أو دمج
+  const rForLoad = { ...r, _mergedCycle: r.insulator_cycle ? (()=>{ try { return JSON.parse(r.insulator_cycle); } catch(e) { return null; } })() : null };
   const treatedBadgeFields = [];
   Object.keys(TREAT_FIELD_MAP).forEach(key => {
     if (isTreatedInDB(r.id, key)) {
@@ -6583,19 +6515,14 @@ async function loadTreatments() {
   } catch { treatmentsCache = []; }
 }
 
-// مهم: لمفاتيح العوازل (ins_R/ins_S/ins_T) لا نعتمد على جمع أعداد كل المعالجات (طريقة هشّة تنكسر
-// لو انحفظت نفس المعالجة مرتين بالخطأ — خلل التكرار المعروف بنظام الحفظ أوف لاين). بدلها نعتمد فقط
-// على أحدث معالجة (آخر insulator_state_after) ونقرأ منها مباشرة "كم متبقي متضرر فعلياً" بهذا الفيز.
+// مهم: r.insulator_state أصبح يمثّل "الحقيقة الحالية الفعلية" دائماً — لأنه يتحدّث مباشرة بقاعدة البيانات
+// وقت المعالجة (PATCH على سجل الكشف نفسه)، فلا حاجة لأي مقارنة قبل/بعد أو جمع معالجات قديمة.
 function isTreatedInDB(inspectionId, key, r) {
   if (r && key && key.startsWith('ins_')) {
     const phase = key.split('_')[1];
-    // treatmentsCache مرتبة created_at.desc أصلاً (من loadTreatments) — أول عنصر مطابق = الأحدث
-    const latest = treatmentsCache.find(t => t.inspection_id === inspectionId && t.insulator_state_after);
-    if (!latest) return false; // لا توجد أي معالجة مسجلة لهذا الفيز إطلاقاً
     try {
-      const after = JSON.parse(latest.insulator_state_after);
-      const remaining = (after[phase] || []).filter(Boolean).length;
-      return remaining === 0;
+      const state = JSON.parse(r.insulator_state || '{}');
+      return !(state[phase] || []).some(Boolean); // لا يوجد أي متضرر متبقي بهذا الفيز = معالج بالكامل
     } catch (e) { return false; }
   }
   return treatmentsCache.some(t => t.inspection_id === inspectionId && Array.isArray(t.items_treated) && t.items_treated.some(i => i.key === key));
@@ -6608,6 +6535,18 @@ function isFullyTreated(inspectionId, deps, r) {
 // يرجع فقط العناصر المفتوحة (غير المعالجة) من قائمة مغادرات سجل واحد
 function getOpenDepsOnly(r, deps) {
   return deps.filter(d => !isTreatedInDB(r.id, d.key, r));
+}
+
+// يحدّد أي مؤشرات عازل "معالجة وسليمة حالياً" (تُعرض أخضر) بالاعتماد فقط على الحالة + الدورة الحاليتين
+// (state و cycle أصبحا دائماً يعكسان الحقيقة الفعلية مباشرة من سجل الكشف، بدون أي حساب تاريخي معقّد)
+function getInsulatorTreatedIdx(state, cycle) {
+  const treatedIdx = {R:[],S:[],T:[]};
+  ['R','S','T'].forEach(phase => {
+    (state && state[phase] || []).forEach((dmg, i) => {
+      if (!dmg && cycle && cycle[phase] && (cycle[phase][i]||0) > 0) treatedIdx[phase].push(i);
+    });
+  });
+  return treatedIdx;
 }
 
 // ========================
@@ -6971,9 +6910,9 @@ function renderDepTowerDetail(lineName, towerNum) {
         </div>
         <div id="depTowerInsulators" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>
       </div>`;
-      let baselineCycleDep = null;
-      if (r.insulator_cycle) { try { baselineCycleDep = JSON.parse(r.insulator_cycle); } catch(e) {} }
-      const { cycle: insCycleDep, treatedIdx: treatedIdxDep } = computeInsulatorCycleAndTreated(r.id, state, baselineCycleDep);
+      let insCycleDep = {R:[],S:[],T:[]};
+      if (r.insulator_cycle) { try { insCycleDep = JSON.parse(r.insulator_cycle); } catch(e) {} }
+      const treatedIdxDep = getInsulatorTreatedIdx(state, insCycleDep);
       setTimeout(() => renderTowerDetailInsulators(state, treatedIdxDep, mode, stA, stB, 'depTowerInsulators', insCycleDep), 10);
     }
   }
@@ -7120,20 +7059,11 @@ function renderTreatItems() {
     catch(e) { treatInsulatorState = {R:[],S:[],T:[]}; }
   } else { treatInsulatorState = {R:[],S:[],T:[]}; }
 
-  // نحمّل مستوى دورة المعالجة: أولاً من القيمة الموروثة المحفوظة بالسجل نفسه (insulator_cycle)،
-  // وبعدين نطبّق آخر معالجة سابقة لهذا السجل (لو موجودة) فوقها — لضمان استمرار العمق الصحيح
-  // حتى لو هذا أول معالجة لهذا السجل تحديداً (سجل جديد منقول من كشف سابق)
+  // مستوى دورة المعالجة يُقرأ مباشرة من السجل (r.insulator_cycle) — يعكس الحقيقة الحالية الفعلية دائماً
   treatCycleState = { R: Array((treatInsulatorState.R||[]).length).fill(0), S: Array((treatInsulatorState.S||[]).length).fill(0), T: Array((treatInsulatorState.T||[]).length).fill(0) };
   if (r.insulator_cycle) {
     try {
-      const baseCyc = JSON.parse(r.insulator_cycle);
-      ['R','S','T'].forEach(phase => { if (baseCyc[phase]) treatCycleState[phase] = baseCyc[phase]; });
-    } catch(e) {}
-  }
-  const latestCycle = treatmentsCache.find(t => t.inspection_id === r.id && t.insulator_cycle_after);
-  if (latestCycle) {
-    try {
-      const cyc = JSON.parse(latestCycle.insulator_cycle_after);
+      const cyc = JSON.parse(r.insulator_cycle);
       ['R','S','T'].forEach(phase => { if (cyc[phase]) treatCycleState[phase] = cyc[phase]; });
     } catch(e) {}
   }
@@ -7390,10 +7320,29 @@ async function saveTreatment() {
     notes: ''
   };
 
+  // مهم جداً: سجل الكشف نفسه (inspections) يجب أن يتحدّث ليعكس الحقيقة الفعلية الحالية مباشرة —
+  // هذا يجعله المصدر الوحيد للحقيقة بكل مكان (الكشف الجديد، المغادرات، حالة الخطوط، PDF) بدون أي
+  // حساب أو دمج لاحق، ويحل مشكلة "ما يظهر أخضر بمكان ثاني" نهائياً
+  const inspectionPatch = { insulator_state: JSON.stringify(stateAfter), insulator_cycle: JSON.stringify(cycleAfter) };
+
+  // نحدّث النسخة المحلية بالذاكرة فوراً (بغض النظر عن النت)، لضمان ظهور النتيجة الصحيحة بنفس الجلسة فوراً
+  function applyPatchLocally() {
+    Object.assign(r, inspectionPatch);
+    if (typeof fullRecordsCache !== 'undefined' && Array.isArray(fullRecordsCache)) {
+      const idx = fullRecordsCache.findIndex(x => x.id === r.id);
+      if (idx > -1) Object.assign(fullRecordsCache[idx], inspectionPatch);
+    }
+    if (typeof records !== 'undefined' && Array.isArray(records)) {
+      const idx2 = records.findIndex(x => x.id === r.id);
+      if (idx2 > -1) Object.assign(records[idx2], inspectionPatch);
+    }
+  }
+
   const btn = document.querySelector('#treatItemsCard .btn-primary');
   if (btn) btn.disabled = true;
 
   async function finishUpSuccess() {
+    applyPatchLocally();
     await loadTreatments();
     otherDepTreatState = {};
     currentTreatRecord = null;
@@ -7407,19 +7356,47 @@ async function saveTreatment() {
     try {
       const res = await sbFetch('treatments?on_conflict=client_uuid', {method:'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body:JSON.stringify(treatment)});
       if (!res.ok) throw new Error();
+      const patchRes = await sbFetch(`inspections?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(inspectionPatch) });
+      if (!patchRes.ok) throw new Error('patch-failed');
       showToast('✅ تم حفظ المعالجة بقاعدة البيانات');
       await finishUpSuccess();
     } catch {
       addToTreatmentQueue(treatment);
+      addToInspectionPatchQueue(r.id, inspectionPatch);
       showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
       await finishUpSuccess();
     }
   } else {
     addToTreatmentQueue(treatment);
+    addToInspectionPatchQueue(r.id, inspectionPatch);
     showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
     await finishUpSuccess();
   }
   if (btn) btn.disabled = false;
+}
+
+const INSPECTION_PATCH_QUEUE_KEY = 'inspection_patch_queue';
+function addToInspectionPatchQueue(id, patch) {
+  const q = getInspectionPatchQueue();
+  q.push({ id, patch, ts: Date.now() });
+  localStorage.setItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(q));
+  updatePendingBadge();
+}
+function getInspectionPatchQueue() { try { return JSON.parse(localStorage.getItem(INSPECTION_PATCH_QUEUE_KEY)||'[]'); } catch { return []; } }
+
+async function syncInspectionPatchQueue() {
+  const q = getInspectionPatchQueue();
+  if (!q.length) return;
+  let synced = 0;
+  const remaining = [];
+  for (const item of q) {
+    try {
+      const res = await sbFetch(`inspections?id=eq.${item.id}`, { method: 'PATCH', body: JSON.stringify(item.patch) });
+      if (res.ok) synced++; else remaining.push(item);
+    } catch { remaining.push(item); }
+  }
+  localStorage.setItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(remaining));
+  updatePendingBadge();
 }
 
 const TREATMENT_QUEUE_KEY = 'treatment_queue';
@@ -7541,9 +7518,11 @@ function getLatestRecordsPerTower(lineName) {
   const byTower = {};
   rec.forEach(r => {
     const key = r.tower_number;
-    if (!byTower[key] || (r.inspection_date||'') > (byTower[key].inspection_date||'')) {
-      byTower[key] = r;
-    }
+    const cur = byTower[key];
+    if (!cur) { byTower[key] = r; return; }
+    const dCur = cur.inspection_date||'', dNew = r.inspection_date||'';
+    if (dNew > dCur) { byTower[key] = r; }
+    else if (dNew === dCur && (r.created_at||'') > (cur.created_at||'')) { byTower[key] = r; } // كسر التعادل بتاريخ الإنشاء الفعلي
   });
   return Object.values(byTower);
 }
