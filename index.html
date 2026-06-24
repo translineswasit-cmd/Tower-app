@@ -1728,6 +1728,14 @@ let insulatorCycleState = { R: [], S: [], T: [] };
 const INS_RED_SHADES   = ['#FC4444','#E0303A','#B91C2C','#8B0000'];
 const INS_GREEN_SHADES = ['#48BB78','#2F9E5C','#1F7A45','#145C33'];
 function insShade(arr, cycle) { return arr[Math.max(0, Math.min(cycle||0, arr.length-1))]; }
+// مهم: عمود insulator_cycle من نوع jsonb يرجعه Supabase REST كـ object جاهز مباشرة (مو نص)،
+// بعكس insulator_state (نص قديم يحتاج JSON.parse دائماً). هذي الدالة تتعامل مع الحالتين بأمان
+// بدون ما تفشل بصمت (نفس الخلل اللي صفّر الأخضر بعد كل حفظ كشف جديد).
+function safeParseJSON(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch(e) { return null; }
+}
 let currentVoltage = 0;
 let editId = null, deleteId = null, deleteUserId = null;
 let currentGridLine = null;
@@ -2713,9 +2721,9 @@ function setFormData(d) {
       badge.style.cssText = 'color:#1e8449;font-size:0.75rem;font-weight:700;margin-top:2px;margin-bottom:4px';
       el.insertAdjacentElement('afterend', badge);
     });
-    const saved = d.insulator_state ? JSON.parse(d.insulator_state) : null;
+    const saved = d.insulator_state ? safeParseJSON(d.insulator_state) : null;
     let savedCycle = d._mergedCycle;
-    if (!savedCycle && d.insulator_cycle) { try { savedCycle = JSON.parse(d.insulator_cycle); } catch(e) {} }
+    if (!savedCycle && d.insulator_cycle) { savedCycle = safeParseJSON(d.insulator_cycle); }
     buildInsulatorUI(currentVoltage, d.tower_type, saved, savedCycle || null);
     updateWiresGroundUI();
   }, 60);
@@ -3111,7 +3119,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function insulatorStateToText(insulatorStateJSON) {
   if (!insulatorStateJSON) return '—';
   let state;
-  try { state = JSON.parse(insulatorStateJSON); } catch(e) { return '—'; }
+  state = safeParseJSON(insulatorStateJSON); if (!state) return '—';
   const parts = ['R','S','T'].map(phase => {
     const arr = state[phase] || [];
     const damagedNums = arr.map((v,i) => v ? (i+1) : null).filter(v => v !== null);
@@ -3147,13 +3155,13 @@ function confirmExportExcel() {
 function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerType, lineName, inspectionId, insulatorCycleJSON) {
   if (!insulatorStateJSON) return null;
   let state;
-  try { state = JSON.parse(insulatorStateJSON); } catch(e) { return null; }
+  state = safeParseJSON(insulatorStateJSON); if (!state) return null;
   const hasDamage = ['R','S','T'].some(p => (state[p]||[]).some(Boolean));
   if (!hasDamage) return null; // سليمة، ما نحتاج صورة
   const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['',''];
   let insCycle = {R:[],S:[],T:[]};
-  if (insulatorCycleJSON) { try { insCycle = JSON.parse(insulatorCycleJSON); } catch(e) {} }
+  if (insulatorCycleJSON) { insCycle = safeParseJSON(insulatorCycleJSON) || {R:[],S:[],T:[]}; }
   const insTreated = getInsulatorTreatedIdx(state, insCycle);
 
   // طبقة خارجية مخفية (تحمل position:fixed للإخفاء فقط) — لا تُمرَّر هذي مباشرة للترسيم،
@@ -6135,11 +6143,11 @@ function renderTowerDetail(lineName, towerNum) {
   // العوازل التفاعلية (للعرض فقط — readonly)
   if (r.insulator_state) {
     let state;
-    try { state = JSON.parse(r.insulator_state); } catch(e) { state = null; }
+    state = safeParseJSON(r.insulator_state);
     if (state) {
       // مستوى الدورة + المعالَج يُقرآن مباشرة من السجل (يعكسان الحقيقة الحالية الفعلية دائماً)
       let insCycle = {R:[],S:[],T:[]};
-      if (r.insulator_cycle) { try { insCycle = JSON.parse(r.insulator_cycle); } catch(e) {} }
+      if (r.insulator_cycle) { insCycle = safeParseJSON(r.insulator_cycle) || {R:[],S:[],T:[]}; }
       const treatedIdx = getInsulatorTreatedIdx(state, insCycle);
 
       html += `<div class="form-card" style="margin-bottom:14px">
@@ -6464,7 +6472,7 @@ function loadPreviousInspection(silent) {
 
   // r.insulator_state و r.insulator_cycle يعكسان الحقيقة الحالية الفعلية مباشرة (يتحدّثان وقت كل معالجة) —
   // فقط ننقلهما كما هما بدون أي حساب أو دمج
-  const rForLoad = { ...r, _mergedCycle: r.insulator_cycle ? (()=>{ try { return JSON.parse(r.insulator_cycle); } catch(e) { return null; } })() : null };
+  const rForLoad = { ...r, _mergedCycle: r.insulator_cycle ? safeParseJSON(r.insulator_cycle) : null };
   const treatedBadgeFields = [];
   Object.keys(TREAT_FIELD_MAP).forEach(key => {
     if (isTreatedInDB(r.id, key)) {
@@ -6902,7 +6910,7 @@ function renderDepTowerDetail(lineName, towerNum) {
   const hasInsulatorDeps = deps.some(d => d.type === 'insulator');
   if (hasInsulatorDeps && r.insulator_state) {
     let state;
-    try { state = JSON.parse(r.insulator_state); } catch(e) { state = null; }
+    state = safeParseJSON(r.insulator_state);
     if (state) {
       html += `<div class="form-card" style="margin-bottom:14px">
         <h3>🔘 العوازل</h3>
@@ -6914,7 +6922,7 @@ function renderDepTowerDetail(lineName, towerNum) {
         <div id="depTowerInsulators" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>
       </div>`;
       let insCycleDep = {R:[],S:[],T:[]};
-      if (r.insulator_cycle) { try { insCycleDep = JSON.parse(r.insulator_cycle); } catch(e) {} }
+      if (r.insulator_cycle) { insCycleDep = safeParseJSON(r.insulator_cycle) || {R:[],S:[],T:[]}; }
       const treatedIdxDep = getInsulatorTreatedIdx(state, insCycleDep);
       setTimeout(() => renderTowerDetailInsulators(state, treatedIdxDep, mode, stA, stB, 'depTowerInsulators', insCycleDep), 10);
     }
@@ -7030,7 +7038,7 @@ function extractDepsFromRecord(r) {
   const deps = [];
   if (r.insulator_state) {
     try {
-      const state = JSON.parse(r.insulator_state);
+      const state = safeParseJSON(r.insulator_state);
       ['R','S','T'].forEach(phase => {
         const cnt = (state[phase]||[]).filter(Boolean).length;
         if (cnt > 0) deps.push({ type:'insulator', label:`عوازل الفيز ${phase} — ${cnt} متضرر`, key:`ins_${phase}` });
@@ -7058,15 +7066,14 @@ function renderTreatItems() {
   if (!deps.length) { body.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات</div>'; return; }
 
   if (r.insulator_state) {
-    try { treatInsulatorState = JSON.parse(JSON.stringify(JSON.parse(r.insulator_state))); }
-    catch(e) { treatInsulatorState = {R:[],S:[],T:[]}; }
+    treatInsulatorState = safeParseJSON(r.insulator_state) ? JSON.parse(JSON.stringify(safeParseJSON(r.insulator_state))) : {R:[],S:[],T:[]};
   } else { treatInsulatorState = {R:[],S:[],T:[]}; }
 
   // مستوى دورة المعالجة يُقرأ مباشرة من السجل (r.insulator_cycle) — يعكس الحقيقة الحالية الفعلية دائماً
   treatCycleState = { R: Array((treatInsulatorState.R||[]).length).fill(0), S: Array((treatInsulatorState.S||[]).length).fill(0), T: Array((treatInsulatorState.T||[]).length).fill(0) };
   if (r.insulator_cycle) {
     try {
-      const cyc = JSON.parse(r.insulator_cycle);
+      const cyc = safeParseJSON(r.insulator_cycle);
       ['R','S','T'].forEach(phase => { if (cyc[phase]) treatCycleState[phase] = cyc[phase]; });
     } catch(e) {}
   }
@@ -7539,7 +7546,7 @@ function calcLineHealthWithTreatments(lineName) {
   rec.forEach(r => {
     if (r.insulator_state) {
       try {
-        const state = JSON.parse(r.insulator_state);
+        const state = safeParseJSON(r.insulator_state);
         ['R','S','T'].forEach(phase => {
           const ps = state[phase]||[];
           elTot += ps.length;
