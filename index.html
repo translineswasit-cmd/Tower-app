@@ -757,6 +757,23 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
+<!-- نافذة تصدير PDF — المغادرات الحالية المفتوحة -->
+<div class="treat-modal-bg" id="depExportModalBg">
+  <div class="treat-modal">
+    <h3>📄 تصدير المغادرات المفتوحة (PDF)</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px">
+      <label style="font-weight:700;font-size:0.88rem">اختر الخطوط</label>
+      <button class="btn btn-secondary btn-sm" onclick="toggleDepExportSelectAll()" id="depExportSelectAllBtn">تحديد الكل</button>
+    </div>
+    <div id="depExportLinesWrap" style="margin-top:8px;max-height:260px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:10px"></div>
+    <p id="depExportResultCount" style="margin-top:12px;color:#718096;font-size:0.82rem"></p>
+    <div class="form-actions" style="margin-top:18px;flex-direction:column;gap:10px">
+      <button class="btn btn-primary" style="width:100%;background:#922b21" onclick="exportOpenDeparturesPDF()">📄 تصدير PDF</button>
+      <button class="btn btn-secondary" onclick="closeDepExportModal()" style="width:100%">إغلاق</button>
+    </div>
+  </div>
+</div>
+
 <!-- DEPARTURES PAGE -->
 <div class="page" id="page-departures">
   <div class="page-title">🚨 المغادرات</div>
@@ -772,6 +789,9 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="depListView">
     <!-- المستوى 1: قائمة الخطوط -->
     <div id="depLinesListView">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+        <button class="btn btn-primary btn-sm" style="background:#922b21" onclick="openDepExportModal()">📄 تصدير PDF</button>
+      </div>
       <div id="depLinesListBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
     </div>
 
@@ -6418,6 +6438,182 @@ function isTreatedInDB(inspectionId, key) {
 function isFullyTreated(inspectionId, deps) {
   return deps.every(d => isTreatedInDB(inspectionId, d.key));
 }
+
+// يرجع فقط العناصر المفتوحة (غير المعالجة) من قائمة مغادرات سجل واحد
+function getOpenDepsOnly(r, deps) {
+  return deps.filter(d => !isTreatedInDB(r.id, d.key));
+}
+
+// ========================
+// تصدير PDF — المغادرات الحالية المفتوحة (بفلترة اسم الخط)
+// ========================
+function openDepExportModal() {
+  const wrap = document.getElementById('depExportLinesWrap');
+  const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
+  const linesWithOpenDeps = uniqueLines.filter(name => getActiveDepartureTowers(name).length > 0);
+  if (!linesWithOpenDeps.length) {
+    wrap.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات مفتوحة حالياً</div>';
+  } else {
+    wrap.innerHTML = linesWithOpenDeps.map(name => `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:0.85rem;border-bottom:1px solid #F0F2F5">
+        <input type="checkbox" class="depExportLineChk" value="${name.replace(/"/g,'&quot;')}" onchange="updateDepExportResultCount()">
+        <span>${name}</span>
+      </label>`).join('');
+  }
+  document.getElementById('depExportSelectAllBtn').textContent = 'تحديد الكل';
+  updateDepExportResultCount();
+  document.getElementById('depExportModalBg').classList.add('show');
+}
+function closeDepExportModal() {
+  document.getElementById('depExportModalBg').classList.remove('show');
+}
+function toggleDepExportSelectAll() {
+  const boxes = document.querySelectorAll('.depExportLineChk');
+  const btn = document.getElementById('depExportSelectAllBtn');
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  btn.textContent = allChecked ? 'تحديد الكل' : 'إلغاء التحديد';
+  updateDepExportResultCount();
+}
+function getDepExportSelectedLines() {
+  const checked = Array.from(document.querySelectorAll('.depExportLineChk:checked')).map(b => b.value);
+  if (checked.length) return checked;
+  // لو ما حدد شي، نعتبره اختار الكل (كل الخطوط المعروضة بالقائمة)
+  return Array.from(document.querySelectorAll('.depExportLineChk')).map(b => b.value);
+}
+function updateDepExportResultCount() {
+  const lines = getDepExportSelectedLines();
+  let totalTowers = 0;
+  lines.forEach(name => { totalTowers += getActiveDepartureTowers(name).length; });
+  document.getElementById('depExportResultCount').textContent = `📋 ${lines.length} خط — ${totalTowers} برج فيه مغادرات مفتوحة`;
+}
+
+async function exportOpenDeparturesPDF() {
+  const lines = getDepExportSelectedLines();
+  if (!lines.length) { showToast('لا توجد خطوط لتصديرها', 'error'); return; }
+  showToast('⏳ جاري تحضير PDF...');
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 30;
+    let first = true;
+    let totalTowersExported = 0;
+
+    for (const lineName of lines) {
+      const activeTowers = getActiveDepartureTowers(lineName);
+      if (!activeTowers.length) continue;
+      activeTowers.sort((a,b) => parseInt(a.r.tower_number) - parseInt(b.r.tower_number));
+
+      if (!first) doc.addPage();
+      first = false;
+
+      // عنوان الخط — كصورة (HTML) لضمان عربي صحيح
+      const lineHeaderDataUrl = await buildArabicTextImage(
+        `<div style="font-family:Tahoma,Arial,sans-serif;direction:rtl;text-align:right;padding:6px 10px;background:#1a2e4a;color:#fff;border-radius:8px;font-size:18px;font-weight:700">🚨 خط: ${lineName} — ${activeTowers.length} برج فيه مغادرات مفتوحة</div>`,
+        pageW - margin*2
+      );
+      let y = margin;
+      if (lineHeaderDataUrl) {
+        const imgProps = doc.getImageProperties(lineHeaderDataUrl.dataUrl);
+        const w = pageW - margin*2;
+        const h = w * (imgProps.height / imgProps.width);
+        doc.addImage(lineHeaderDataUrl.dataUrl, 'PNG', margin, y, w, h);
+        y += h + 14;
+      }
+
+      for (const { r, deps } of activeTowers) {
+        const openDeps = getOpenDepsOnly(r, deps);
+        if (!openDeps.length) continue;
+        totalTowersExported++;
+
+        // نص تفاصيل البرج (كصورة HTML بالعربي)
+        const otherDeps = openDeps.filter(d => d.type !== 'insulator');
+        const depsHTML = otherDeps.length
+          ? otherDeps.map(d => `<div style="margin-top:4px;color:#922b21;font-size:13px">🔴 ${d.label}</div>`).join('')
+          : '<div style="margin-top:4px;color:#1e8449;font-size:13px">✅ لا توجد مغادرات نصية أخرى</div>';
+        const towerHTML = `<div style="font-family:Tahoma,Arial,sans-serif;direction:rtl;text-align:right;padding:10px;background:#fff;border:1.5px solid #E2E8F0;border-radius:8px">
+          <div style="font-weight:700;font-size:15px;color:#1a2e4a">🗼 برج ${r.tower_number} — ${TOWER_TYPES[r.tower_type]||r.tower_type||''} — ${r.voltage||LINE_VOLTAGE[lineName]||''} ك.ف</div>
+          <div style="font-size:12px;color:#718096;margin-top:2px">📅 آخر كشف: ${r.inspection_date||'—'} | 👤 ${r.created_by_name||'—'}</div>
+          ${depsHTML}
+        </div>`;
+        const towerImg = await buildArabicTextImage(towerHTML, pageW - margin*2);
+
+        // صور العوازل (فقط لو فيها مغادرة عازل مفتوحة)
+        const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator');
+        let insImg = null;
+        if (hasOpenInsulatorDep && r.insulator_state) {
+          const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name);
+          if (container) {
+            try { insImg = await elementToPNGDataURL(container); } catch(e) {}
+            document.body.removeChild(container);
+          }
+        }
+
+        let blockH = 0;
+        if (towerImg) {
+          const w = pageW - margin*2;
+          const h = w * (towerImg.h / towerImg.w);
+          blockH += h;
+        }
+        if (insImg) blockH += 130;
+        blockH += 16;
+
+        if (y + blockH > pageH - margin) { doc.addPage(); y = margin; }
+
+        if (towerImg) {
+          const w = pageW - margin*2;
+          const h = w * (towerImg.h / towerImg.w);
+          doc.addImage(towerImg.dataUrl, 'PNG', margin, y, w, h);
+          y += h + 6;
+        }
+        if (insImg) {
+          const imgProps = doc.getImageProperties(insImg);
+          const maxW = pageW - margin*2, maxH = 120;
+          let w = imgProps.width, h = imgProps.height;
+          const scale = Math.min(maxW/w, maxH/h, 1);
+          w *= scale; h *= scale;
+          doc.addImage(insImg, 'PNG', margin, y, w, h);
+          y += h + 6;
+        }
+        y += 10;
+      }
+    }
+
+    if (!totalTowersExported) { showToast('✅ لا توجد مغادرات مفتوحة بالخطوط المختارة', 'error'); return; }
+
+    const blob = doc.output('blob');
+    const filename = 'المغادرات_المفتوحة_' + new Date().toISOString().split('T')[0] + '.pdf';
+    await shareOrDownloadFile(blob, filename, 'application/pdf');
+    showToast('✅ تم تجهيز PDF (' + totalTowersExported + ' برج)');
+    closeDepExportModal();
+  } catch (err) {
+    showToast('❌ تعذر تجهيز PDF', 'error');
+  }
+}
+
+// يحوّل أي مقطع HTML (نص عربي عادي) إلى صورة PNG — يستخدم نفس تقنية elementToPNGDataURL
+// لضمان ظهور النص العربي بشكل صحيح ومتصل (jsPDF لا يدعم تشكيل الحروف العربية مباشرة)
+async function buildArabicTextImage(html, widthPx) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = `position:fixed;left:-9999px;top:-9999px;width:${widthPx}px`;
+  wrap.innerHTML = html;
+  document.body.appendChild(wrap);
+  try {
+    const dataUrl = await elementToPNGDataURL(wrap);
+    const rect = wrap.getBoundingClientRect();
+    const w = Math.max(rect.width, wrap.scrollWidth, 100);
+    const h = Math.max(rect.height, wrap.scrollHeight, 40);
+    document.body.removeChild(wrap);
+    if (!dataUrl) return null;
+    return { dataUrl, w, h };
+  } catch (e) {
+    if (wrap.parentNode) document.body.removeChild(wrap);
+    return null;
+  }
+}
+
 
 async function loadDepartures() {
   await Promise.all([loadTreatments(), loadFullRecordsCache()]);
