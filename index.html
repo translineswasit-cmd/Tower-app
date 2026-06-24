@@ -652,6 +652,7 @@ tbody tr:hover { background: #F7FAFC; }
       <input class="search-box" id="searchBox" placeholder="🔍 بحث..." oninput="filterRecords()">
       <button class="btn-excel" id="recordsExportBtn" onclick="openExportModal()">📊 تصدير</button>
       <button class="btn btn-primary" onclick="loadRecords()" style="padding:9px 18px">🔄 تحديث</button>
+      <button class="btn btn-del" id="recordsBulkDeleteBtn" onclick="bulkDeleteRecords()" style="display:none">🗑️ حذف الكل المطابق للفلتر</button>
     </div>
   </div>
 
@@ -844,6 +845,7 @@ tbody tr:hover { background: #F7FAFC; }
         <input type="date" id="depLogFilterTo" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
       </div>
       <button class="btn-sm btn-primary" onclick="openDepLogExportModal()" style="background:#922b21">📤 تصدير</button>
+      <button class="btn-sm btn-del" id="depLogBulkDeleteBtn" onclick="bulkDeleteTreatments()" style="display:none">🗑️ حذف الكل المطابق للفلتر</button>
     </div>
     <div id="depLogBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
@@ -1097,6 +1099,7 @@ tbody tr:hover { background: #F7FAFC; }
       <div class="toolbar-right">
         <button class="btn-excel" onclick="printThermalArchive()">🖨️ طباعة</button>
         <button class="btn btn-primary" onclick="loadThermalArchive()" style="padding:9px 18px">🔄 تحديث</button>
+        <button class="btn btn-del" id="thermalBulkDeleteBtn" onclick="bulkDeleteThermal()" style="display:none">🗑️ حذف الكل المطابق للفلتر</button>
       </div>
     </div>
     <div class="filters-bar">
@@ -1857,6 +1860,8 @@ function applyRolePermissions() {
   // تصدير التقارير (Excel/PDF): للمدير والمشرف فقط
   const recordsExportBtn = document.getElementById('recordsExportBtn');
   if (recordsExportBtn) recordsExportBtn.style.display = isAdminOrSupervisor ? '' : 'none';
+  const recordsBulkDeleteBtn = document.getElementById('recordsBulkDeleteBtn');
+  if (recordsBulkDeleteBtn) recordsBulkDeleteBtn.style.display = isAdminOrSupervisor ? '' : 'none';
   const exportCard = document.getElementById('svcExportCard');
   if (exportCard) exportCard.style.display = isAdminOrSupervisor ? '' : 'none';
 }
@@ -2946,9 +2951,35 @@ async function confirmDelete() {
   if (!deleteId) return;
   try {
     const res = await sbFetch(`inspections?id=eq.${deleteId}`, { method: 'DELETE' });
-    if (res.ok) { showToast('🗑️ تم حذف السجل'); loadRecords(); }
+    if (res.ok) {
+      showToast('🗑️ تم حذف السجل');
+      fullRecordsCache = fullRecordsCache.filter(r => r.id !== deleteId); // تحديث فوري حتى ما تبقى المغادرات قديمة
+      loadRecords();
+    }
   } catch { showToast('❌ خطأ بالحذف', 'error'); }
   closeModal();
+}
+
+async function bulkDeleteRecords() {
+  if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) {
+    showToast('⚠️ الحذف من صلاحيات المدير أو المشرف فقط', 'error');
+    return;
+  }
+  const n = filteredRecords.length;
+  if (!n) { showToast('⚠️ لا توجد سجلات مطابقة للفلتر الحالي', 'error'); return; }
+  if (!confirm(`🗑️ تأكيد حذف ${n} سجل مطابق للفلتر الحالي؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.`)) return;
+  showToast('⏳ جاري الحذف...');
+  const ids = filteredRecords.map(r => r.id);
+  let success = 0;
+  for (const id of ids) {
+    try {
+      const res = await sbFetch(`inspections?id=eq.${id}`, { method: 'DELETE' });
+      if (res.ok) success++;
+    } catch (e) {}
+  }
+  fullRecordsCache = fullRecordsCache.filter(r => !ids.includes(r.id));
+  showToast(`🗑️ تم حذف ${success} من ${n} سجل`);
+  loadRecords();
 }
 
 // ========================
@@ -4127,6 +4158,38 @@ async function syncThermalQueue() {
   if (synced > 0) showToast(`✅ تم إرسال ${synced} قياس حراري محفوظ أوف لاين`);
 }
 
+async function bulkDeleteThermal() {
+  if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) {
+    showToast('⚠️ الحذف من صلاحيات المدير أو المشرف فقط', 'error');
+    return;
+  }
+  const n = filteredThermal.length;
+  if (!n) { showToast('⚠️ لا توجد نتائج مطابقة للفلتر الحالي', 'error'); return; }
+  if (!confirm(`🗑️ تأكيد حذف ${n} نشاط كشف حراري مطابق للفلتر الحالي؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.`)) return;
+  showToast('⏳ جاري الحذف...');
+  const lines = [...new Set(filteredThermal.map(r => r.line_name).filter(Boolean))];
+  let success = 0;
+  for (const r of filteredThermal) {
+    try {
+      const res = await sbFetch(`thermal_inspections?id=eq.${r.id}`, { method: 'DELETE' });
+      if (res.ok) success++;
+    } catch (e) {}
+  }
+  showToast(`🗑️ تم حذف ${success} من ${n} نشاط`);
+  await loadThermalArchive();
+  // تحقق من برقيات عمل غير منفذة لنفس الخطوط المتأثرة
+  for (const lineName of lines) {
+    try {
+      const tgRes = await sbFetch(`work_telegrams?line_name=eq.${encodeURIComponent(lineName)}&status=neq.تنفذت&select=id`);
+      const telegrams = await tgRes.json();
+      if (telegrams.length && confirm(`⚠️ يوجد ${telegrams.length} برقية عمل غير منفذة لخط "${lineName}". حذفها أيضًا؟`)) {
+        await Promise.all(telegrams.map(t => sbFetch(`work_telegrams?id=eq.${t.id}`, { method: 'DELETE' })));
+        showToast('🗑️ تم حذف برقيات العمل المرتبطة بخط ' + lineName);
+      }
+    } catch (e) {}
+  }
+}
+
 async function deleteThermalRecord(id, lineName) {
   if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) {
     showToast('⚠️ الحذف من صلاحيات المدير أو المشرف فقط', 'error');
@@ -4199,6 +4262,9 @@ function renderThermalArchive() {
     const mTower = !towerList.length || (r.tower_number != null && towerList.includes(String(r.tower_number)));
     return mLine && mFrom && mTo && mTower;
   });
+
+  const bulkBtn = document.getElementById('thermalBulkDeleteBtn');
+  if (bulkBtn) bulkBtn.style.display = (currentUser.role==='admin'||currentUser.role==='supervisor') ? '' : 'none';
 
   const body = document.getElementById('thermalArchiveBody');
   if (!filteredThermal.length) { body.innerHTML = '<div class="empty-state">لا توجد قياسات</div>'; return; }
@@ -6910,6 +6976,27 @@ async function syncTreatmentQueue() {
   if (synced > 0) { showToast(`✅ تم إرسال ${synced} معالجة محفوظة أوف لاين`); await loadTreatments(); }
 }
 
+let currentDepLogRows = [];
+async function bulkDeleteTreatments() {
+  if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) {
+    showToast('⚠️ الحذف من صلاحيات المدير أو المشرف فقط', 'error');
+    return;
+  }
+  const n = currentDepLogRows.length;
+  if (!n) { showToast('⚠️ لا توجد معالجات مطابقة للفلتر الحالي', 'error'); return; }
+  if (!confirm(`🗑️ تأكيد حذف ${n} معالجة مطابقة للفلتر الحالي؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.`)) return;
+  showToast('⏳ جاري الحذف...');
+  let success = 0;
+  for (const t of currentDepLogRows) {
+    try {
+      const res = await sbFetch(`treatments?id=eq.${t.id}`, { method: 'DELETE' });
+      if (res.ok) success++;
+    } catch (e) {}
+  }
+  showToast(`🗑️ تم حذف ${success} من ${n} معالجة`);
+  renderDepLog();
+}
+
 async function deleteTreatmentRecord(id) {
   if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) {
     showToast('⚠️ الحذف من صلاحيات المدير أو المشرف فقط', 'error');
@@ -6942,6 +7029,9 @@ async function renderDepLog() {
   }
 
   const rows = getDepLogFiltered();
+  currentDepLogRows = rows;
+  const bulkBtn = document.getElementById('depLogBulkDeleteBtn');
+  if (bulkBtn) bulkBtn.style.display = (currentUser.role==='admin'||currentUser.role==='supervisor') ? '' : 'none';
   if (!rows.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مطابقة للفلتر</div>'; return; }
 
   body.innerHTML = rows.map(t => {
