@@ -6385,18 +6385,21 @@ async function checkPreviousInspection(lineName, towerNumber) {
   previousTreatmentsForLoad = [];
   if (!lineName || !towerNumber) { banner.style.display = 'none'; return; }
 
+  // مهم: نستخدم نفس المصدر الموحّد (fullRecordsCache) المستخدم بالمغادرات وحالة الخطوط تماماً —
+  // هذا يضمن نفس النتيجة بكل مكان دائماً (بما فيها أي تحديث فوري بعد معالجة بنفس الجلسة)
+  if (navigator.onLine) { try { await loadFullRecordsCache(); } catch(e) {} }
+
   let last = null;
   let fromCache = false;
 
-  if (navigator.onLine) {
-    try {
-      const res = await sbFetch(`inspections?line_name=eq.${encodeURIComponent(lineName)}&tower_number=eq.${encodeURIComponent(towerNumber)}&order=inspection_date.desc,created_at.desc&limit=1`);
-      const data = await res.json();
-      if (data.length) last = data[0];
-    } catch(e) {}
+  const matching = (fullRecordsCache && fullRecordsCache.length ? fullRecordsCache : [])
+    .filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNumber));
+  if (matching.length) {
+    // fullRecordsCache مرتبة created_at.desc أصلاً — أول مطابقة = الأحدث فعلياً
+    last = matching[0];
   }
 
-  // لو ما لقينا شي أونلاين (أو نحن أوف لاين من الأساس) — نرجع للكاش المحلي
+  // لو ما لقينا شي بالكاش الموحّد (أوف لاين تماماً وما تحمّل أي كاش سابقاً) — نرجع لكاش records العادي كحل أخير
   if (!last) {
     const cachedRecs = (records && records.length ? records : JSON.parse(localStorage.getItem(DB_KEY) || '[]'))
       .filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNumber));
@@ -6412,7 +6415,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
 
   previousInspectionForLoad = last;
 
-  // نجيب المعالجات المرتبطة بهذا الكشف السابق (فقط لو أونلاين — المعالجات لا تُخزَّن بكاش محلي حالياً)
+  // نجيب المعالجات المرتبطة بهذا الكشف السابق (فقط للعرض بالرسالة النصية — لا تستخدم لحساب الألوان بعد الآن)
   let treatMsg = '';
   if (navigator.onLine && !fromCache) {
     try {
