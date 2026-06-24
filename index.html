@@ -1713,6 +1713,11 @@ const TOWER_CATEGORY_400 = { XA:'تعليق', XB:'تعليق', XC:'شد', XD:'ش
 const ROLE_LABELS = { admin: 'مدير', supervisor: 'مشرف', technician: 'فني', readonly: 'قراءة فقط' };
 
 let insulatorState = { R: [], S: [], T: [] };
+// مستوى دورة المعالجة لكل موضع عازل (0=لم يُعالج سابقاً، 1=عولج مرة، 2=عولج مرتين...) — يحدد غمق اللون
+let insulatorCycleState = { R: [], S: [], T: [] };
+const INS_RED_SHADES   = ['#FC4444','#E0303A','#B91C2C','#8B0000'];
+const INS_GREEN_SHADES = ['#48BB78','#2F9E5C','#1F7A45','#145C33'];
+function insShade(arr, cycle) { return arr[Math.max(0, Math.min(cycle||0, arr.length-1))]; }
 let currentVoltage = 0;
 let editId = null, deleteId = null, deleteUserId = null;
 let currentGridLine = null;
@@ -2336,7 +2341,7 @@ function getInsulatorCount(mode) {
   return 24;
 }
 
-function buildInsulatorUI(voltage, towerType, savedState) {
+function buildInsulatorUI(voltage, towerType, savedState, savedCycle) {
   const sec = document.getElementById('insulatorSection');
   const wrap = document.getElementById('phasesWrap');
   sec.style.display = 'block';
@@ -2352,6 +2357,12 @@ function buildInsulatorUI(voltage, towerType, savedState) {
   } else {
     insulatorState = { R: Array(count).fill(false), S: Array(count).fill(false), T: Array(count).fill(false) };
   }
+  if (savedCycle) {
+    insulatorCycleState = JSON.parse(JSON.stringify(savedCycle));
+  } else {
+    insulatorCycleState = { R: Array(count).fill(0), S: Array(count).fill(0), T: Array(count).fill(0) };
+  }
+  ['R','S','T'].forEach(p => { if (!insulatorCycleState[p] || insulatorCycleState[p].length < count) insulatorCycleState[p] = Array(count).fill(0).map((v,i) => (insulatorCycleState[p]&&insulatorCycleState[p][i])||0); });
 
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['', ''];
 
@@ -2386,14 +2397,25 @@ function buildVShape(phase) {
     const pts=corners.map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)]);
     const rect=document.createElementNS('http://www.w3.org/2000/svg','polygon');
     rect.setAttribute('points', pts.map(p=>p.join(',')).join(' '));
-    rect.setAttribute('fill', insulatorState[phase][idx]?'#FC4444':'white');
-    rect.setAttribute('stroke', insulatorState[phase][idx]?'#9B0000':'#555');
+    function paint() {
+      const cyc = (insulatorCycleState[phase]&&insulatorCycleState[phase][idx]) || 0;
+      if (insulatorState[phase][idx]) {
+        rect.setAttribute('fill', insShade(INS_RED_SHADES, cyc));
+        rect.setAttribute('stroke', '#9B0000');
+      } else if (cyc > 0) {
+        rect.setAttribute('fill', insShade(INS_GREEN_SHADES, cyc-1));
+        rect.setAttribute('stroke', '#276749');
+      } else {
+        rect.setAttribute('fill', 'white');
+        rect.setAttribute('stroke', '#555');
+      }
+    }
+    paint();
     rect.setAttribute('stroke-width','0.8'); rect.style.cursor='pointer';
     if (currentUser.role !== 'readonly') {
       rect.addEventListener('click', () => {
         insulatorState[phase][idx] = !insulatorState[phase][idx];
-        rect.setAttribute('fill', insulatorState[phase][idx]?'#FC4444':'white');
-        rect.setAttribute('stroke', insulatorState[phase][idx]?'#9B0000':'#555');
+        paint();
       });
     }
     svg.appendChild(rect);
@@ -2416,11 +2438,18 @@ function buildChain(phase, rows) {
     for (let row=0;row<rows;row++) {
       const idx = col*rows+row;
       const rect = document.createElement('div');
-      rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
+      rect.className = 'ins-rect';
+      function paint() {
+        const cyc = (insulatorCycleState[phase]&&insulatorCycleState[phase][idx]) || 0;
+        if (insulatorState[phase][idx]) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
+        else if (cyc > 0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
+        else { rect.style.background = 'white'; rect.style.borderColor = '#555'; }
+      }
+      paint();
       if (currentUser.role !== 'readonly') {
         rect.addEventListener('click', () => {
           insulatorState[phase][idx] = !insulatorState[phase][idx];
-          rect.classList.toggle('damaged', insulatorState[phase][idx]);
+          paint();
         });
       }
       colDiv.appendChild(rect);
@@ -2437,11 +2466,18 @@ function buildSingleChain(phase, rows) {
   for (let row=0;row<rows;row++) {
     const idx = row;
     const rect = document.createElement('div');
-    rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
+    rect.className = 'ins-rect';
+    function paint() {
+      const cyc = (insulatorCycleState[phase]&&insulatorCycleState[phase][idx]) || 0;
+      if (insulatorState[phase][idx]) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
+      else if (cyc > 0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
+      else { rect.style.background = 'white'; rect.style.borderColor = '#555'; }
+    }
+    paint();
     if (currentUser.role !== 'readonly') {
       rect.addEventListener('click', () => {
         insulatorState[phase][idx] = !insulatorState[phase][idx];
-        rect.classList.toggle('damaged', insulatorState[phase][idx]);
+        paint();
       });
     }
     colDiv.appendChild(rect);
@@ -2474,11 +2510,18 @@ function buildStraight4Chain(phase, stationA, stationB, totalCols, rows) {
       for (let row = 0; row < rows; row++) {
         const idx = col*rows+row;
         const rect = document.createElement('div');
-        rect.className = 'ins-rect' + (insulatorState[phase][idx] ? ' damaged' : '');
+        rect.className = 'ins-rect';
+        function paint() {
+          const cyc = (insulatorCycleState[phase]&&insulatorCycleState[phase][idx]) || 0;
+          if (insulatorState[phase][idx]) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
+          else if (cyc > 0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
+          else { rect.style.background = 'white'; rect.style.borderColor = '#555'; }
+        }
+        paint();
         if (currentUser.role !== 'readonly') {
           rect.addEventListener('click', () => {
             insulatorState[phase][idx] = !insulatorState[phase][idx];
-            rect.classList.toggle('damaged', insulatorState[phase][idx]);
+            paint();
           });
         }
         colDiv.appendChild(rect);
@@ -2515,7 +2558,7 @@ function generateVShapeSVG(state) {
 }
 
 // نسخة ثلاثية الألوان من V-shape — لسجل المعالجات: أبيض=سليم، أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة
-function generateVShapeSVG3Color(state, treatedIdx) {
+function generateVShapeSVG3Color(state, treatedIdx, cycleArr) {
   const N=28, svgW=140, svgH=110, gap=18, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   const treatedSet = new Set(treatedIdx||[]);
   let rects='';
@@ -2523,9 +2566,10 @@ function generateVShapeSVG3Color(state, treatedIdx) {
     const ca=Math.cos(angle),sa=Math.sin(angle);
     const corners=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]];
     const pts=corners.map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)].join(',')).join(' ');
+    const cyc = (cycleArr&&cycleArr[idx])||0;
     let fill='white', stroke='#555';
-    if (treatedSet.has(idx)) { fill='#48BB78'; stroke='#276749'; }
-    else if (state[idx]) { fill='#FC4444'; stroke='#9B0000'; }
+    if (treatedSet.has(idx)) { fill=insShade(INS_GREEN_SHADES,cyc); stroke='#276749'; }
+    else if (state[idx]) { fill=insShade(INS_RED_SHADES,cyc); stroke='#9B0000'; }
     return `<polygon points="${pts}" fill="${fill}" stroke="${stroke}" stroke-width="0.8"/>`;
   }
   const angL=Math.atan2(tlY-tipY,tlX-tipLX), angR=Math.atan2(trY-tipY,trX-tipRX);
@@ -2575,7 +2619,7 @@ function generateSingleChainSVG(state, rows) {
 
 // نسخة ثلاثية الألوان عامة (تدعم 1، 2، أو 4 أعمدة) — لسجل المعالجات
 // أبيض=سليم، أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة
-function generateChainSVG3Color(state, treatedIdx, cols, rows) {
+function generateChainSVG3Color(state, treatedIdx, cols, rows, cycleArr) {
   cols = cols || 2; rows = rows || 12;
   const treatedSet = new Set(treatedIdx||[]);
   const isQuad = cols >= 4;
@@ -2583,9 +2627,10 @@ function generateChainSVG3Color(state, treatedIdx, cols, rows) {
   let rects='';
   for(let col=0;col<cols;col++) for(let row=0;row<rows;row++){
     const idx=col*rows+row, x=col*(w+colGap), y=row*(h+gap);
+    const cyc = (cycleArr&&cycleArr[idx])||0;
     let fill='white', stroke='#555';
-    if (treatedSet.has(idx)) { fill='#48BB78'; stroke='#276749'; }
-    else if (state[idx]) { fill='#FC4444'; stroke='#9B0000'; }
+    if (treatedSet.has(idx)) { fill=insShade(INS_GREEN_SHADES,cyc); stroke='#276749'; }
+    else if (state[idx]) { fill=insShade(INS_RED_SHADES,cyc); stroke='#9B0000'; }
     const rx = isQuad ? 1.5 : 2, sw = isQuad ? 1 : 1.5;
     rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
   }
@@ -2638,6 +2683,7 @@ function getFormData() {
 }
 
 function setFormData(d) {
+  document.querySelectorAll('.treated-prev-badge').forEach(b => b.remove());
   document.getElementById('f_line_name').value = d.line_name||'';
   onLineChange();
   currentVoltage = d.voltage || (LINE_VOLTAGE[d.line_name]||132);
@@ -2646,8 +2692,17 @@ function setFormData(d) {
     document.getElementById('f_tower_type').value = d.tower_type||'';
     document.getElementById('f_inspection_date').value = d.inspection_date||'';
     FIELDS.forEach(f => { const el=document.getElementById('f_'+f); if(el) el.value=d[f]||''; });
+    (d._treatedBadgeFields||[]).forEach(fieldId => {
+      const el = document.getElementById('f_'+fieldId);
+      if (!el) return;
+      const badge = document.createElement('div');
+      badge.className = 'treated-prev-badge';
+      badge.textContent = '✅ معالج سابقاً — راجع وعدّل إذا لقيت المشكلة موجودة';
+      badge.style.cssText = 'color:#1e8449;font-size:0.75rem;font-weight:700;margin-top:2px;margin-bottom:4px';
+      el.insertAdjacentElement('afterend', badge);
+    });
     const saved = d.insulator_state ? JSON.parse(d.insulator_state) : null;
-    buildInsulatorUI(currentVoltage, d.tower_type, saved);
+    buildInsulatorUI(currentVoltage, d.tower_type, saved, d._mergedCycle || null);
     updateWiresGroundUI();
   }, 60);
 }
@@ -3073,7 +3128,7 @@ function confirmExportExcel() {
 }
 
 // يبني SVG element حقيقي (مو نص) لتوليد صورة منه — يعتمد على نفس دوال الرسم بالتطبيق
-function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerType, lineName) {
+function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerType, lineName, inspectionId) {
   if (!insulatorStateJSON) return null;
   let state;
   try { state = JSON.parse(insulatorStateJSON); } catch(e) { return null; }
@@ -3081,23 +3136,31 @@ function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerTyp
   if (!hasDamage) return null; // سليمة، ما نحتاج صورة
   const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['',''];
+  const { cycle: insCycle, treatedIdx: insTreated } = inspectionId ? computeInsulatorCycleAndTreated(inspectionId) : {cycle:{R:[],S:[],T:[]}, treatedIdx:{R:[],S:[],T:[]}};
 
+  // طبقة خارجية مخفية (تحمل position:fixed للإخفاء فقط) — لا تُمرَّر هذي مباشرة للترسيم،
+  // بل العنصر الداخلي (container) العادي بدون أي تموضع خاص، لتجنّب نفس خلل "الصورة الفاضية"
+  const outer = document.createElement('div');
+  outer.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
   const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;display:flex;gap:10px;background:white;padding:8px;';
+  container.style.cssText = 'display:flex;gap:10px;background:white;padding:8px;';
   ['R','S','T'].forEach(phase => {
     const phaseState = state[phase] || [];
+    const phaseTreated = insTreated[phase] || [];
+    const phaseCycle = insCycle[phase] || [];
     const wrap = document.createElement('div');
     let el;
-    if (mode === 'v') el = renderReadonlyV(phaseState, []);
-    else if (mode === 'straight4') el = renderReadonlyGrouped(phaseState, [], 4, 32, stA, stB);
-    else if (mode === 'chain4_12') el = renderReadonlyGrouped(phaseState, [], 4, 12, stA, stB);
-    else if (mode === 'chain2_12') el = renderReadonlyGrouped(phaseState, [], 2, 12, stA, stB);
-    else if (mode === 'chain1_10') el = renderReadonlySingle(phaseState, [], 10);
-    else el = renderReadonlyChain(phaseState, [], 2, mode==='chain2_10'?10:12);
+    if (mode === 'v') el = renderReadonlyV(phaseState, phaseTreated, phaseCycle);
+    else if (mode === 'straight4') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 32, stA, stB, phaseCycle);
+    else if (mode === 'chain4_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 12, stA, stB, phaseCycle);
+    else if (mode === 'chain2_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 2, 12, stA, stB, phaseCycle);
+    else if (mode === 'chain1_10') el = renderReadonlySingle(phaseState, phaseTreated, 10, phaseCycle);
+    else el = renderReadonlyChain(phaseState, phaseTreated, 2, mode==='chain2_10'?10:12, phaseCycle);
     wrap.appendChild(el);
     container.appendChild(wrap);
   });
-  document.body.appendChild(container);
+  outer.appendChild(container);
+  document.body.appendChild(outer);
   return container;
 }
 
@@ -3178,7 +3241,7 @@ async function confirmExportPDF() {
     infoLines.forEach(line => { doc.text(line, 40, y); y += 13; });
 
     // صورة العوازل (فقط لو متضررة)
-    const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name);
+    const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id);
     if (container) {
       try {
         const dataUrl = await elementToPNGDataURL(container);
@@ -3192,7 +3255,7 @@ async function confirmExportPDF() {
           doc.addImage(dataUrl, 'PNG', 320, y - infoLines.length*13 + 18, imgW, imgH);
         }
       } catch(e) {}
-      document.body.removeChild(container);
+      if (container.parentNode) container.parentNode.remove();
     } else {
       doc.setTextColor(30,140,70);
       doc.text('Insulators: Healthy ✓', 320, y - infoLines.length*13 + 20);
@@ -6049,25 +6112,8 @@ function renderTowerDetail(lineName, towerNum) {
     let state;
     try { state = JSON.parse(r.insulator_state); } catch(e) { state = null; }
     if (state) {
-      // نطرح المعالجات المرتبطة بهذا السجل
-      const towerTreatments = treatmentsCache.filter(t => t.inspection_id === r.id);
-      const treatedIdx = { R: [], S: [], T: [] };
-      towerTreatments.forEach(t => {
-        (t.items_treated||[]).forEach(item => {
-          const m = item.key && item.key.match(/^ins_([RST])$/);
-          if (m) {
-            // نحسب الفرق بين قبل وبعد لتحديد المؤشرات المعالجة بدقة
-            try {
-              const before = JSON.parse(t.insulator_state_before||'{}');
-              const after = JSON.parse(t.insulator_state_after||'{}');
-              const phase = m[1];
-              (before[phase]||[]).forEach((wasDamaged, i) => {
-                if (wasDamaged && after[phase] && !after[phase][i]) treatedIdx[phase].push(i);
-              });
-            } catch(e) {}
-          }
-        });
-      });
+      // نطرح المعالجات المرتبطة بهذا السجل + نحسب مستوى دورة كل عازل
+      const { cycle: insCycle, treatedIdx } = computeInsulatorCycleAndTreated(r.id);
 
       html += `<div class="form-card" style="margin-bottom:14px">
         <h3>🔘 العوازل</h3>
@@ -6079,7 +6125,7 @@ function renderTowerDetail(lineName, towerNum) {
         <div id="towerDetailInsulators" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>
       </div>`;
 
-      setTimeout(() => renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB), 10);
+      setTimeout(() => renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB, null, insCycle), 10);
     }
   }
 
@@ -6123,7 +6169,7 @@ function renderTowerDetail(lineName, towerNum) {
 }
 
 // رسم عرض القراءة فقط (readonly) للعوازل بصفحة تفاصيل البرج
-function renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB, containerId) {
+function renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB, containerId, cycleIdx) {
   const wrap = document.getElementById(containerId || 'towerDetailInsulators');
   if (!wrap) return;
   wrap.innerHTML = '';
@@ -6135,25 +6181,27 @@ function renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB, containe
     block.appendChild(lbl);
     const phaseState = state[phase] || [];
     const phaseTreated = treatedIdx[phase] || [];
+    const phaseCycle = (cycleIdx && cycleIdx[phase]) || [];
     let el;
-    if (mode === 'v') el = renderReadonlyV(phaseState, phaseTreated);
-    else if (mode === 'straight4') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 32, stA, stB);
-    else if (mode === 'chain4_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 12, stA, stB);
-    else if (mode === 'chain2_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 2, 12, stA, stB);
-    else if (mode === 'chain1_10') el = renderReadonlySingle(phaseState, phaseTreated, 10);
-    else el = renderReadonlyChain(phaseState, phaseTreated, 2, mode==='chain2_10'?10:12);
+    if (mode === 'v') el = renderReadonlyV(phaseState, phaseTreated, phaseCycle);
+    else if (mode === 'straight4') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 32, stA, stB, phaseCycle);
+    else if (mode === 'chain4_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 12, stA, stB, phaseCycle);
+    else if (mode === 'chain2_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 2, 12, stA, stB, phaseCycle);
+    else if (mode === 'chain1_10') el = renderReadonlySingle(phaseState, phaseTreated, 10, phaseCycle);
+    else el = renderReadonlyChain(phaseState, phaseTreated, 2, mode==='chain2_10'?10:12, phaseCycle);
     block.appendChild(el);
     wrap.appendChild(block);
   });
 }
 
-function rectColor(damaged, treated) {
-  if (treated) return ['#48BB78','#276749'];
-  if (damaged) return ['#FC4444','#9B0000'];
+function rectColor(damaged, treated, cycle) {
+  cycle = cycle || 0;
+  if (treated) return [insShade(INS_GREEN_SHADES, cycle), '#276749'];
+  if (damaged) return [insShade(INS_RED_SHADES, cycle), '#9B0000'];
   return ['white','#555'];
 }
 
-function renderReadonlyChain(state, treatedIdx, cols, rows) {
+function renderReadonlyChain(state, treatedIdx, cols, rows, cycleArr) {
   const treatedSet = new Set(treatedIdx);
   const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
   for (let col=0; col<cols; col++) {
@@ -6161,7 +6209,7 @@ function renderReadonlyChain(state, treatedIdx, cols, rows) {
     for (let row=0; row<rows; row++) {
       const idx = col*rows+row;
       const rect = document.createElement('div'); rect.className = 'ins-rect';
-      const [bg, border] = rectColor(state[idx], treatedSet.has(idx));
+      const [bg, border] = rectColor(state[idx], treatedSet.has(idx), cycleArr&&cycleArr[idx]);
       rect.style.background = bg; rect.style.borderColor = border;
       colDiv.appendChild(rect);
     }
@@ -6170,13 +6218,13 @@ function renderReadonlyChain(state, treatedIdx, cols, rows) {
   return wrap;
 }
 
-function renderReadonlySingle(state, treatedIdx, rows) {
+function renderReadonlySingle(state, treatedIdx, rows, cycleArr) {
   const treatedSet = new Set(treatedIdx);
   const wrap = document.createElement('div'); wrap.className = 'chain-wrap';
   const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
   for (let row=0; row<rows; row++) {
     const rect = document.createElement('div'); rect.className = 'ins-rect';
-    const [bg, border] = rectColor(state[row], treatedSet.has(row));
+    const [bg, border] = rectColor(state[row], treatedSet.has(row), cycleArr&&cycleArr[row]);
     rect.style.background = bg; rect.style.borderColor = border;
     colDiv.appendChild(rect);
   }
@@ -6184,7 +6232,7 @@ function renderReadonlySingle(state, treatedIdx, rows) {
   return wrap;
 }
 
-function renderReadonlyGrouped(state, treatedIdx, totalCols, rows, stA, stB) {
+function renderReadonlyGrouped(state, treatedIdx, totalCols, rows, stA, stB, cycleArr) {
   const treatedSet = new Set(treatedIdx);
   const colsPerGroup = totalCols / 2;
   const outer = document.createElement('div');
@@ -6202,7 +6250,7 @@ function renderReadonlyGrouped(state, treatedIdx, totalCols, rows, stA, stB) {
       for (let row=0; row<rows; row++) {
         const idx = col*rows+row;
         const rect = document.createElement('div'); rect.className='ins-rect';
-        const [bg, border] = rectColor(state[idx], treatedSet.has(idx));
+        const [bg, border] = rectColor(state[idx], treatedSet.has(idx), cycleArr&&cycleArr[idx]);
         rect.style.background = bg; rect.style.borderColor = border;
         colDiv.appendChild(rect);
       }
@@ -6217,7 +6265,7 @@ function renderReadonlyGrouped(state, treatedIdx, totalCols, rows, stA, stB) {
   return outer;
 }
 
-function renderReadonlyV(state, treatedIdx) {
+function renderReadonlyV(state, treatedIdx, cycleArr) {
   const treatedSet = new Set(treatedIdx);
   const N=28, svgW=140, svgH=110, gap=18, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -6227,13 +6275,38 @@ function renderReadonlyV(state, treatedIdx) {
     const pts=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]].map(([x,y])=>[(cx+x*ca-y*sa).toFixed(2),(cy+x*sa+y*ca).toFixed(2)]);
     const el=document.createElementNS('http://www.w3.org/2000/svg','polygon');
     el.setAttribute('points',pts.map(p=>p.join(',')).join(' '));
-    const [fill, stroke] = rectColor(state[idx], treatedSet.has(idx));
+    const [fill, stroke] = rectColor(state[idx], treatedSet.has(idx), cycleArr&&cycleArr[idx]);
     el.setAttribute('fill',fill); el.setAttribute('stroke',stroke); el.setAttribute('stroke-width','0.8');
     svg.appendChild(el);
   }
   const angL=Math.atan2(tlY-tipY,tlX-tipLX), angR=Math.atan2(trY-tipY,trX-tipRX);
   for(let i=0;i<N;i++){const t=i/(N-1); addP(tipLX+(tlX-tipLX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipRX+(trX-tipRX)*t,tipY+(trY-tipY)*t,angR,N+i);}
   return svg;
+}
+
+// يحسب من سجل المعالجات: مستوى دورة كل عازل (كم مرة عولج) + قائمة المؤشرات المعالجة لهذا السجل تحديداً
+function computeInsulatorCycleAndTreated(inspectionId) {
+  const cycle = {R:[],S:[],T:[]}, treatedIdx = {R:[],S:[],T:[]};
+  const towerTreatments = treatmentsCache.filter(t => t.inspection_id === inspectionId).slice().reverse(); // الأقدم أولاً
+  towerTreatments.forEach(t => {
+    (t.items_treated||[]).forEach(item => {
+      const m = item.key && item.key.match(/^ins_([RST])$/);
+      if (m) {
+        try {
+          const before = JSON.parse(t.insulator_state_before||'{}');
+          const after = JSON.parse(t.insulator_state_after||'{}');
+          const phase = m[1];
+          (before[phase]||[]).forEach((wasDamaged, i) => {
+            if (wasDamaged && after[phase] && !after[phase][i]) {
+              if (!treatedIdx[phase].includes(i)) treatedIdx[phase].push(i);
+              cycle[phase][i] = (cycle[phase][i]||0) + 1;
+            }
+          });
+        } catch(e) {}
+      }
+    });
+  });
+  return { cycle, treatedIdx };
 }
 
 let editingLineIdx = null;
@@ -6365,15 +6438,31 @@ async function checkPreviousInspection(lineName, towerNumber) {
   banner.style.display = 'block';
 }
 
+// خريطة: مفتاح المغادرة النصية → الحقل (أو الحقول) بالفورم + القيمة "السليمة" الافتراضية
+const TREAT_FIELD_MAP = {
+  iron: [{field:'iron_intersections', healthy:''}],
+  foundation: [{field:'tower_foundations', healthy:''}],
+  attachment: [{field:'tower_attachments', healthy:''}],
+  wire_r1: [{field:'wires_r1', healthy:'سليم'}],
+  wire_s1: [{field:'wires_s1', healthy:'سليم'}],
+  wire_t1: [{field:'wires_t1', healthy:'سليم'}],
+  ground_1: [{field:'ground_1', healthy:''}],
+  ground_2: [{field:'ground_2', healthy:''}],
+  fire: [{field:'fire_causes', healthy:'لا يوجد'},{field:'fire_causes_notes', healthy:''}],
+  road: [{field:'road_access', healthy:'متاح'},{field:'road_access_notes', healthy:''}]
+};
+
 function loadPreviousInspection() {
   if (!previousInspectionForLoad) return;
   const r = previousInspectionForLoad;
 
-  // نحسب حالة العوازل بعد طرح كل العناصر المعالجة (تتحول سليمة/أبيض)
+  // نحسب حالة العوازل بعد طرح كل العناصر المعالجة (تتحول سليمة/أبيض) + مستوى دورة المعالجة لكل موضع
   let mergedInsulatorState = null;
+  let mergedCycle = null;
   if (r.insulator_state) {
     try {
       mergedInsulatorState = JSON.parse(r.insulator_state);
+      mergedCycle = { R: Array((mergedInsulatorState.R||[]).length).fill(0), S: Array((mergedInsulatorState.S||[]).length).fill(0), T: Array((mergedInsulatorState.T||[]).length).fill(0) };
       // أحدث معالجة لكل فيز تحتوي insulator_state_after — نطبقها إذا موجودة
       // مهم: previousTreatmentsForLoad مرتبة الأحدث أولاً (created_at.desc)، لذا نعكس الترتيب
       // هنا لنطبّق الأقدم أولاً والأحدث أخيراً — فتكون بيانات المعالجة الأحدث هي الفائزة بالنتيجة النهائية
@@ -6386,11 +6475,30 @@ function loadPreviousInspection() {
             });
           } catch(e) {}
         }
+        if (t.insulator_cycle_after) {
+          try {
+            const cyc = JSON.parse(t.insulator_cycle_after);
+            ['R','S','T'].forEach(phase => {
+              if (cyc[phase]) mergedCycle[phase] = cyc[phase];
+            });
+          } catch(e) {}
+        }
       });
-    } catch(e) { mergedInsulatorState = null; }
+    } catch(e) { mergedInsulatorState = null; mergedCycle = null; }
   }
 
-  const rForLoad = { ...r, insulator_state: mergedInsulatorState ? JSON.stringify(mergedInsulatorState) : r.insulator_state };
+  // العناصر النصية (قواعد، حديد، أسلاك...) المعالجة سابقاً — نرجعها لقيمتها السليمة + نعلّمها لإظهار ملصق
+  const rForLoad = { ...r, insulator_state: mergedInsulatorState ? JSON.stringify(mergedInsulatorState) : r.insulator_state, _mergedCycle: mergedCycle };
+  const treatedBadgeFields = [];
+  Object.keys(TREAT_FIELD_MAP).forEach(key => {
+    if (isTreatedInDB(r.id, key)) {
+      TREAT_FIELD_MAP[key].forEach(({field, healthy}) => {
+        rForLoad[field] = healthy;
+        treatedBadgeFields.push(field);
+      });
+    }
+  });
+  rForLoad._treatedBadgeFields = treatedBadgeFields;
 
   // نحمل بياناته بالفورم للإكمال — بدون تغيير editId (يُحفظ كسجل جديد بالأرشيف)
   setFormData(rForLoad);
@@ -6423,6 +6531,7 @@ function onTowerChange() {
 
 let treatmentsCache = [];
 let treatInsulatorState = { R: [], S: [], T: [] };
+let treatCycleState = { R: [], S: [], T: [] }; // مستوى دورة المعالجة الحالي لكل موضع (محمَّل من آخر معالجة سابقة)
 let currentTreatRecord = null;
 let otherDepTreatState = {};
 
@@ -6558,10 +6667,10 @@ async function exportOpenDeparturesPDF() {
         const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator');
         let insImg = null;
         if (hasOpenInsulatorDep && r.insulator_state) {
-          const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name);
+          const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id);
           if (container) {
             try { insImg = await elementToPNGDataURL(container); } catch(e) {}
-            document.body.removeChild(container);
+            if (container.parentNode) container.parentNode.remove();
           }
         }
 
@@ -6817,10 +6926,12 @@ function renderDepTowerDetail(lineName, towerNum) {
         <div class="insulator-legend" style="margin-bottom:10px">
           <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
           <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
+          <div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">تمت معالجته</span></div>
         </div>
         <div id="depTowerInsulators" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>
       </div>`;
-      setTimeout(() => renderTowerDetailInsulators(state, {R:[],S:[],T:[]}, mode, stA, stB, 'depTowerInsulators'), 10);
+      const { cycle: insCycleDep, treatedIdx: treatedIdxDep } = computeInsulatorCycleAndTreated(r.id);
+      setTimeout(() => renderTowerDetailInsulators(state, treatedIdxDep, mode, stA, stB, 'depTowerInsulators', insCycleDep), 10);
     }
   }
 
@@ -6966,6 +7077,16 @@ function renderTreatItems() {
     catch(e) { treatInsulatorState = {R:[],S:[],T:[]}; }
   } else { treatInsulatorState = {R:[],S:[],T:[]}; }
 
+  // نحمّل مستوى دورة المعالجة من آخر معالجة سابقة لهذا السجل (treatmentsCache مرتبة created_at.desc)
+  treatCycleState = { R: Array((treatInsulatorState.R||[]).length).fill(0), S: Array((treatInsulatorState.S||[]).length).fill(0), T: Array((treatInsulatorState.T||[]).length).fill(0) };
+  const latestCycle = treatmentsCache.find(t => t.inspection_id === r.id && t.insulator_cycle_after);
+  if (latestCycle) {
+    try {
+      const cyc = JSON.parse(latestCycle.insulator_cycle_after);
+      ['R','S','T'].forEach(phase => { if (cyc[phase]) treatCycleState[phase] = cyc[phase]; });
+    } catch(e) {}
+  }
+
   let html = '';
   const insulatorDeps = deps.filter(d => d.type === 'insulator');
   if (insulatorDeps.length) {
@@ -7009,6 +7130,8 @@ function buildTreatInsulatorUI(voltage, towerType, lineName) {
   ['R','S','T'].forEach(phase => {
     if (!treatInsulatorState[phase]||!treatInsulatorState[phase].length)
       treatInsulatorState[phase] = Array(count).fill(false);
+    if (!treatCycleState[phase]||treatCycleState[phase].length!==treatInsulatorState[phase].length)
+      treatCycleState[phase] = Array(treatInsulatorState[phase].length).fill(0).map((v,i)=>(treatCycleState[phase]&&treatCycleState[phase][i])||0);
     const block = document.createElement('div'); block.className = 'phase-block';
     const lbl = document.createElement('div'); lbl.className = 'phase-label'; lbl.textContent = 'الفيز '+phase;
     block.appendChild(lbl);
@@ -7028,12 +7151,16 @@ function buildTreatVisual(phase, mode) {
       const el=document.createElementNS('http://www.w3.org/2000/svg','polygon');
       el.setAttribute('points',pts.map(p=>p.join(',')).join(' '));
       el.dataset.idx = idx;
+      el.dataset.treated = 'false';
       const dmg=treatInsulatorState[phase][idx];
-      el.setAttribute('fill',dmg?'#FC4444':'white'); el.setAttribute('stroke',dmg?'#9B0000':'#555'); el.setAttribute('stroke-width','0.8');
+      const cyc=(treatCycleState[phase]&&treatCycleState[phase][idx])||0;
+      el.setAttribute('fill',dmg?insShade(INS_RED_SHADES,cyc):'white'); el.setAttribute('stroke',dmg?'#9B0000':'#555'); el.setAttribute('stroke-width','0.8');
       el.style.cursor=dmg?'pointer':'default';
       if(dmg) el.addEventListener('click',()=>{
-        const fixed=el.getAttribute('fill')==='#48BB78';
-        el.setAttribute('fill',fixed?'#FC4444':'#48BB78'); el.setAttribute('stroke',fixed?'#9B0000':'#276749');
+        const fixed=el.dataset.treated==='true';
+        el.dataset.treated = fixed?'false':'true';
+        el.setAttribute('fill',fixed?insShade(INS_RED_SHADES,cyc):insShade(INS_GREEN_SHADES,cyc));
+        el.setAttribute('stroke',fixed?'#9B0000':'#276749');
       });
       svg.appendChild(el);
     }
@@ -7062,11 +7189,15 @@ function buildTreatVisual(phase, mode) {
         for(let row=0;row<rows;row++){
           const idx=col*rows+row, rect=document.createElement('div');
           const dmg=treatInsulatorState[phase][idx];
-          rect.className='ins-rect'+(dmg?' damaged':'');
+          const cyc=(treatCycleState[phase]&&treatCycleState[phase][idx])||0;
+          rect.className='ins-rect';
+          rect.dataset.idx = idx; rect.dataset.treated = 'false';
+          if (dmg) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
           rect.style.cursor=dmg?'pointer':'default';
           if(dmg) rect.addEventListener('click',()=>{
-            const fixed=rect.style.background==='rgb(72, 187, 120)';
-            rect.style.background=fixed?'#FC4444':'#48BB78'; rect.style.borderColor=fixed?'#9B0000':'#276749';
+            const fixed=rect.dataset.treated==='true';
+            rect.dataset.treated = fixed?'false':'true';
+            rect.style.background=fixed?insShade(INS_RED_SHADES,cyc):insShade(INS_GREEN_SHADES,cyc); rect.style.borderColor=fixed?'#9B0000':'#276749';
           });
           colDiv.appendChild(rect);
         }
@@ -7086,11 +7217,15 @@ function buildTreatVisual(phase, mode) {
     for(let row=0;row<10;row++){
       const idx=row, rect=document.createElement('div');
       const dmg=treatInsulatorState[phase][idx];
-      rect.className='ins-rect'+(dmg?' damaged':'');
+      const cyc=(treatCycleState[phase]&&treatCycleState[phase][idx])||0;
+      rect.className='ins-rect';
+      rect.dataset.idx = idx; rect.dataset.treated = 'false';
+      if (dmg) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
       rect.style.cursor=dmg?'pointer':'default';
       if(dmg) rect.addEventListener('click',()=>{
-        const fixed=rect.style.background==='rgb(72, 187, 120)';
-        rect.style.background=fixed?'#FC4444':'#48BB78'; rect.style.borderColor=fixed?'#9B0000':'#276749';
+        const fixed=rect.dataset.treated==='true';
+        rect.dataset.treated = fixed?'false':'true';
+        rect.style.background=fixed?insShade(INS_RED_SHADES,cyc):insShade(INS_GREEN_SHADES,cyc); rect.style.borderColor=fixed?'#9B0000':'#276749';
       });
       colDiv.appendChild(rect);
     }
@@ -7104,11 +7239,15 @@ function buildTreatVisual(phase, mode) {
     for(let row=0;row<rows;row++){
       const idx=col*rows+row, rect=document.createElement('div');
       const dmg=treatInsulatorState[phase][idx];
-      rect.className='ins-rect'+(dmg?' damaged':'');
+      const cyc=(treatCycleState[phase]&&treatCycleState[phase][idx])||0;
+      rect.className='ins-rect';
+      rect.dataset.idx = idx; rect.dataset.treated = 'false';
+      if (dmg) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
       rect.style.cursor=dmg?'pointer':'default';
       if(dmg) rect.addEventListener('click',()=>{
-        const fixed=rect.style.background==='rgb(72, 187, 120)';
-        rect.style.background=fixed?'#FC4444':'#48BB78'; rect.style.borderColor=fixed?'#9B0000':'#276749';
+        const fixed=rect.dataset.treated==='true';
+        rect.dataset.treated = fixed?'false':'true';
+        rect.style.background=fixed?insShade(INS_RED_SHADES,cyc):insShade(INS_GREEN_SHADES,cyc); rect.style.borderColor=fixed?'#9B0000':'#276749';
       });
       colDiv.appendChild(rect);
     }
@@ -7123,6 +7262,7 @@ async function saveTreatment() {
   const now = new Date().toISOString().split('T')[0];
   const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
   const stateAfter = JSON.parse(JSON.stringify(treatInsulatorState));
+  const cycleAfter = JSON.parse(JSON.stringify(treatCycleState));
   const treatedIndices = { R: [], S: [], T: [] }; // مؤشرات العوازل المعالجة بهذي الجلسة (تظهر أخضر بالسجل)
   const items_treated = [];
 
@@ -7136,10 +7276,13 @@ async function saveTreatment() {
       if (mode === 'v') {
         block.querySelectorAll('polygon').forEach((el) => {
           const idx = parseInt(el.dataset.idx, 10);
-          if (el.getAttribute('fill')==='#48BB78'){stateAfter[phase][idx]=false; treatedIndices[phase].push(idx); treatedCount++;}
+          if (el.dataset.treated==='true'){stateAfter[phase][idx]=false; cycleAfter[phase][idx]=((cycleAfter[phase][idx]||0)+1); treatedIndices[phase].push(idx); treatedCount++;}
         });
       } else {
-        block.querySelectorAll('.ins-rect').forEach((el,i) => { if(el.style.background==='rgb(72, 187, 120)'){stateAfter[phase][i]=false; treatedIndices[phase].push(i); treatedCount++;} });
+        block.querySelectorAll('.ins-rect').forEach((el) => {
+          const idx = parseInt(el.dataset.idx, 10);
+          if(el.dataset.treated==='true'){stateAfter[phase][idx]=false; cycleAfter[phase][idx]=((cycleAfter[phase][idx]||0)+1); treatedIndices[phase].push(idx); treatedCount++;}
+        });
       }
       if (treatedCount > 0) items_treated.push({key:`ins_${phase}`, label:`عوازل الفيز ${phase}`, count: treatedCount});
     });
@@ -7166,7 +7309,7 @@ async function saveTreatment() {
     return generateChainSVG(state, 2, 12);
   }
   // SVG ثلاثي الألوان (لسجل المعالجات: أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة، أبيض=سليم)
-  function svg3ColorForMode(state, treatedIdx) {
+  function svg3ColorForMode(state, treatedIdx, cycleArr) {
     const dims = mode === 'v' ? null
       : mode === 'straight4' ? [4,32]
       : mode === 'chain4_12' ? [4,12]
@@ -7174,8 +7317,8 @@ async function saveTreatment() {
       : mode === 'chain2_10' ? [2,10]
       : mode === 'chain1_10' ? [1,10]
       : [2,12];
-    if (mode === 'v') return generateVShapeSVG3Color(state, treatedIdx);
-    return generateChainSVG3Color(state, treatedIdx, dims[0], dims[1]);
+    if (mode === 'v') return generateVShapeSVG3Color(state, treatedIdx, cycleArr);
+    return generateChainSVG3Color(state, treatedIdx, dims[0], dims[1], cycleArr);
   }
   const treatment = {
     inspection_id: r.id,
@@ -7187,9 +7330,10 @@ async function saveTreatment() {
     treatment_date: now,
     insulator_state_before: r.insulator_state,
     insulator_state_after: JSON.stringify(stateAfter),
-    insulator_svg_r: svg3ColorForMode(treatInsulatorState.R||[], treatedIndices.R),
-    insulator_svg_s: svg3ColorForMode(treatInsulatorState.S||[], treatedIndices.S),
-    insulator_svg_t: svg3ColorForMode(treatInsulatorState.T||[], treatedIndices.T),
+    insulator_cycle_after: JSON.stringify(cycleAfter),
+    insulator_svg_r: svg3ColorForMode(treatInsulatorState.R||[], treatedIndices.R, treatCycleState.R||[]),
+    insulator_svg_s: svg3ColorForMode(treatInsulatorState.S||[], treatedIndices.S, treatCycleState.S||[]),
+    insulator_svg_t: svg3ColorForMode(treatInsulatorState.T||[], treatedIndices.T, treatCycleState.T||[]),
     items_treated: items_treated,
     notes: ''
   };
