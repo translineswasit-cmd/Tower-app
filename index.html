@@ -6318,7 +6318,9 @@ function computeInsulatorCycleAndTreated(inspectionId, state, baselineCycle) {
     const len = (state && state[phase] || []).length;
     cycle[phase] = Array(len).fill(0).map((v,i) => base[i]||0);
   });
-  // معالجات مرتبطة مباشرة بهذا السجل تحديداً (لو عولج بعد إنشائه، بنفس دورته الحالية)
+  // معالجات مرتبطة مباشرة بهذا السجل تحديداً — هذي تُعتبر "معالجة" دائماً، بغض النظر عن insulator_state
+  // الخام (لا يتغيّر تلقائياً عند معالجة نفس السجل، فلا يصح الاعتماد عليه لتحديد المعالَج من نفس السجل)
+  const ownTreatedSet = {R:new Set(), S:new Set(), T:new Set()};
   const towerTreatments = treatmentsCache.filter(t => t.inspection_id === inspectionId).slice().reverse(); // الأقدم أولاً
   towerTreatments.forEach(t => {
     (t.items_treated||[]).forEach(item => {
@@ -6331,16 +6333,17 @@ function computeInsulatorCycleAndTreated(inspectionId, state, baselineCycle) {
           (before[phase]||[]).forEach((wasDamaged, i) => {
             if (wasDamaged && after[phase] && !after[phase][i]) {
               cycle[phase][i] = (cycle[phase][i]||0) + 1;
+              ownTreatedSet[phase].add(i);
             }
           });
         } catch(e) {}
       }
     });
   });
-  // أي موضع سليم حالياً وعنده مستوى دورة > 0 (سواء موروث أو من معالجة بنفس السجل) = "معالج سابقاً" (أخضر)
+  // معالج بهذا السجل تحديداً (دائماً أخضر) — أو سليم حالياً وعنده مستوى دورة موروث من سجل أقدم
   ['R','S','T'].forEach(phase => {
     (state && state[phase] || []).forEach((dmg, i) => {
-      if (!dmg && (cycle[phase][i]||0) > 0) treatedIdx[phase].push(i);
+      if (ownTreatedSet[phase].has(i) || (!dmg && (cycle[phase][i]||0) > 0)) treatedIdx[phase].push(i);
     });
   });
   return { cycle, treatedIdx };
@@ -6458,7 +6461,10 @@ async function checkPreviousInspection(lineName, towerNumber) {
         const items = tData.flatMap(t => (t.items_treated||[]).map(i => i.label)).join('، ');
         treatMsg = ` | 🔧 تمت معالجة: ${items} بتاريخ ${tData[0].treatment_date} من ${tData[0].treated_by||'—'}`;
       }
-    } catch(e) {}
+    } catch(e) {
+      console.error('فشل جلب المعالجات السابقة:', e);
+      showToast('⚠️ تعذر جلب سجل المعالجات السابقة لهذا البرج', 'error');
+    }
   } else if (treatmentsCache && treatmentsCache.length) {
     // لو عندنا كاش معالجات محمّل مسبقاً (من زيارة سابقة لصفحة المغادرات)، نستخدمه
     const tData = treatmentsCache.filter(t => t.inspection_id === last.id);
