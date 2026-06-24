@@ -2374,7 +2374,7 @@ function buildInsulatorUI(voltage, towerType, savedState) {
 }
 
 function buildVShape(phase) {
-  const N = 28, svgW = 140, svgH = 110, gap = 10;
+  const N = 28, svgW = 140, svgH = 110, gap = 18;
   const tipY = svgH-8, tipLX = svgW/2 - gap/2, tipRX = svgW/2 + gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('width', svgW); svg.setAttribute('height', svgH);
@@ -2496,7 +2496,7 @@ function buildStraight4Chain(phase, stationA, stationB, totalCols, rows) {
 }
 
 function generateVShapeSVG(state) {
-  const N=28, svgW=140, svgH=110, gap=10, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const N=28, svgW=140, svgH=110, gap=18, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   let rects='';
   function makeRect(cx,cy,angle,idx){
     const ca=Math.cos(angle),sa=Math.sin(angle);
@@ -2516,7 +2516,7 @@ function generateVShapeSVG(state) {
 
 // نسخة ثلاثية الألوان من V-shape — لسجل المعالجات: أبيض=سليم، أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة
 function generateVShapeSVG3Color(state, treatedIdx) {
-  const N=28, svgW=140, svgH=110, gap=10, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const N=28, svgW=140, svgH=110, gap=18, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   const treatedSet = new Set(treatedIdx||[]);
   let rects='';
   function makeRect(cx,cy,angle,idx){
@@ -5997,7 +5997,7 @@ function renderLineTowerList(lineName) {
       statusBadge = '⚪ لم يُكشف'; borderColor = '#BDC3C7';
     } else {
       const deps = extractDepsFromRecord(r);
-      const allTreated = deps.length > 0 && isFullyTreated(r.id, deps);
+      const allTreated = deps.length > 0 && isFullyTreated(r.id, deps, r);
       if (!deps.length) { statusBadge = '✅ سليم'; borderColor = '#48BB78'; }
       else if (allTreated) { statusBadge = '✅ معالج'; borderColor = '#48BB78'; }
       else { statusBadge = '🔴 مغادرات'; borderColor = '#FC4444'; }
@@ -6219,7 +6219,7 @@ function renderReadonlyGrouped(state, treatedIdx, totalCols, rows, stA, stB) {
 
 function renderReadonlyV(state, treatedIdx) {
   const treatedSet = new Set(treatedIdx);
-  const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  const N=28, svgW=140, svgH=110, gap=18, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('width',svgW); svg.setAttribute('height',svgH); svg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
   function addP(cx,cy,angle,idx) {
@@ -6231,8 +6231,8 @@ function renderReadonlyV(state, treatedIdx) {
     el.setAttribute('fill',fill); el.setAttribute('stroke',stroke); el.setAttribute('stroke-width','0.8');
     svg.appendChild(el);
   }
-  const angL=Math.atan2(tlY-tipY,tlX-tipX), angR=Math.atan2(trY-tipY,trX-tipX);
-  for(let i=0;i<N;i++){const t=i/(N-1); addP(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);}
+  const angL=Math.atan2(tlY-tipY,tlX-tipLX), angR=Math.atan2(trY-tipY,trX-tipRX);
+  for(let i=0;i<N;i++){const t=i/(N-1); addP(tipLX+(tlX-tipLX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipRX+(trX-tipRX)*t,tipY+(trY-tipY)*t,angR,N+i);}
   return svg;
 }
 
@@ -6431,17 +6431,30 @@ async function loadTreatments() {
   } catch { treatmentsCache = []; }
 }
 
-function isTreatedInDB(inspectionId, key) {
+// مهم: لمفاتيح العوازل (ins_R/ins_S/ins_T) لا نعتمد فقط على وجود معالجة سابقة بنفس المفتاح،
+// لأن معالجة جزئية (مثلاً 3 من 9 متضرر) تُسجَّل بنفس المفتاح وتُعتبر "معالجة بالكامل" خطأً.
+// لذا نحسب: مجموع العدد المعالج فعلياً (count) مقارنة بعدد المتضرر الحالي بهذا الفيز من r.insulator_state.
+function isTreatedInDB(inspectionId, key, r) {
+  if (r && key && key.startsWith('ins_')) {
+    const phase = key.split('_')[1];
+    let damaged = 0;
+    try { const st = JSON.parse(r.insulator_state || '{}'); damaged = (st[phase] || []).filter(Boolean).length; } catch (e) {}
+    if (!damaged) return true; // لا يوجد تضرر أصلاً بهذا الفيز
+    const treatedCount = treatmentsCache
+      .filter(t => t.inspection_id === inspectionId)
+      .reduce((sum, t) => sum + (Array.isArray(t.items_treated) ? t.items_treated.filter(i => i.key === key).reduce((s, i) => s + (i.count || 0), 0) : 0), 0);
+    return treatedCount >= damaged;
+  }
   return treatmentsCache.some(t => t.inspection_id === inspectionId && Array.isArray(t.items_treated) && t.items_treated.some(i => i.key === key));
 }
 
-function isFullyTreated(inspectionId, deps) {
-  return deps.every(d => isTreatedInDB(inspectionId, d.key));
+function isFullyTreated(inspectionId, deps, r) {
+  return deps.every(d => isTreatedInDB(inspectionId, d.key, r));
 }
 
 // يرجع فقط العناصر المفتوحة (غير المعالجة) من قائمة مغادرات سجل واحد
 function getOpenDepsOnly(r, deps) {
-  return deps.filter(d => !isTreatedInDB(r.id, d.key));
+  return deps.filter(d => !isTreatedInDB(r.id, d.key, r));
 }
 
 // ========================
@@ -6705,7 +6718,7 @@ function getActiveDepartureTowers(lineName) {
   const latestRecs = getLatestRecordsPerTower(lineName);
   return latestRecs
     .map(r => ({ r, deps: extractDepsFromRecord(r) }))
-    .filter(x => x.deps.length > 0 && !isFullyTreated(x.r.id, x.deps));
+    .filter(x => x.deps.length > 0 && !isFullyTreated(x.r.id, x.deps, x.r));
 }
 
 function renderDepLinesList() {
@@ -6874,7 +6887,7 @@ function populateTreatLines() {
   const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
   const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
   const linesWithDeps = [...new Set(
-    fullRecordsCache.filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
+    fullRecordsCache.filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
            .map(r => r.line_name).filter(Boolean)
   )].sort();
   linesWithDeps.forEach(name => {
@@ -6892,7 +6905,7 @@ function onTreatLineChange() {
   document.getElementById('treatItemsCard').style.display = 'none';
   if (!lineName) { towerSel.disabled = true; return; }
   const towersWithDeps = [...new Set(
-    fullRecordsCache.filter(r => r.line_name === lineName && extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key)))
+    fullRecordsCache.filter(r => r.line_name === lineName && extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
            .map(r => r.tower_number)
   )].sort((a,b) => parseInt(a)-parseInt(b));
   if (!towersWithDeps.length) { towerSel.innerHTML = '<option value="">-- لا توجد مغادرات --</option>'; towerSel.disabled = true; return; }
@@ -7003,7 +7016,7 @@ function buildTreatInsulatorUI(voltage, towerType, lineName) {
 
 function buildTreatVisual(phase, mode) {
   if (mode === 'v') {
-    const N=28, svgW=140, svgH=110, tipX=svgW/2, tipY=svgH-8, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+    const N=28, svgW=140, svgH=110, gap=18, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
     const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.setAttribute('width',svgW); svg.setAttribute('height',svgH); svg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
     function addP(cx,cy,angle,idx) {
@@ -7021,8 +7034,8 @@ function buildTreatVisual(phase, mode) {
       });
       svg.appendChild(el);
     }
-    const angL=Math.atan2(tlY-tipY,tlX-tipX),angR=Math.atan2(trY-tipY,trX-tipX);
-    for(let i=0;i<N;i++){const t=i/(N-1); addP(tipX+(tlX-tipX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipX+(trX-tipX)*t,tipY+(trY-tipY)*t,angR,N+i);}
+    const angL=Math.atan2(tlY-tipY,tlX-tipLX),angR=Math.atan2(trY-tipY,trX-tipRX);
+    for(let i=0;i<N;i++){const t=i/(N-1); addP(tipLX+(tlX-tipLX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipRX+(trX-tipRX)*t,tipY+(trY-tipY)*t,angR,N+i);}
     return svg;
   }
   if (mode === 'straight4' || mode === 'chain4_12' || mode === 'chain2_12') {
@@ -7348,7 +7361,7 @@ function calcLineHealthWithTreatments(lineName) {
         ['R','S','T'].forEach(phase => {
           const ps = state[phase]||[];
           elTot += ps.length;
-          if (!isTreatedInDB(r.id,`ins_${phase}`)) elIss += ps.filter(Boolean).length;
+          if (!isTreatedInDB(r.id,`ins_${phase}`,r)) elIss += ps.filter(Boolean).length;
         });
       } catch(e) {}
     }
