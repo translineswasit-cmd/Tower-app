@@ -2682,6 +2682,7 @@ function getFormData() {
     tower_type: towerType,
     voltage: currentVoltage,
     insulator_state: JSON.stringify(insulatorState),
+    insulator_cycle: JSON.stringify(insulatorCycleState), // مستوى دورة المعالجة المتوارث — يضمن ظهور الأخضر صحيح بكل الأماكن لاحقاً
     insulator_svg_r: svgFor(insulatorState.R),
     insulator_svg_s: svgFor(insulatorState.S),
     insulator_svg_t: svgFor(insulatorState.T),
@@ -3140,7 +3141,7 @@ function confirmExportExcel() {
 }
 
 // يبني SVG element حقيقي (مو نص) لتوليد صورة منه — يعتمد على نفس دوال الرسم بالتطبيق
-function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerType, lineName, inspectionId) {
+function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerType, lineName, inspectionId, insulatorCycleJSON) {
   if (!insulatorStateJSON) return null;
   let state;
   try { state = JSON.parse(insulatorStateJSON); } catch(e) { return null; }
@@ -3148,7 +3149,9 @@ function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerTyp
   if (!hasDamage) return null; // سليمة، ما نحتاج صورة
   const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['',''];
-  const { cycle: insCycle, treatedIdx: insTreated } = inspectionId ? computeInsulatorCycleAndTreated(inspectionId) : {cycle:{R:[],S:[],T:[]}, treatedIdx:{R:[],S:[],T:[]}};
+  let baselineCycle = null;
+  if (insulatorCycleJSON) { try { baselineCycle = JSON.parse(insulatorCycleJSON); } catch(e) {} }
+  const { cycle: insCycle, treatedIdx: insTreated } = computeInsulatorCycleAndTreated(inspectionId, state, baselineCycle);
 
   // طبقة خارجية مخفية (تحمل position:fixed للإخفاء فقط) — لا تُمرَّر هذي مباشرة للترسيم،
   // بل العنصر الداخلي (container) العادي بدون أي تموضع خاص، لتجنّب نفس خلل "الصورة الفاضية"
@@ -3253,7 +3256,7 @@ async function confirmExportPDF() {
     infoLines.forEach(line => { doc.text(line, 40, y); y += 13; });
 
     // صورة العوازل (فقط لو متضررة)
-    const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id);
+    const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id, r.insulator_cycle);
     if (container) {
       try {
         const dataUrl = await elementToPNGDataURL(container);
@@ -6131,8 +6134,10 @@ function renderTowerDetail(lineName, towerNum) {
     let state;
     try { state = JSON.parse(r.insulator_state); } catch(e) { state = null; }
     if (state) {
-      // نطرح المعالجات المرتبطة بهذا السجل + نحسب مستوى دورة كل عازل
-      const { cycle: insCycle, treatedIdx } = computeInsulatorCycleAndTreated(r.id);
+      // نطرح المعالجات المرتبطة بهذا السجل + نحسب مستوى دورة كل عازل (موروث + من هذا السجل)
+      let baselineCycle = null;
+      if (r.insulator_cycle) { try { baselineCycle = JSON.parse(r.insulator_cycle); } catch(e) {} }
+      const { cycle: insCycle, treatedIdx } = computeInsulatorCycleAndTreated(r.id, state, baselineCycle);
 
       html += `<div class="form-card" style="margin-bottom:14px">
         <h3>🔘 العوازل</h3>
@@ -6303,9 +6308,17 @@ function renderReadonlyV(state, treatedIdx, cycleArr) {
   return svg;
 }
 
-// يحسب من سجل المعالجات: مستوى دورة كل عازل (كم مرة عولج) + قائمة المؤشرات المعالجة لهذا السجل تحديداً
-function computeInsulatorCycleAndTreated(inspectionId) {
+// يحسب مستوى دورة كل عازل (كم مرة عولج تاريخياً) + قائمة المؤشرات "المعالجة سابقاً وسليمة حالياً" (تظهر أخضر)
+// baselineCycle: القيمة المتوارثة من r.insulator_cycle (محفوظة وقت إنشاء هذا السجل) — تضمن استمرار اللون الأخضر
+// عبر أجيال الكشوفات المتلاحقة، مو فقط داخل نفس السجل
+function computeInsulatorCycleAndTreated(inspectionId, state, baselineCycle) {
   const cycle = {R:[],S:[],T:[]}, treatedIdx = {R:[],S:[],T:[]};
+  ['R','S','T'].forEach(phase => {
+    const base = (baselineCycle && baselineCycle[phase]) || [];
+    const len = (state && state[phase] || []).length;
+    cycle[phase] = Array(len).fill(0).map((v,i) => base[i]||0);
+  });
+  // معالجات مرتبطة مباشرة بهذا السجل تحديداً (لو عولج بعد إنشائه، بنفس دورته الحالية)
   const towerTreatments = treatmentsCache.filter(t => t.inspection_id === inspectionId).slice().reverse(); // الأقدم أولاً
   towerTreatments.forEach(t => {
     (t.items_treated||[]).forEach(item => {
@@ -6317,12 +6330,17 @@ function computeInsulatorCycleAndTreated(inspectionId) {
           const phase = m[1];
           (before[phase]||[]).forEach((wasDamaged, i) => {
             if (wasDamaged && after[phase] && !after[phase][i]) {
-              if (!treatedIdx[phase].includes(i)) treatedIdx[phase].push(i);
               cycle[phase][i] = (cycle[phase][i]||0) + 1;
             }
           });
         } catch(e) {}
       }
+    });
+  });
+  // أي موضع سليم حالياً وعنده مستوى دورة > 0 (سواء موروث أو من معالجة بنفس السجل) = "معالج سابقاً" (أخضر)
+  ['R','S','T'].forEach(phase => {
+    (state && state[phase] || []).forEach((dmg, i) => {
+      if (!dmg && (cycle[phase][i]||0) > 0) treatedIdx[phase].push(i);
     });
   });
   return { cycle, treatedIdx };
@@ -6684,7 +6702,7 @@ async function exportOpenDeparturesPDF() {
         const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator');
         let insImg = null;
         if (hasOpenInsulatorDep && r.insulator_state) {
-          const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id);
+          const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id, r.insulator_cycle);
           if (container) {
             try { insImg = await elementToPNGDataURL(container); } catch(e) {}
             if (container.parentNode) container.parentNode.remove();
@@ -6947,7 +6965,9 @@ function renderDepTowerDetail(lineName, towerNum) {
         </div>
         <div id="depTowerInsulators" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>
       </div>`;
-      const { cycle: insCycleDep, treatedIdx: treatedIdxDep } = computeInsulatorCycleAndTreated(r.id);
+      let baselineCycleDep = null;
+      if (r.insulator_cycle) { try { baselineCycleDep = JSON.parse(r.insulator_cycle); } catch(e) {} }
+      const { cycle: insCycleDep, treatedIdx: treatedIdxDep } = computeInsulatorCycleAndTreated(r.id, state, baselineCycleDep);
       setTimeout(() => renderTowerDetailInsulators(state, treatedIdxDep, mode, stA, stB, 'depTowerInsulators', insCycleDep), 10);
     }
   }
@@ -7094,8 +7114,16 @@ function renderTreatItems() {
     catch(e) { treatInsulatorState = {R:[],S:[],T:[]}; }
   } else { treatInsulatorState = {R:[],S:[],T:[]}; }
 
-  // نحمّل مستوى دورة المعالجة من آخر معالجة سابقة لهذا السجل (treatmentsCache مرتبة created_at.desc)
+  // نحمّل مستوى دورة المعالجة: أولاً من القيمة الموروثة المحفوظة بالسجل نفسه (insulator_cycle)،
+  // وبعدين نطبّق آخر معالجة سابقة لهذا السجل (لو موجودة) فوقها — لضمان استمرار العمق الصحيح
+  // حتى لو هذا أول معالجة لهذا السجل تحديداً (سجل جديد منقول من كشف سابق)
   treatCycleState = { R: Array((treatInsulatorState.R||[]).length).fill(0), S: Array((treatInsulatorState.S||[]).length).fill(0), T: Array((treatInsulatorState.T||[]).length).fill(0) };
+  if (r.insulator_cycle) {
+    try {
+      const baseCyc = JSON.parse(r.insulator_cycle);
+      ['R','S','T'].forEach(phase => { if (baseCyc[phase]) treatCycleState[phase] = baseCyc[phase]; });
+    } catch(e) {}
+  }
   const latestCycle = treatmentsCache.find(t => t.inspection_id === r.id && t.insulator_cycle_after);
   if (latestCycle) {
     try {
