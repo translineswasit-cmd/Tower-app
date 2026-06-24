@@ -4127,6 +4127,35 @@ async function syncThermalQueue() {
   if (synced > 0) showToast(`✅ تم إرسال ${synced} قياس حراري محفوظ أوف لاين`);
 }
 
+async function deleteThermalRecord(id, lineName) {
+  if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) {
+    showToast('⚠️ الحذف من صلاحيات المدير أو المشرف فقط', 'error');
+    return;
+  }
+  if (!confirm('🗑️ تأكيد حذف هذا النشاط من الكشف الحراري؟ هذا الإجراء لا يمكن التراجع عنه.')) return;
+  try {
+    const res = await sbFetch(`thermal_inspections?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error();
+    showToast('🗑️ تم حذف النشاط');
+    await loadThermalArchive();
+    // تحقق من وجود برقية عمل جاهزة لنفس الخط، ونعرض خيار حذفها أيضًا
+    if (lineName) {
+      try {
+        const tgRes = await sbFetch(`work_telegrams?line_name=eq.${encodeURIComponent(lineName)}&status=neq.تنفذت&select=id,status,created_at`);
+        const telegrams = await tgRes.json();
+        if (telegrams.length) {
+          if (confirm(`⚠️ يوجد ${telegrams.length} برقية عمل غير منفذة لنفس الخط "${lineName}". هل تريد حذفها أيضًا؟`)) {
+            await Promise.all(telegrams.map(t => sbFetch(`work_telegrams?id=eq.${t.id}`, { method: 'DELETE' })));
+            showToast('🗑️ تم حذف برقيات العمل المرتبطة');
+          }
+        }
+      } catch (e) { /* تجاهل، الحذف الأساسي نجح بالفعل */ }
+    }
+  } catch (e) {
+    showToast('❌ تعذر الحذف', 'error');
+  }
+}
+
 async function loadThermalArchive() {
   const body = document.getElementById('thermalArchiveBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
@@ -4192,7 +4221,7 @@ function renderThermalArchive() {
       const ambient = rows[0].ambient_temp ?? '—';
       html += `<div class="thermal-line-header"><span>📡 ${line}</span><span>🌤️ حرارة الجو: ${ambient}°C — عدد النقاط: ${rows.length}</span></div>`;
       html += `<table class="thermal-points-table"><thead><tr>
-        <th>النقطة</th><th>R1</th><th>R2</th><th>S1</th><th>S2</th><th>T1</th><th>T2</th><th>الموظف</th>
+        <th>النقطة</th><th>R1</th><th>R2</th><th>S1</th><th>S2</th><th>T1</th><th>T2</th><th>الموظف</th><th></th>
       </tr></thead><tbody>`;
       rows.sort((a,b) => (a.tower_number||0) - (b.tower_number||0));
       rows.forEach(r => {
@@ -4203,6 +4232,7 @@ function renderThermalArchive() {
           <td>${fmtTemp(r, r.s1)}</td><td>${fmtTemp(r, r.s2)}</td>
           <td>${fmtTemp(r, r.t1)}</td><td>${fmtTemp(r, r.t2)}</td>
           <td>${r.created_by_name||'—'}</td>
+          <td>${(currentUser.role==='admin'||currentUser.role==='supervisor')?`<button class="btn-sm btn-del" onclick="deleteThermalRecord('${r.id}','${(line||'').replace(/'/g,"\\'")}')">🗑️</button>`:''}</td>
         </tr>`;
       });
       html += `</tbody></table>`;
@@ -6880,6 +6910,22 @@ async function syncTreatmentQueue() {
   if (synced > 0) { showToast(`✅ تم إرسال ${synced} معالجة محفوظة أوف لاين`); await loadTreatments(); }
 }
 
+async function deleteTreatmentRecord(id) {
+  if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) {
+    showToast('⚠️ الحذف من صلاحيات المدير أو المشرف فقط', 'error');
+    return;
+  }
+  if (!confirm('🗑️ تأكيد حذف هذه المعالجة؟ هذا الإجراء لا يمكن التراجع عنه.')) return;
+  try {
+    const res = await sbFetch(`treatments?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error();
+    showToast('🗑️ تم حذف المعالجة');
+    renderDepLog();
+  } catch (e) {
+    showToast('❌ تعذر الحذف', 'error');
+  }
+}
+
 async function renderDepLog() {
   const body = document.getElementById('depLogBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
@@ -6904,6 +6950,7 @@ async function renderDepLog() {
       <div class="dep-card-header">
         <div class="dep-card-title">✅ ${t.line_name} — برج ${t.tower_number}</div>
         <div class="dep-card-meta">📅 ${t.treatment_date} | 👤 ${t.treated_by||'—'}</div>
+        ${(currentUser.role==='admin'||currentUser.role==='supervisor')?`<button class="btn-sm btn-del" onclick="deleteTreatmentRecord('${t.id}')">🗑️ حذف</button>`:''}
       </div>
       <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap">
         ${t.insulator_svg_r?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">R</div>${t.insulator_svg_r}</div>`:''}
