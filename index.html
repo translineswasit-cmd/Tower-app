@@ -2772,8 +2772,12 @@ async function saveRecord() {
     d.client_uuid = genUUID(); // مفتاح فريد يمنع تكرار الكشف عند إعادة الإرسال
     if (navigator.onLine) {
       try {
-        const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(d) });
-        if (res.ok) { showToast('✅ تم حفظ الكشف بنجاح'); afterGridSaveSuccess(d); }
+        const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=representation'}, body: JSON.stringify(d) });
+        if (res.ok) {
+          let savedRow = d;
+          try { const arr = await res.json(); if (Array.isArray(arr) && arr.length && arr[0].id) savedRow = arr[0]; } catch(e) {}
+          showToast('✅ تم حفظ الكشف بنجاح'); afterGridSaveSuccess(savedRow);
+        }
         else throw new Error();
       } catch {
         addToQueue(d);
@@ -2791,8 +2795,10 @@ async function saveRecord() {
 
 // بعد حفظ ناجح (أو تخزين أوف لاين) لكشف برج من شبكة الأبراج:
 // نحدّث الكاش المحلي فوراً لتلوين البرج بالشبكة بدون انتظار إعادة تحميل، نغلق النافذة المنبثقة، ونمسح حقول البرج فقط (لا نمسح الخط/التاريخ المختار)
+// مهم: لو الحفظ أونلاين ونجح، d هنا هو الصف الحقيقي المرجَع من السيرفر (فيه id صحيح) — وليس النسخة المحلية الناقصة،
+// لتجنّب خلل "سجل بلا id" يفسد اختيار آخر كشف لاحقاً (بالمعالجة أو الكشف الجديد)
 function afterGridSaveSuccess(d) {
-  fullRecordsCache.unshift({ ...d, created_at: new Date().toISOString() });
+  fullRecordsCache.unshift({ ...d, created_at: d.created_at || new Date().toISOString() });
   document.getElementById('towerInspectionModal').classList.remove('show');
   resetTowerFieldsOnly();
   if (currentGridLine) renderTowersGrid(currentGridLine);
