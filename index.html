@@ -6511,6 +6511,120 @@ function renderReadonlyV(state, treatedIdx, cycleArr) {
   return svg;
 }
 
+// ========================
+// رسم العوازل مباشرة بـ Canvas 2D (بدون SVG/HTML→صورة) — لضمان عمل تصدير المغادرات بشكل موثوق على كل الأجهزة
+// ========================
+function drawVShapeCanvas(ctx, originX, originY, state, treatedIdx, cycleArr) {
+  const treatedSet = new Set(treatedIdx||[]);
+  const N=28, svgW=140, svgH=110, gap=18, tipY=svgH-8, tipLX=svgW/2-gap/2, tipRX=svgW/2+gap/2, tlX=8, tlY=8, trX=svgW-8, trY=8, rw=12, rh=7;
+  function addP(cx,cy,angle,idx) {
+    const ca=Math.cos(angle), sa=Math.sin(angle);
+    const pts=[[-rw/2,-rh/2],[rw/2,-rh/2],[rw/2,rh/2],[-rw/2,rh/2]].map(([x,y])=>[originX+cx+x*ca-y*sa, originY+cy+x*sa+y*ca]);
+    const [fill, stroke] = rectColor((state||[])[idx], treatedSet.has(idx), (cycleArr&&cycleArr[idx])||0);
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.strokeStyle = stroke; ctx.lineWidth = 0.8; ctx.stroke();
+  }
+  const angL=Math.atan2(tlY-tipY,tlX-tipLX), angR=Math.atan2(trY-tipY,trX-tipRX);
+  for(let i=0;i<N;i++){const t=i/(N-1); addP(tipLX+(tlX-tipLX)*t,tipY+(tlY-tipY)*t,angL,i); addP(tipRX+(trX-tipRX)*t,tipY+(trY-tipY)*t,angR,N+i);}
+  return { w: svgW, h: svgH };
+}
+
+function drawChainCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, cols, rows) {
+  const treatedSet = new Set(treatedIdx||[]);
+  const isQuad = cols >= 4;
+  const w = isQuad?11:18, h = isQuad?8:14, gap = isQuad?1.2:2, colGap = isQuad?3.5:6;
+  for (let col=0; col<cols; col++) {
+    for (let row=0; row<rows; row++) {
+      const idx = col*rows+row;
+      const x = originX + col*(w+colGap), y = originY + row*(h+gap);
+      const [fill, stroke] = rectColor((state||[])[idx], treatedSet.has(idx), (cycleArr&&cycleArr[idx])||0);
+      ctx.fillStyle = fill; ctx.fillRect(x,y,w,h);
+      ctx.strokeStyle = stroke; ctx.lineWidth = isQuad?1:1.5; ctx.strokeRect(x,y,w,h);
+    }
+  }
+  return { w: cols*w+(cols-1)*colGap, h: rows*(h+gap)-gap };
+}
+
+function drawGroupedCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, totalCols, rows, stA, stB) {
+  const treatedSet = new Set(treatedIdx||[]);
+  const colsPerGroup = totalCols/2;
+  const isQuad = totalCols >= 4;
+  const w = isQuad?11:18, h = isQuad?8:14, gap = isQuad?1.2:2, colGap = isQuad?3.5:6;
+  const groupW = colsPerGroup*w + (colsPerGroup-1)*colGap;
+  const interGroupGap = 14;
+  ctx.font = '9px Tahoma, Arial';
+  ctx.fillStyle = '#4A5568';
+  ctx.textAlign = 'center';
+  ctx.fillText('جهة ' + (stA||'A'), originX + groupW/2, originY + 8);
+  ctx.fillText('جهة ' + (stB||'B'), originX + groupW + interGroupGap + groupW/2, originY + 8);
+  const gy = originY + 14;
+  for (let g=0; g<2; g++) {
+    const gx = originX + g*(groupW+interGroupGap);
+    for (let c=0; c<colsPerGroup; c++) {
+      const col = c + g*colsPerGroup;
+      for (let row=0; row<rows; row++) {
+        const idx = col*rows+row;
+        const x = gx + c*(w+colGap), y = gy + row*(h+gap);
+        const [fill, stroke] = rectColor((state||[])[idx], treatedSet.has(idx), (cycleArr&&cycleArr[idx])||0);
+        ctx.fillStyle = fill; ctx.fillRect(x,y,w,h);
+        ctx.strokeStyle = stroke; ctx.lineWidth = isQuad?1:1.5; ctx.strokeRect(x,y,w,h);
+      }
+    }
+  }
+  return { w: groupW*2+interGroupGap, h: 14 + rows*(h+gap) - gap };
+}
+
+// يبني صورة PNG واحدة فيها الفيزات R/S/T جنب بعض — بالرسم المباشر فقط، بدون أي تحويل HTML/SVG وسيط
+function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineName, insulatorCycleJSON) {
+  const state = safeParseJSON(insulatorStateJSON);
+  if (!state) return null;
+  const hasDamage = ['R','S','T'].some(p => (state[p]||[]).some(Boolean));
+  if (!hasDamage) return null;
+  const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
+  const [stA, stB] = lineName ? lineEndpoints(lineName) : ['',''];
+  const cycleAll = safeParseJSON(insulatorCycleJSON) || {R:[],S:[],T:[]};
+  const treatedAll = getInsulatorTreatedIdx(state, cycleAll);
+
+  const scale = 2;
+  const phaseW = 170, phaseH = 320; // مساحة ثابتة كافية لأي شكل (V أو سلاسل أو مجمّعة)
+  const gapBetweenPhases = 14, labelH = 18;
+  const totalW = phaseW*3 + gapBetweenPhases*2 + 16;
+  const totalH = labelH + phaseH + 16;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(totalW*scale);
+  canvas.height = Math.round(totalH*scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,totalW,totalH);
+  ctx.direction = 'rtl'; ctx.textBaseline = 'alphabetic';
+
+  ['R','S','T'].forEach((phase, pi) => {
+    const originX = 8 + pi*(phaseW+gapBetweenPhases);
+    let y = 8;
+    ctx.font = 'bold 12px Tahoma, Arial';
+    ctx.fillStyle = '#2E4057';
+    ctx.textAlign = 'center';
+    ctx.fillText('الفيز ' + phase, originX + phaseW/2, y + 10);
+    y += labelH;
+    const cyc = cycleAll[phase] || [];
+    const treated = treatedAll[phase] || [];
+    const st = state[phase] || [];
+    if (mode === 'v') drawVShapeCanvas(ctx, originX + (phaseW-140)/2, y, st, treated, cyc);
+    else if (mode === 'straight4') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 4, 32, stA, stB);
+    else if (mode === 'chain4_12') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 4, 12, stA, stB);
+    else if (mode === 'chain2_12') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 2, 12, stA, stB);
+    else if (mode === 'chain1_10') drawChainCanvas(ctx, originX, y, st, treated, cyc, 1, 10);
+    else drawChainCanvas(ctx, originX, y, st, treated, cyc, 2, mode==='chain2_10'?10:12);
+  });
+
+  return { dataUrl: canvas.toDataURL('image/png'), w: totalW, h: totalH };
+}
+
 let editingLineIdx = null;
 
 function openAddLineModal() {
@@ -6846,15 +6960,11 @@ async function exportOpenDeparturesPDF() {
         }
         const towerImg = drawArabicTextPNG(items, pageW - margin*2, { border: true });
 
-        // صور العوازل (فقط لو فيها مغادرة عازل مفتوحة)
+        // صور العوازل (فقط لو فيها مغادرة عازل مفتوحة) — رسم مباشر بـ Canvas، بدون أي تحويل HTML/SVG وسيط
         const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator');
         let insImg = null;
         if (hasOpenInsulatorDep && r.insulator_state) {
-          const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id, r.insulator_cycle);
-          if (container) {
-            try { insImg = await elementToPNGDataURL(container); } catch(e) {}
-            if (container.parentNode) container.parentNode.remove();
-          }
+          insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle);
         }
 
         let blockH = 0;
@@ -6863,7 +6973,7 @@ async function exportOpenDeparturesPDF() {
           const h = w * (towerImg.h / towerImg.w);
           blockH += h;
         }
-        if (insImg) blockH += 130;
+        if (insImg) blockH += 150;
         blockH += 16;
 
         if (y + blockH > pageH - margin) { doc.addPage(); y = margin; }
@@ -6875,12 +6985,11 @@ async function exportOpenDeparturesPDF() {
           y += h + 6;
         }
         if (insImg) {
-          const imgProps = doc.getImageProperties(insImg);
-          const maxW = pageW - margin*2, maxH = 120;
-          let w = imgProps.width, h = imgProps.height;
+          const maxW = pageW - margin*2, maxH = 150;
+          let w = insImg.w, h = insImg.h;
           const scale = Math.min(maxW/w, maxH/h, 1);
           w *= scale; h *= scale;
-          doc.addImage(insImg, 'PNG', margin, y, w, h);
+          doc.addImage(insImg.dataUrl, 'PNG', margin, y, w, h);
           y += h + 6;
         }
         y += 10;
