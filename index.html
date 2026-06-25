@@ -4804,7 +4804,7 @@ function buildMemoCanvasPNG(widthCss) {
   mctx.font = fontNormal;
   const lineContentWidth = widthCss - sidePad*2;
   // النقطة اليمنى الثابتة لبداية السطرين (٨٠٪ من عرض السطر) — نرسم بـ RTL طبيعي حتى تُقرأ "العدد : 240" بالترتيب الصحيح
-  const headerStartX = widthCss - sidePad - lineContentWidth * 0.20;
+  const headerStartX = sidePad + lineContentWidth * 0.20; // يبعد 80% عن يمين الورقة (أي 20% من بداية اليسار)
   ops.push({ type:'text', text: `العدد : ${number}`, x: headerStartX, y: y + lh*0.7, font: fontNormal, align:'right', dir:'rtl' });
   ops.push({ type:'text', text: `التاريخ : ${date}`, x: headerStartX, y: y + lh*1.6, font: fontNormal, align:'right', dir:'rtl' });
   y += Math.max(toLines.length*lh*0.85, lh*1.7) + lh*1.5; // مسافة حتى السطر 5 تقريباً
