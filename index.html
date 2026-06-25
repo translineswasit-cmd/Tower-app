@@ -1558,8 +1558,16 @@ tbody tr:hover { background: #F7FAFC; }
         <div class="field"><label>التاريخ</label><input type="date" id="memo_date"></div>
       </div>
       <div class="field" style="margin-top:10px">
-        <label>نص المذكرة (تكتب وتعدّل براحتك)</label>
-        <textarea id="memo_body" rows="18" style="font-size:1rem;line-height:1.8"></textarea>
+        <label>إلى</label>
+        <input type="text" id="memo_to" value="الى / السيـد المـديـر الـمحتـرم...">
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label>الموضوع</label>
+        <input type="text" id="memo_subject" placeholder="اكتب نص الموضوع فقط (يُضاف &quot;م/&quot; تلقائياً)">
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label>المحتوى</label>
+        <textarea id="memo_body" rows="14" style="font-size:1rem;line-height:1.8" placeholder="اكتب متن المذكرة هنا فقط (بدون إلى أو الموضوع أو مع التقدير — تُضاف تلقائياً)"></textarea>
       </div>
       <div id="memoTableSection" style="margin-top:14px">
         <button class="btn-sm btn-secondary" id="memoAddTableBtn" onclick="addMemoTable()">➕ إضافة جدول</button>
@@ -1572,10 +1580,14 @@ tbody tr:hover { background: #F7FAFC; }
           </div>
         </div>
       </div>
+      <div class="grid-2" style="margin-top:10px">
+        <div class="field"><label>عنوان مقدم الطلب (اختياري)</label><input type="text" id="memo_sender_title"></div>
+        <div class="field"><label>اسم مقدم الطلب (اختياري)</label><input type="text" id="memo_sender_name"></div>
+      </div>
     </div>
     <div class="form-actions" style="margin-top:14px">
       <button class="btn btn-primary" onclick="saveMemo()">💾 حفظ بالأرشيف</button>
-      <button class="btn btn-secondary" onclick="printMemo()">🖨️ طباعة</button>
+      <button class="btn btn-secondary" onclick="exportMemoPDF()">📄 تصدير PDF</button>
       <button class="btn btn-secondary" onclick="shareMemoWord()">📤 إرسال (ملف Word)</button>
     </div>
   </div>
@@ -4575,7 +4587,11 @@ async function showMemoNew() {
   if (!editingMemoId) {
     document.getElementById('memo_date').value = new Date().toISOString().split('T')[0];
     document.getElementById('memo_number').value = await generateNextMemoNumber();
-    document.getElementById('memo_body').value = 'الى / السيد المدير المحترم ...\n\nم / \n\n\n\n\nمع التقدير...\n\nمقدم الطلب';
+    document.getElementById('memo_to').value = 'الى / السيـد المـديـر الـمحتـرم...';
+    document.getElementById('memo_subject').value = '';
+    document.getElementById('memo_body').value = '';
+    document.getElementById('memo_sender_title').value = '';
+    document.getElementById('memo_sender_name').value = '';
     memoTableData = null;
     renderMemoTableEditor();
   }
@@ -4603,9 +4619,13 @@ async function generateNextMemoNumber() {
 async function saveMemo() {
   const number = document.getElementById('memo_number').value;
   const date = document.getElementById('memo_date').value;
+  const to = document.getElementById('memo_to').value;
+  const subject = document.getElementById('memo_subject').value;
   const body = document.getElementById('memo_body').value;
-  if (!date || !body.trim()) { showToast('⚠️ اكمل التاريخ ونص المذكرة', 'error'); return; }
-  const payload = { memo_number: number, memo_date: date, subject: '', content: body, table_data: memoTableData, created_by: currentUser.full_name };
+  const senderTitle = document.getElementById('memo_sender_title').value;
+  const senderName = document.getElementById('memo_sender_name').value;
+  if (!date || !body.trim()) { showToast('⚠️ اكمل التاريخ ومحتوى المذكرة', 'error'); return; }
+  const payload = { memo_number: number, memo_date: date, memo_to: to, subject: subject, content: body, sender_title: senderTitle, sender_name: senderName, table_data: memoTableData, created_by: currentUser.full_name };
   try {
     if (editingMemoId) {
       const res = await sbFetch(`memos?id=eq.${editingMemoId}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -4624,11 +4644,11 @@ async function renderMemoArchive() {
   const body = document.getElementById('memoArchiveBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   try {
-    const res = await sbFetch('memos?select=id,memo_number,memo_date,content,created_by&order=memo_date.desc');
+    const res = await sbFetch('memos?select=id,memo_number,memo_date,subject,content,created_by&order=memo_date.desc');
     const list = await res.json();
     if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد مذكرات محفوظة بعد</div>'; return; }
     body.innerHTML = list.map(m => {
-      const preview = (m.content || '').split('\n').map(l => l.trim()).filter(l => l && l !== 'الى / السيد المدير المحترم ...')[0] || 'بدون عنوان';
+      const preview = m.subject || (m.content || '').split('\n').map(l => l.trim()).filter(l => l)[0] || 'بدون عنوان';
       return `
       <div class="dep-card" style="cursor:pointer" onclick="openMemoFromArchive('${m.id}')">
         <div class="dep-card-header">
@@ -4652,7 +4672,11 @@ async function openMemoFromArchive(id) {
     document.getElementById('memoArchiveView').style.display = 'none';
     document.getElementById('memo_number').value = m.memo_number || '';
     document.getElementById('memo_date').value = m.memo_date || '';
+    document.getElementById('memo_to').value = m.memo_to || 'الى / السيـد المـديـر الـمحتـرم...';
+    document.getElementById('memo_subject').value = m.subject || '';
     document.getElementById('memo_body').value = m.content || '';
+    document.getElementById('memo_sender_title').value = m.sender_title || '';
+    document.getElementById('memo_sender_name').value = m.sender_name || '';
     memoTableData = m.table_data || null;
     renderMemoTableEditor();
     showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
@@ -4661,32 +4685,26 @@ async function openMemoFromArchive(id) {
 
 // نسخة Word: جداول HTML تقليدية فقط بدون أي Flexbox أو خصائص حديثة (برامج Word/WPS لا تدعمها وتكسر التنسيق)
 function buildMemoFormattedParagraphsHTML(lines) {
-  let afterSignoff = false;
-  return lines.map(line => {
+  return lines.map((line, i) => {
     const t = line.trim();
-    if (afterSignoff) return `<p align="left">${t || '&#160;'}</p>`;
-    if (t.startsWith('م /') || t.startsWith('م/')) return `<p align="center" style="font-weight:700">${t}</p>`;
-    if (t.startsWith('مع التقدير')) return `<p align="center">${t}</p>`;
-    if (t === 'مقدم الطلب') { afterSignoff = true; return `<p align="left">${t}</p>`; }
-    return `<p>${t || '&#160;'}</p>`;
+    const indentStyle = i === 0 ? 'text-indent:3ch;' : '';
+    return `<p style="${indentStyle}margin:0 0 4px 0">${t || '&#160;'}</p>`;
   }).join('');
 }
 
 function buildMemoWordHTML() {
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  let lines = (document.getElementById('memo_body').value || '').split('\n');
-  let greetingLine = '';
-  const firstIdx = lines.findIndex(l => l.trim() !== '');
-  if (firstIdx !== -1 && lines[firstIdx].includes('الى')) {
-    greetingLine = lines[firstIdx].trim();
-    lines = lines.filter((_, i) => i !== firstIdx);
-  }
+  const to = document.getElementById('memo_to').value || '';
+  const subject = document.getElementById('memo_subject').value || '';
+  const content = document.getElementById('memo_body').value || '';
+  const senderTitle = document.getElementById('memo_sender_title').value || '';
+  const senderName = document.getElementById('memo_sender_name').value || '';
   return `
     <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
-          <td style="font-weight:700" align="right">${greetingLine}</td>
+          <td style="font-weight:700" align="right">${to}</td>
           <td align="left" style="white-space:nowrap">العدد&#160;:&#160;${number}</td>
         </tr>
         <tr>
@@ -4694,8 +4712,14 @@ function buildMemoWordHTML() {
           <td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;${date}</td>
         </tr>
       </table>
-      <div style="margin-top:18px">${buildMemoFormattedParagraphsHTML(lines)}</div>
+      <p align="center" style="font-weight:700;margin-top:14px">م / ${subject}</p>
+      <div style="margin-top:18px;text-align:justify">${buildMemoFormattedParagraphsHTML(content.split('\n'))}</div>
+      <p align="center" style="margin-top:18px">مع التقدير …</p>
       ${buildMemoTableHTML()}
+      <div style="margin-top:60px;margin-right:40%">
+        ${senderTitle ? `<p>${senderTitle}</p>` : ''}
+        ${senderName ? `<p>${senderName}</p>` : ''}
+      </div>
     </div>
   `;
 }
@@ -4711,59 +4735,200 @@ function buildMemoTableHTML() {
 function buildMemoBodyHTML() {
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  let lines = (document.getElementById('memo_body').value || '').split('\n');
-  let greetingLine = '';
-  const firstIdx = lines.findIndex(l => l.trim() !== '');
-  if (firstIdx !== -1 && lines[firstIdx].includes('الى')) {
-    greetingLine = lines[firstIdx].trim();
-    lines = lines.filter((_, i) => i !== firstIdx);
-  }
+  const to = document.getElementById('memo_to').value || '';
+  const subject = document.getElementById('memo_subject').value || '';
+  const content = document.getElementById('memo_body').value || '';
+  const senderTitle = document.getElementById('memo_sender_title').value || '';
+  const senderName = document.getElementById('memo_sender_name').value || '';
   return `
     <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div style="font-weight:700">${greetingLine}</div>
+        <div style="font-weight:700">${to}</div>
         <div>
           <div style="white-space:nowrap">العدد&#160;:&#160;${number}</div>
           <div style="white-space:nowrap;margin-top:2px">التاريخ&#160;:&#160;${date}</div>
         </div>
       </div>
-      <div style="margin-top:18px">${buildMemoFormattedParagraphsHTML(lines)}</div>
+      <p align="center" style="font-weight:700;margin-top:14px">م / ${subject}</p>
+      <div style="margin-top:18px;text-align:justify">${buildMemoFormattedParagraphsHTML(content.split('\n'))}</div>
+      <p align="center" style="margin-top:18px">مع التقدير …</p>
       ${buildMemoTableHTML()}
+      <div style="margin-top:60px;margin-right:40%">
+        ${senderTitle ? `<p>${senderTitle}</p>` : ''}
+        ${senderName ? `<p>${senderName}</p>` : ''}
+      </div>
     </div>
   `;
 }
 
 // طباعة نظيفة بدون أي نص زائد (رابط/تاريخ) يضيفه نظام iOS تلقائيًا عند الطباعة المباشرة:
-// نولّد ملف PDF حقيقي من تصميم المذكرة نفسه، ثم نشاركه (تظهر خيارات الطباعة والإرسال ضمن القائمة الأصلية)
+// نولّد ملف PDF حقيقي برسم النص مباشرة بـ Canvas 2D (أوثق من تقنية HTML→صورة، نفس أسلوب تصدير المغادرات)
+function buildMemoCanvasPNG(widthCss) {
+  const number = document.getElementById('memo_number').value || '';
+  const date = document.getElementById('memo_date').value || '';
+  const to = document.getElementById('memo_to').value || '';
+  const subject = document.getElementById('memo_subject').value || '';
+  const contentRaw = document.getElementById('memo_body').value || '';
+  const senderTitle = document.getElementById('memo_sender_title').value || '';
+  const senderName = document.getElementById('memo_sender_name').value || '';
+
+  const sidePad = 30, scale = 2;
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+  const fontNormal = '15px Tahoma, Arial';
+  const fontBold = 'bold 15px Tahoma, Arial';
+  const lh = 15 * 1.9; // ارتفاع السطر
+
+  function wrapText(ctx, text, maxWidth) {
+    const words = String(text).split(' ').filter(w => w !== '');
+    const out = []; let line = '';
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxWidth && line) { out.push(line); line = word; }
+      else { line = test; }
+    }
+    if (line) out.push(line);
+    return out.length ? out : [''];
+  }
+
+  const ops = [];
+  let y = 30;
+
+  // السطر 1-2: العدد والتاريخ أعلى يسار | بنفس المستوى: "إلى" أعلى يمين
+  mctx.font = fontBold;
+  const leftColWidth = 160;
+  const rightColWidth = widthCss - sidePad*2 - leftColWidth - 10;
+  const toLines = wrapText(mctx, to, rightColWidth);
+  toLines.forEach((ln, i) => ops.push({ type:'text', text: ln, x: widthCss - sidePad, y: y + i*lh*0.85 + lh*0.7, font: fontBold, align:'right' }));
+  mctx.font = fontNormal;
+  ops.push({ type:'text', text: `العدد : ${number}`, x: sidePad, y: y + lh*0.7, font: fontNormal, align:'left' });
+  ops.push({ type:'text', text: `التاريخ : ${date}`, x: sidePad, y: y + lh*1.6, font: fontNormal, align:'left' });
+  y += Math.max(toLines.length*lh*0.85, lh*1.7) + lh*1.5; // مسافة حتى السطر 5 تقريباً
+
+  // السطر 5: الموضوع "م/ ..." بالنص
+  mctx.font = fontBold;
+  ops.push({ type:'text', text: `م / ${subject}`, x: widthCss/2, y: y + lh*0.7, font: fontBold, align:'center' });
+  y += lh * 1.3;
+
+  // السطر 6+: المحتوى — تسطيب كامل (يمين ويسار متناسقين)، أول سطر فقط بمسافة 3 حروف
+  mctx.font = fontNormal;
+  const contentMaxWidth = widthCss - sidePad*2;
+  const indentWidth = mctx.measureText('   ').width; // مسافة 3 حروف
+  const contentLines = contentRaw.split('\n');
+  const justifiedRows = []; // {words, isLastOfParagraph, indent}
+  contentLines.forEach((rawLine, li) => {
+    const t = rawLine.trim();
+    if (!t) { justifiedRows.push({ words: [], blank: true }); return; }
+    const isFirstLineOfContent = justifiedRows.filter(r=>!r.blank).length === 0;
+    const avail = contentMaxWidth - (isFirstLineOfContent ? indentWidth : 0);
+    const wrapped = wrapText(mctx, t, avail);
+    wrapped.forEach((wline, wi) => {
+      const isLastWrapOfThisRawLine = wi === wrapped.length - 1;
+      justifiedRows.push({
+        words: wline.split(' ').filter(w=>w),
+        blank: false,
+        indent: (isFirstLineOfContent && wi === 0) ? indentWidth : 0,
+        isLastOfParagraph: isLastWrapOfThisRawLine // آخر سطر بفقرة (الأسطر بسبب فاصلة سطر بالأصل) لا يُسطَّب (محاذاة عادية)
+      });
+    });
+  });
+  justifiedRows.forEach(row => {
+    if (row.blank) { y += lh; return; }
+    const x0 = widthCss - sidePad - row.indent;
+    const maxW = contentMaxWidth - row.indent;
+    if (row.isLastOfParagraph || row.words.length <= 1) {
+      // محاذاة عادية يمين (بدون تسطيب) — السطر الأخير بالفقرة
+      ops.push({ type:'text', text: row.words.join(' '), x: x0, y: y + lh*0.7, font: fontNormal, align:'right' });
+    } else {
+      // تسطيب: نوزّع المسافات الفائضة بالتساوي بين الكلمات حتى يتساوى بداية ونهاية كل الأسطر
+      const totalWordsWidth = row.words.reduce((s,w) => s + mctx.measureText(w).width, 0);
+      const gap = Math.max(mctx.measureText(' ').width, (maxW - totalWordsWidth) / (row.words.length - 1));
+      let curX = x0;
+      row.words.forEach(w => {
+        ops.push({ type:'text', text: w, x: curX, y: y + lh*0.7, font: fontNormal, align:'right' });
+        curX -= (mctx.measureText(w).width + gap);
+      });
+    }
+    y += lh;
+  });
+  const contentEndY = y;
+
+  // "مع التقدير …" — سطر واحد تحت المحتوى، بالنص
+  y += lh;
+  mctx.font = fontNormal;
+  ops.push({ type:'text', text: 'مع التقدير …', x: widthCss/2, y: y + lh*0.7, font: fontNormal, align:'center' });
+  const afterTeqdeerY = y;
+
+  // الجدول (لو موجود) — يُدرج بعد مع التقدير مباشرة
+  y += lh * 1.6;
+  if (typeof memoTableData !== 'undefined' && memoTableData && memoTableData.length) {
+    const cols = memoTableData[0].length;
+    const colW = (widthCss - sidePad*2) / cols;
+    const rowH = 30;
+    memoTableData.forEach(row => {
+      row.forEach((cell, ci) => {
+        const cx = sidePad + ci*colW;
+        ops.push({ type:'rect', x: cx, y: y, w: colW, h: rowH });
+        mctx.font = '14px Tahoma, Arial';
+        ops.push({ type:'text', text: cell || '', x: cx + colW/2, y: y + rowH/2 + 5, font:'14px Tahoma, Arial', align:'center' });
+      });
+      y += rowH;
+    });
+    y += lh*0.5;
+  }
+
+  // عنوان واسم مقدم الطلب — مسحوبين نحو الوسط (لا أقصى اليسار)
+  // مذكرة طويلة (تقترب من ملء صفحة A4) → سطر واحد بعد مع التقدير | مذكرة قصيرة → 7 أسطر بعد (تنسحب للأسفل)
+  const a4HeightAtThisWidth = widthCss * 1.414; // نسبة A4 الحقيقية
+  const sigBlockHeight = lh * 2.5;
+  const sigShortY = afterTeqdeerY + lh*7;
+  const sigLongY = afterTeqdeerY + lh*1;
+  const isShortMemo = (sigShortY + sigBlockHeight) <= (a4HeightAtThisWidth - 20);
+  let sigY = Math.max(y, isShortMemo ? sigShortY : sigLongY);
+  const sigX = widthCss * 0.40; // مسحوب نحو الوسط، ليس أقصى اليسار
+  if (senderTitle) { ops.push({ type:'text', text: senderTitle, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'right' }); sigY += lh; }
+  if (senderName) { ops.push({ type:'text', text: senderName, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'right' }); }
+  y = sigY + lh;
+
+  const totalHeight = y + 20;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(widthCss * scale);
+  canvas.height = Math.round(totalHeight * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, widthCss, totalHeight);
+  ctx.direction = 'rtl';
+  ctx.textBaseline = 'alphabetic';
+  ops.forEach(op => {
+    if (op.type === 'rect') {
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(op.x, op.y, op.w, op.h);
+    } else {
+      ctx.font = op.font;
+      ctx.textAlign = op.align === 'right' ? 'right' : op.align === 'center' ? 'center' : 'left';
+      ctx.fillStyle = '#000';
+      ctx.fillText(op.text, op.x, op.y);
+    }
+  });
+  return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
+}
+
 async function exportMemoPDF() {
   showToast('⏳ جاري تحضير ملف PDF...');
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
-  const inner = document.createElement('div');
-  inner.style.cssText = 'background:white;padding:30px;width:700px';
-  inner.innerHTML = buildMemoWordHTML();
-  wrap.appendChild(inner);
-  document.body.appendChild(wrap);
   try {
-    const dataUrl = await elementToPNGDataURL(inner);
-    document.body.removeChild(wrap);
-    if (!dataUrl) throw new Error('فشل تحويل المذكرة لصورة');
+    const png = buildMemoCanvasPNG(700);
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
-    const img = new Image();
-    await new Promise(resolve => { img.onload = resolve; img.src = dataUrl; });
-    const ratio = img.width / img.height;
+    const ratio = png.w / png.h;
     let w = pageW - 40, h = w / ratio;
     if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
-    doc.addImage(dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
+    doc.addImage(png.dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
     const blob = doc.output('blob');
     const filename = 'مذكرة_' + (document.getElementById('memo_date').value || '') + '.pdf';
     await shareOrDownloadFile(blob, filename, 'application/pdf');
     showToast('✅ تم تجهيز ملف PDF (بدون أي نص زائد)');
   } catch (e) {
-    if (wrap.parentNode) document.body.removeChild(wrap);
     showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
   }
 }
@@ -4791,26 +4956,22 @@ async function buildMemoDocxBlob() {
   const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, AlignmentType, BorderStyle, WidthType } = docx;
   const number = document.getElementById('memo_number').value || '';
   const date = document.getElementById('memo_date').value || '';
-  let lines = (document.getElementById('memo_body').value || '').split('\n');
+  const to = document.getElementById('memo_to').value || '';
+  const subject = document.getElementById('memo_subject').value || '';
+  const lines = (document.getElementById('memo_body').value || '').split('\n');
+  const senderTitle = document.getElementById('memo_sender_title').value || '';
+  const senderName = document.getElementById('memo_sender_name').value || '';
 
   const noBorder = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
   const noBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
   const rtlRun = (text, opts) => new TextRun({ text, rightToLeft: true, ...opts });
   const rtlP = (children, opts) => new Paragraph({ bidirectional: true, children, ...opts });
 
-  // أول سطر فيه "الى" نعرضه بجانب العدد بنفس الصف (نفس التصميم الأصلي)
-  let greetingLine = '';
-  const firstIdx = lines.findIndex(l => l.trim() !== '');
-  if (firstIdx !== -1 && lines[firstIdx].includes('الى')) {
-    greetingLine = lines[firstIdx].trim();
-    lines = lines.filter((_, i) => i !== firstIdx);
-  }
-
   const headerTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [
       new TableRow({ children: [
-        new TableCell({ borders: noBorders, children: [rtlP([rtlRun(greetingLine, { bold: true })], { alignment: AlignmentType.RIGHT })] }),
+        new TableCell({ borders: noBorders, children: [rtlP([rtlRun(to, { bold: true })], { alignment: AlignmentType.RIGHT })] }),
         new TableCell({ borders: noBorders, children: [rtlP([rtlRun(`العدد : ${number}`)], { alignment: AlignmentType.LEFT })] })
       ]}),
       new TableRow({ children: [
@@ -4821,23 +4982,15 @@ async function buildMemoDocxBlob() {
   });
 
   const children = [headerTable, new Paragraph({ text: '' })];
+  children.push(rtlP([rtlRun(`م / ${subject}`, { bold: true })], { alignment: AlignmentType.CENTER }));
+  children.push(new Paragraph({ text: '' }));
 
-  let afterSignoff = false;
-  lines.forEach(line => {
-    const t = line.trim();
-    if (afterSignoff) {
-      children.push(rtlP([rtlRun(t)], { alignment: AlignmentType.LEFT }));
-    } else if (t.startsWith('م /') || t.startsWith('م/')) {
-      children.push(rtlP([rtlRun(t, { bold: true })], { alignment: AlignmentType.CENTER }));
-    } else if (t.startsWith('مع التقدير')) {
-      children.push(rtlP([rtlRun(t)], { alignment: AlignmentType.CENTER }));
-    } else if (t === 'مقدم الطلب') {
-      children.push(rtlP([rtlRun(t)], { alignment: AlignmentType.LEFT }));
-      afterSignoff = true;
-    } else {
-      children.push(rtlP([rtlRun(line)]));
-    }
+  lines.forEach((line, i) => {
+    children.push(rtlP([rtlRun(line)], { alignment: AlignmentType.JUSTIFIED, indent: i === 0 ? { firstLine: 170 } : undefined }));
   });
+
+  children.push(new Paragraph({ text: '' }));
+  children.push(rtlP([rtlRun('مع التقدير …')], { alignment: AlignmentType.CENTER }));
 
   if (memoTableData && memoTableData.length) {
     children.push(new Paragraph({ text: '' }));
@@ -4850,6 +5003,13 @@ async function buildMemoDocxBlob() {
       }))
     }));
     children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: tblRows }));
+  }
+
+  // عنوان واسم مقدم الطلب — مسحوبين نحو الوسط (مسافة بادئة من اليمين تقريباً 40% من العرض)
+  if (senderTitle || senderName) {
+    for (let i = 0; i < 7; i++) children.push(new Paragraph({ text: '' }));
+    if (senderTitle) children.push(rtlP([rtlRun(senderTitle)], { indent: { right: 2500 } }));
+    if (senderName) children.push(rtlP([rtlRun(senderName)], { indent: { right: 2500 } }));
   }
 
   const doc = new Document({ sections: [{ properties: {}, children }] });
@@ -7179,7 +7339,9 @@ function buildTreatVisual(phase, mode) {
       el.dataset.treated = 'false';
       const dmg=treatInsulatorState[phase][idx];
       const cyc=(treatCycleState[phase]&&treatCycleState[phase][idx])||0;
-      el.setAttribute('fill',dmg?insShade(INS_RED_SHADES,cyc):'white'); el.setAttribute('stroke',dmg?'#9B0000':'#555'); el.setAttribute('stroke-width','0.8');
+      const fillColor = dmg ? insShade(INS_RED_SHADES,cyc) : (cyc>0 ? insShade(INS_GREEN_SHADES,cyc-1) : 'white');
+      const strokeColor = dmg ? '#9B0000' : (cyc>0 ? '#276749' : '#555');
+      el.setAttribute('fill',fillColor); el.setAttribute('stroke',strokeColor); el.setAttribute('stroke-width','0.8');
       el.style.cursor=dmg?'pointer':'default';
       if(dmg) el.addEventListener('click',()=>{
         const fixed=el.dataset.treated==='true';
@@ -7218,6 +7380,7 @@ function buildTreatVisual(phase, mode) {
           rect.className='ins-rect';
           rect.dataset.idx = idx; rect.dataset.treated = 'false';
           if (dmg) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
+          else if (cyc>0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
           rect.style.cursor=dmg?'pointer':'default';
           if(dmg) rect.addEventListener('click',()=>{
             const fixed=rect.dataset.treated==='true';
@@ -7246,6 +7409,7 @@ function buildTreatVisual(phase, mode) {
       rect.className='ins-rect';
       rect.dataset.idx = idx; rect.dataset.treated = 'false';
       if (dmg) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
+      else if (cyc>0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
       rect.style.cursor=dmg?'pointer':'default';
       if(dmg) rect.addEventListener('click',()=>{
         const fixed=rect.dataset.treated==='true';
@@ -7268,6 +7432,7 @@ function buildTreatVisual(phase, mode) {
       rect.className='ins-rect';
       rect.dataset.idx = idx; rect.dataset.treated = 'false';
       if (dmg) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
+      else if (cyc>0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
       rect.style.cursor=dmg?'pointer':'default';
       if(dmg) rect.addEventListener('click',()=>{
         const fixed=rect.dataset.treated==='true';
