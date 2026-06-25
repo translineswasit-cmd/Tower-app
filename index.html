@@ -6395,7 +6395,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
 
   // مهم: نستخدم نفس المصدر الموحّد (fullRecordsCache) المستخدم بالمغادرات وحالة الخطوط تماماً —
   // هذا يضمن نفس النتيجة بكل مكان دائماً (بما فيها أي تحديث فوري بعد معالجة بنفس الجلسة)
-  if (navigator.onLine) { try { await loadFullRecordsCache(); } catch(e) {} }
+  if (navigator.onLine) { try { await loadFullRecordsCache(true); } catch(e) {} }
 
   let last = null;
   let fromCache = false;
@@ -6981,9 +6981,9 @@ function switchDepTab(tab, btn) {
   document.getElementById('depLogView').style.display = tab==='log'?'':'none';
   document.getElementById('depEmergencyView').style.display = tab==='emergency'?'':'none';
   document.getElementById('depTelegramView').style.display = tab==='telegram'?'':'none';
-  if (tab==='list') showDepLinesList();
+  if (tab==='list') { loadFullRecordsCache(true).then(() => showDepLinesList()); }
   if (tab==='log') renderDepLog();
-  if (tab==='treat') { populateTreatLines(); otherDepTreatState={}; }
+  if (tab==='treat') { loadFullRecordsCache(true).then(() => { populateTreatLines(); }); otherDepTreatState={}; }
   if (tab==='emergency') { populateEmgLines(); renderEmergencyLog(); }
   if (tab==='telegram') { populateTelegramLines(); switchTelegramSubTab('add', document.getElementById('telegramAddTabBtn')); }
 }
@@ -7027,11 +7027,37 @@ function onTreatTowerChange() {
   if (!lineName || !towerNum) { card.style.display = 'none'; return; }
   const recs = fullRecordsCache.filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNum));
   if (!recs.length) { card.style.display = 'none'; return; }
-  recs.sort((a,b) => (b.inspection_date||'').localeCompare(a.inspection_date||''));
+  recs.sort((a,b) => {
+    const d = (b.inspection_date||'').localeCompare(a.inspection_date||'');
+    if (d !== 0) return d;
+    return (b.created_at||'').localeCompare(a.created_at||''); // كسر التعادل بتاريخ الإنشاء الفعلي
+  });
   currentTreatRecord = recs[0];
   otherDepTreatState = {};
   card.style.display = 'block';
   renderTreatItems();
+  showInsulatorDebugBtn();
+}
+
+// زر تشخيص مؤقت — يطلع البيانات الخام المحفوظة فعلياً بقاعدة البيانات لهذا البرج، بدون أي معالجة أو حساب،
+// لمعرفة الحقيقة مباشرة بدون أي تخمين أو وسيط
+function showInsulatorDebugBtn() {
+  let btn = document.getElementById('insDebugBtn');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'insDebugBtn';
+    btn.textContent = '🔍 عرض البيانات الخام (تشخيص)';
+    btn.className = 'btn btn-secondary btn-sm';
+    btn.style.cssText = 'display:block;margin:10px auto;width:90%';
+    btn.onclick = () => {
+      const r = currentTreatRecord;
+      if (!r) return;
+      const msg = `id: ${r.id}\ninspection_date: ${r.inspection_date}\ncreated_at: ${r.created_at}\n\ninsulator_state:\n${typeof r.insulator_state==='object'?JSON.stringify(r.insulator_state):r.insulator_state}\n\ninsulator_cycle:\n${typeof r.insulator_cycle==='object'?JSON.stringify(r.insulator_cycle):r.insulator_cycle}`;
+      alert(msg);
+    };
+    const card = document.getElementById('treatItemsCard');
+    if (card) card.insertBefore(btn, card.firstChild);
+  }
 }
 
 function extractDepsFromRecord(r) {
@@ -7062,6 +7088,8 @@ function renderTreatItems() {
   const body = document.getElementById('treatItemsBody');
   if (!currentTreatRecord) return;
   const r = currentTreatRecord;
+  const saveBtn = document.querySelector('#treatItemsCard .btn-primary');
+  if (saveBtn) saveBtn.disabled = false; // ضمان دائم: الزر يفضل مفعّل بكل مرة نفتح فيها برج جديد للمعالجة
   const deps = extractDepsFromRecord(r);
   if (!deps.length) { body.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات</div>'; return; }
 
@@ -7352,37 +7380,43 @@ async function saveTreatment() {
   if (btn) btn.disabled = true;
 
   async function finishUpSuccess() {
-    applyPatchLocally();
-    await loadTreatments();
+    try { applyPatchLocally(); } catch(e) { console.error(e); }
+    try { await loadTreatments(); } catch(e) { console.error(e); }
     otherDepTreatState = {};
     currentTreatRecord = null;
-    onTreatLineChange();
-    document.getElementById('treatTower').value = '';
-    document.getElementById('treatItemsCard').style.display = 'none';
-    renderDepList();
+    try { onTreatLineChange(); } catch(e) { console.error(e); }
+    const towerSel = document.getElementById('treatTower');
+    if (towerSel) towerSel.value = '';
+    const card2 = document.getElementById('treatItemsCard');
+    if (card2) card2.style.display = 'none';
+    try { renderDepLinesList(); } catch(e) { console.error(e); }
   }
 
-  if (navigator.onLine) {
-    try {
-      const res = await sbFetch('treatments?on_conflict=client_uuid', {method:'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body:JSON.stringify(treatment)});
-      if (!res.ok) throw new Error();
-      const patchRes = await sbFetch(`inspections?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(inspectionPatch) });
-      if (!patchRes.ok) throw new Error('patch-failed');
-      showToast('✅ تم حفظ المعالجة بقاعدة البيانات');
-      await finishUpSuccess();
-    } catch {
+  // مهم: try/finally يضمن دائماً إعادة تفعيل الزر بأي حال، حتى لو حدث خطأ غير متوقع بخطوة التنظيف
+  try {
+    if (navigator.onLine) {
+      try {
+        const res = await sbFetch('treatments?on_conflict=client_uuid', {method:'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body:JSON.stringify(treatment)});
+        if (!res.ok) throw new Error();
+        const patchRes = await sbFetch(`inspections?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(inspectionPatch) });
+        if (!patchRes.ok) throw new Error('patch-failed');
+        showToast('✅ تم حفظ المعالجة بقاعدة البيانات');
+        await finishUpSuccess();
+      } catch {
+        addToTreatmentQueue(treatment);
+        addToInspectionPatchQueue(r.id, inspectionPatch);
+        showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
+        await finishUpSuccess();
+      }
+    } else {
       addToTreatmentQueue(treatment);
       addToInspectionPatchQueue(r.id, inspectionPatch);
-      showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
+      showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
       await finishUpSuccess();
     }
-  } else {
-    addToTreatmentQueue(treatment);
-    addToInspectionPatchQueue(r.id, inspectionPatch);
-    showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
-    await finishUpSuccess();
+  } finally {
+    if (btn) btn.disabled = false;
   }
-  if (btn) btn.disabled = false;
 }
 
 const INSPECTION_PATCH_QUEUE_KEY = 'inspection_patch_queue';
