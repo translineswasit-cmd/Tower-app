@@ -4802,8 +4802,14 @@ function buildMemoCanvasPNG(widthCss) {
   const toLines = wrapText(mctx, to, rightColWidth);
   toLines.forEach((ln, i) => ops.push({ type:'text', text: ln, x: widthCss - sidePad, y: y + i*lh*0.85 + lh*0.7, font: fontBold, align:'right' }));
   mctx.font = fontNormal;
-  ops.push({ type:'text', text: `العدد : ${number}`, x: sidePad, y: y + lh*0.7, font: fontNormal, align:'left', dir:'ltr' });
-  ops.push({ type:'text', text: `التاريخ : ${date}`, x: sidePad, y: y + lh*1.6, font: fontNormal, align:'left', dir:'ltr' });
+  mctx.font = fontNormal; mctx.direction = 'ltr';
+  const lblOdad = 'العدد : ', lblTarikh = 'التاريخ : ';
+  const lblOdadW = mctx.measureText(lblOdad).width;
+  const lblTarikhW = mctx.measureText(lblTarikh).width;
+  ops.push({ type:'text', text: lblOdad, x: sidePad, y: y + lh*0.7, font: fontNormal, align:'left', dir:'ltr' });
+  ops.push({ type:'text', text: String(number), x: sidePad + lblOdadW, y: y + lh*0.7, font: fontNormal, align:'left', dir:'ltr' });
+  ops.push({ type:'text', text: lblTarikh, x: sidePad, y: y + lh*1.6, font: fontNormal, align:'left', dir:'ltr' });
+  ops.push({ type:'text', text: String(date), x: sidePad + lblTarikhW, y: y + lh*1.6, font: fontNormal, align:'left', dir:'ltr' });
   y += Math.max(toLines.length*lh*0.85, lh*1.7) + lh*1.5; // مسافة حتى السطر 5 تقريباً
 
   // السطر 5: الموضوع "م/ ..." بالنص
@@ -4899,7 +4905,8 @@ function buildMemoCanvasPNG(widthCss) {
   const sigLongY = afterTeqdeerY + lh*1;
   const isShortMemo = (sigShortY + sigBlockHeight) <= (a4HeightAtThisWidth - 20);
   let sigY = Math.max(y, isShortMemo ? sigShortY : sigLongY);
-  const sigX = widthCss * 0.40; // مسحوب نحو الوسط، ليس أقصى اليسار
+  const tenCharsWidth = mctx.measureText('مممممممممم').width; // عرض تقريبي لـ10 حروف (10 أحرف م)
+  const sigX = widthCss * 0.40 - tenCharsWidth; // مسحوب نحو الوسط + إزاحة 10 حروف يسار
   if (senderTitle) { ops.push({ type:'text', text: senderTitle, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'center' }); sigY += lh; }
   if (senderName) { ops.push({ type:'text', text: senderName, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'center' }); }
   y = sigY + lh;
@@ -5025,8 +5032,8 @@ async function buildMemoDocxBlob() {
   // عنوان واسم مقدم الطلب — بالنص، مسحوبين نحو الوسط (مذكرة طويلة: سطر بعد، قصيرة: 7 أسطر بعد)
   if (senderTitle || senderName) {
     for (let i = 0; i < 7; i++) children.push(new Paragraph({ text: '' }));
-    if (senderTitle) children.push(rtlP([rtlRun(senderTitle)], { alignment: AlignmentType.CENTER, indent: { right: 2500 } }));
-    if (senderName) children.push(rtlP([rtlRun(senderName)], { alignment: AlignmentType.CENTER, indent: { right: 2500 } }));
+    if (senderTitle) children.push(rtlP([rtlRun(senderTitle)], { alignment: AlignmentType.CENTER, indent: { right: 4500 } }));
+    if (senderName) children.push(rtlP([rtlRun(senderName)], { alignment: AlignmentType.CENTER, indent: { right: 4500 } }));
   }
 
   const doc = new Document({ sections: [{ properties: {}, children }] });
