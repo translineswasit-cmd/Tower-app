@@ -3922,11 +3922,27 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
   let y = 24;
   const lh = 18;
 
-  mctx.font = 'bold 13px Tahoma, Arial';
-  ops.push({ type:'text', text: 'الإصدار: 2 | استمارة: الكشف الحراري لخطوط نقل الطاقة | الشركة العامة لنقل الطاقة الكهربائية', x: widthCss/2, y, font:'bold 13px Tahoma, Arial', align:'center' });
+  // ترويسة بثلاث مناطق: يمين (الإصدار/تاريخه) | وسط (عنوان الاستمارة/الرمز) | يسار (الشركة/المنطقة) —
+  // كل سطرين بمنطقتهم يتوسطان فوق بعض بشكل مستقل (مو بداية واحدة)
+  const colW = (widthCss - sidePad*2) / 3;
+  const rightCx = widthCss - sidePad - colW/2;
+  const centerCx = widthCss/2;
+  const leftCx = sidePad + colW/2;
+
+  mctx.font = 'bold 12px Tahoma, Arial';
+  ops.push({ type:'text', text: 'الإصدار: 2', x: rightCx, y, font:'bold 12px Tahoma, Arial', align:'center' });
+  ops.push({ type:'text', text: 'استمارة : الكشف الحراري لخطوط نقل الطاقة', x: centerCx, y, font:'bold 12px Tahoma, Arial', align:'center' });
+  ops.push({ type:'text', text: 'الشركة العامة لنقل الطاقة الكهربائية', x: leftCx, y, font:'bold 12px Tahoma, Arial', align:'center' });
+  y += lh;
+  mctx.font = '11px Tahoma, Arial';
+  ops.push({ type:'text', text: 'تاريخ الإصدار: 27/3/2019', x: rightCx, y, font:'11px Tahoma, Arial', align:'center' });
+  ops.push({ type:'text', text: 'الرمز : (MOE/T2-FO-177)' + (totalPages>1 ? `   —   صفحة ${pageNum} من ${totalPages}` : ''), x: centerCx, y, font:'11px Tahoma, Arial', align:'center' });
+  ops.push({ type:'text', text: 'المنطقة الوسطى', x: leftCx, y, font:'11px Tahoma, Arial', align:'center' });
   y += lh*0.9;
-  ops.push({ type:'text', text: 'تاريخ الإصدار: 27/3/2019 | الرمز: (MOE/T2-FO-177) | المنطقة الوسطى' + (totalPages>1 ? `  —  صفحة ${pageNum} من ${totalPages}` : ''), x: widthCss/2, y, font:'11px Tahoma, Arial', align:'center' });
-  y += lh*1.4;
+
+  // خط أسود فاصل تحت الترويسة
+  ops.push({ type:'rectfill', x: sidePad, y, w: widthCss - sidePad*2, h: 1.5, fill:'#000' });
+  y += lh*1.2;
 
   // جدول معلومات الرأس: صف عناوين + صف بيانات — اسم الخط عريض بما يكفي لأطول اسم خط
   const availW = widthCss - sidePad*2;
