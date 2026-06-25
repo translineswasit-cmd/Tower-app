@@ -1202,7 +1202,7 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
       <div class="form-actions" style="margin-top:14px">
         <button class="btn btn-primary" onclick="saveOfficialForm()">💾 حفظ بالأرشيف</button>
-        <button class="btn btn-secondary" onclick="printOfficialForm()">🖨️ طباعة</button>
+        <button class="btn btn-secondary" onclick="exportOfficialFormPDF()">📄 تصدير PDF</button>
         <button class="btn btn-secondary" onclick="shareOfficialFormWord()">📤 إرسال</button>
       </div>
     </div>
@@ -3876,6 +3876,149 @@ function printOfficialForm() {
       showToast('❌ تعذرت الطباعة', 'error');
     }
   }, 300);
+}
+
+// تصدير PDF مباشر برسم النص بـ Canvas 2D — بدون أي نص زائد يضيفه نظام iOS تلقائياً عند الطباعة المباشرة
+function buildOfficialFormCanvasPNG(widthCss) {
+  const v = id => (document.getElementById(id).value || '');
+  const sidePad = 26, scale = 2;
+  const mctx = document.createElement('canvas').getContext('2d');
+  function wrapText(ctx, text, maxWidth) {
+    const words = String(text).split(' ').filter(w => w !== '');
+    const out = []; let line = '';
+    for (const word of words) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxWidth && line) { out.push(line); line = word; }
+      else { line = test; }
+    }
+    if (line) out.push(line);
+    return out.length ? out : [''];
+  }
+
+  const ops = [];
+  let y = 24;
+  const lh = 18;
+
+  mctx.font = 'bold 13px Tahoma, Arial';
+  ops.push({ type:'text', text: 'الإصدار: 2 | استمارة: الكشف الحراري لخطوط نقل الطاقة | الشركة العامة لنقل الطاقة الكهربائية', x: widthCss/2, y, font:'bold 13px Tahoma, Arial', align:'center' });
+  y += lh*0.9;
+  ops.push({ type:'text', text: 'تاريخ الإصدار: 27/3/2019 | الرمز: (MOE/T2-FO-177) | المنطقة الوسطى', x: widthCss/2, y, font:'11px Tahoma, Arial', align:'center' });
+  y += lh*1.4;
+
+  // جدول معلومات الرأس (خط/سلك/تاريخ/وقت/حرارة الجو) — صفين × عمودين، وصف ثالث لحرارة الجو بعرض كامل
+  const headerRows = [
+    [['اسم الخط', v('tf_h_line')], ['نوع السلك', v('tf_h_wire')]],
+    [['تاريخ الفحص', v('tf_h_date')], ['الوقت', v('tf_h_time')]]
+  ];
+  const halfW = (widthCss - sidePad*2) / 2;
+  const cellH = 26;
+  headerRows.forEach(rowPair => {
+    rowPair.forEach((cell, ci) => {
+      const cx = widthCss - sidePad - ci*halfW;
+      const cw = halfW;
+      ops.push({ type:'rect', x: cx-cw, y, w: cw, h: cellH });
+      mctx.font = 'bold 12px Tahoma, Arial';
+      ops.push({ type:'text', text: cell[0], x: cx-6, y: y+cellH/2+4, font:'bold 12px Tahoma, Arial', align:'right' });
+      mctx.font = '12px Tahoma, Arial';
+      ops.push({ type:'text', text: cell[1], x: cx-cw*0.45, y: y+cellH/2+4, font:'12px Tahoma, Arial', align:'right' });
+    });
+    y += cellH;
+  });
+  // درجة حرارة الجو — صف كامل
+  ops.push({ type:'rect', x: sidePad, y, w: widthCss-sidePad*2, h: cellH });
+  ops.push({ type:'text', text: 'درجة حرارة الجو', x: widthCss-sidePad-6, y: y+cellH/2+4, font:'bold 12px Tahoma, Arial', align:'right' });
+  ops.push({ type:'text', text: (v('tf_h_ambient')||'') + '°C', x: widthCss-sidePad-160, y: y+cellH/2+4, font:'12px Tahoma, Arial', align:'right' });
+  y += cellH + 14;
+
+  // جدول قراءات الأبراج — أعمدة بعرض المحتوى، من اليمين لليسار
+  const headers = ['رقم برج الشد', 'مسافة الفحص', 'T', 'S', 'R', 'حمل الخط MW', 'الملاحظات'];
+  const rowsData = (typeof officialFormRows !== 'undefined' && officialFormRows && officialFormRows.length)
+    ? officialFormRows.map(r => [r.tower_number, r.distance, r.t, r.s, r.r, r.load_mw, r.notes].map(x => x==null?'':String(x)))
+    : [['','','','','','','']];
+  mctx.font = 'bold 11px Tahoma, Arial';
+  const cellPad = 14, minColW = 46, rowH = 26;
+  const colWidths = headers.map((h, ci) => {
+    let maxW = mctx.measureText(h).width + cellPad;
+    mctx.font = '11px Tahoma, Arial';
+    rowsData.forEach(row => { maxW = Math.max(maxW, mctx.measureText(row[ci]||'').width + cellPad); });
+    return Math.max(maxW, minColW);
+  });
+  const totalColsW = colWidths.reduce((s,w)=>s+w,0);
+  const availW = widthCss - sidePad*2;
+  const scaleFactor = totalColsW < availW ? availW/totalColsW : 1;
+  const finalWidths = colWidths.map(w => w*scaleFactor);
+
+  // رأس الجدول
+  let cx = widthCss - sidePad;
+  headers.forEach((h, ci) => {
+    const w = finalWidths[ci]; cx -= w;
+    ops.push({ type:'rectfill', x: cx, y, w, h: rowH, fill:'#f0f0f0' });
+    mctx.font = 'bold 11px Tahoma, Arial';
+    ops.push({ type:'text', text: h, x: cx+w/2, y: y+rowH/2+4, font:'bold 11px Tahoma, Arial', align:'center' });
+  });
+  y += rowH;
+  // صفوف الجدول
+  rowsData.forEach(row => {
+    let cx2 = widthCss - sidePad;
+    row.forEach((cell, ci) => {
+      const w = finalWidths[ci]; cx2 -= w;
+      ops.push({ type:'rect', x: cx2, y, w, h: rowH });
+      ops.push({ type:'text', text: cell || '', x: cx2+w/2, y: y+rowH/2+4, font:'11px Tahoma, Arial', align:'center' });
+    });
+    y += rowH;
+  });
+  y += 30;
+
+  // التوقيعات
+  ops.push({ type:'text', text: 'اسم وتوقيع الفاحص: ..............................', x: widthCss-sidePad, y, font:'12px Tahoma, Arial', align:'right' });
+  ops.push({ type:'text', text: 'مصادقة رئيس القسم: ..............................', x: sidePad, y, font:'12px Tahoma, Arial', align:'left' });
+  y += lh*1.5;
+  ops.push({ type:'text', text: 'لجنة الكشف الحراري: ..............................', x: widthCss-sidePad, y, font:'12px Tahoma, Arial', align:'right' });
+
+  const totalHeight = y + 20;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(widthCss * scale);
+  canvas.height = Math.round(totalHeight * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, widthCss, totalHeight);
+  ctx.direction = 'rtl';
+  ctx.textBaseline = 'alphabetic';
+  ops.forEach(op => {
+    if (op.type === 'rect') {
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(op.x, op.y, op.w, op.h);
+    } else if (op.type === 'rectfill') {
+      ctx.fillStyle = op.fill; ctx.fillRect(op.x, op.y, op.w, op.h);
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(op.x, op.y, op.w, op.h);
+    } else {
+      ctx.font = op.font;
+      ctx.textAlign = op.align === 'right' ? 'right' : op.align === 'center' ? 'center' : 'left';
+      ctx.fillStyle = '#000';
+      ctx.fillText(op.text, op.x, op.y);
+    }
+  });
+  return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
+}
+
+async function exportOfficialFormPDF() {
+  showToast('⏳ جاري تحضير ملف PDF...');
+  try {
+    const png = buildOfficialFormCanvasPNG(760);
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const ratio = png.w / png.h;
+    let w = pageW - 40, h = w / ratio;
+    if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
+    doc.addImage(png.dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
+    const blob = doc.output('blob');
+    const filename = 'استمارة_كشف_حراري_' + (document.getElementById('tf_h_date').value || '') + '.pdf';
+    await shareOrDownloadFile(blob, filename, 'application/pdf');
+    showToast('✅ تم تجهيز ملف PDF (بدون أي نص زائد)');
+  } catch (e) {
+    showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
+  }
 }
 
 // ملف Word حقيقي (تنسيق .docx أصلي عبر مكتبة docx) — موثوق بأي برنامج وبأي طريقة فتح
