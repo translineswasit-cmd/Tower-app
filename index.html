@@ -1921,7 +1921,7 @@ function applyRolePermissions() {
 // NAVIGATION
 // ========================
 const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo'];
-let previousPageId = 'home';
+let pageStack = [];
 
 function navKeyForPage(id) {
   if (id === 'home') return 'home';
@@ -1938,7 +1938,8 @@ function updateHeaderMode(id) {
 let isGoingBack = false;
 function goBackFromOperation() {
   isGoingBack = true;
-  showPage(previousPageId);
+  const prev = pageStack.pop() || 'home';
+  showPage(prev);
 }
 // تُستخدم من أي زر "⬅ رجوع" داخل الصفحة يحتاج ينتقل لصفحة أخرى (لا يُحسب كتنقّل جديد)
 function goToParentPage(id) {
@@ -1955,7 +1956,7 @@ function showPage(id, btn) {
   }
   const currentActive = document.querySelector('.page.active');
   const currentId = currentActive ? currentActive.id.replace('page-','') : null;
-  if (!isGoingBack && currentId && currentId !== id) previousPageId = currentId;
+  if (!isGoingBack && currentId && currentId !== id) pageStack.push(currentId);
   isGoingBack = false;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
@@ -4687,7 +4688,7 @@ async function openMemoFromArchive(id) {
 function buildMemoFormattedParagraphsHTML(lines) {
   return lines.map((line, i) => {
     const t = line.trim();
-    const indentStyle = i === 0 ? 'text-indent:3ch;' : '';
+    const indentStyle = i === 0 ? 'text-indent:5ch;' : '';
     return `<p style="${indentStyle}margin:0 0 4px 0">${t || '&#160;'}</p>`;
   }).join('');
 }
@@ -4714,9 +4715,9 @@ function buildMemoWordHTML() {
       </table>
       <p align="center" style="font-weight:700;margin-top:14px">م / ${subject}</p>
       <div style="margin-top:18px;text-align:justify">${buildMemoFormattedParagraphsHTML(content.split('\n'))}</div>
-      <p align="center" style="margin-top:18px">مع التقدير …</p>
       ${buildMemoTableHTML()}
-      <div style="margin-top:60px;margin-right:40%">
+      <p align="center" style="margin-top:18px">مع التقدير …</p>
+      <div style="margin-top:60px;margin-right:40%;text-align:center">
         ${senderTitle ? `<p>${senderTitle}</p>` : ''}
         ${senderName ? `<p>${senderName}</p>` : ''}
       </div>
@@ -4727,9 +4728,9 @@ function buildMemoWordHTML() {
 function buildMemoTableHTML() {
   if (!memoTableData || !memoTableData.length) return '';
   const rowsHTML = memoTableData.map(row =>
-    `<tr>${row.map(cell => `<td style="border:1px solid #000;padding:6px;text-align:center">${cell || ''}</td>`).join('')}</tr>`
+    `<tr>${row.map(cell => `<td style="border:1px solid #000;padding:6px 14px;text-align:center;white-space:nowrap">${cell || ''}</td>`).join('')}</tr>`
   ).join('');
-  return `<table style="width:100%;border-collapse:collapse;margin-top:18px;font-size:14px">${rowsHTML}</table>`;
+  return `<table style="border-collapse:collapse;margin-top:18px;font-size:14px;width:auto">${rowsHTML}</table>`;
 }
 
 function buildMemoBodyHTML() {
@@ -4751,9 +4752,9 @@ function buildMemoBodyHTML() {
       </div>
       <p align="center" style="font-weight:700;margin-top:14px">م / ${subject}</p>
       <div style="margin-top:18px;text-align:justify">${buildMemoFormattedParagraphsHTML(content.split('\n'))}</div>
-      <p align="center" style="margin-top:18px">مع التقدير …</p>
       ${buildMemoTableHTML()}
-      <div style="margin-top:60px;margin-right:40%">
+      <p align="center" style="margin-top:18px">مع التقدير …</p>
+      <div style="margin-top:60px;margin-right:40%;text-align:center">
         ${senderTitle ? `<p>${senderTitle}</p>` : ''}
         ${senderName ? `<p>${senderName}</p>` : ''}
       </div>
@@ -4794,15 +4795,15 @@ function buildMemoCanvasPNG(widthCss) {
   const ops = [];
   let y = 30;
 
-  // السطر 1-2: العدد والتاريخ أعلى يسار | بنفس المستوى: "إلى" أعلى يمين
+  // السطر 1-2: العدد والتاريخ أعلى يسار (نفرض LTR لهذا السطرين فقط لضمان تطابق بداية الكلمتين) | "إلى" أعلى يمين
   mctx.font = fontBold;
   const leftColWidth = 160;
   const rightColWidth = widthCss - sidePad*2 - leftColWidth - 10;
   const toLines = wrapText(mctx, to, rightColWidth);
   toLines.forEach((ln, i) => ops.push({ type:'text', text: ln, x: widthCss - sidePad, y: y + i*lh*0.85 + lh*0.7, font: fontBold, align:'right' }));
   mctx.font = fontNormal;
-  ops.push({ type:'text', text: `العدد : ${number}`, x: sidePad, y: y + lh*0.7, font: fontNormal, align:'left' });
-  ops.push({ type:'text', text: `التاريخ : ${date}`, x: sidePad, y: y + lh*1.6, font: fontNormal, align:'left' });
+  ops.push({ type:'text', text: `العدد : ${number}`, x: sidePad, y: y + lh*0.7, font: fontNormal, align:'left', dir:'ltr' });
+  ops.push({ type:'text', text: `التاريخ : ${date}`, x: sidePad, y: y + lh*1.6, font: fontNormal, align:'left', dir:'ltr' });
   y += Math.max(toLines.length*lh*0.85, lh*1.7) + lh*1.5; // مسافة حتى السطر 5 تقريباً
 
   // السطر 5: الموضوع "م/ ..." بالنص
@@ -4810,10 +4811,10 @@ function buildMemoCanvasPNG(widthCss) {
   ops.push({ type:'text', text: `م / ${subject}`, x: widthCss/2, y: y + lh*0.7, font: fontBold, align:'center' });
   y += lh * 1.3;
 
-  // السطر 6+: المحتوى — تسطيب كامل (يمين ويسار متناسقين)، أول سطر فقط بمسافة 3 حروف
+  // السطر 6+: المحتوى — تسطيب كامل (يمين ويسار متناسقين)، أول سطر فقط بمسافة 5 حروف
   mctx.font = fontNormal;
   const contentMaxWidth = widthCss - sidePad*2;
-  const indentWidth = mctx.measureText('   ').width; // مسافة 3 حروف
+  const indentWidth = mctx.measureText('ممممم').width; // مسافة 5 حروف (تقريب بعرض حرف عربي متوسط)
   const contentLines = contentRaw.split('\n');
   const justifiedRows = []; // {words, isLastOfParagraph, indent}
   contentLines.forEach((rawLine, li) => {
@@ -4851,33 +4852,46 @@ function buildMemoCanvasPNG(widthCss) {
     }
     y += lh;
   });
-  const contentEndY = y;
+  y += lh * 0.6;
 
-  // "مع التقدير …" — سطر واحد تحت المحتوى، بالنص
+  // الجدول (لو موجود) — كل عمود بعرض يطابق أطول محتوى بداخله، ومرتّب من اليمين لليسار (الترتيب العربي الصحيح)
+  let hasTable = false;
+  if (typeof memoTableData !== 'undefined' && memoTableData && memoTableData.length) {
+    hasTable = true;
+    const cols = memoTableData[0].length;
+    const cellPad = 16, rowH = 30, minColW = 50;
+    mctx.font = '14px Tahoma, Arial';
+    const colWidths = [];
+    for (let c = 0; c < cols; c++) {
+      let maxW = minColW;
+      memoTableData.forEach(row => { maxW = Math.max(maxW, mctx.measureText(row[c] || '').width + cellPad); });
+      colWidths.push(maxW);
+    }
+    // تكبير نسبي لو إجمالي العرض أقل من عرض المذكرة، حتى يملأ الجدول العرض المتاح
+    const totalColsWidth = colWidths.reduce((s,w)=>s+w, 0);
+    const availTableWidth = widthCss - sidePad*2;
+    const scaleFactor = totalColsWidth < availTableWidth ? availTableWidth / totalColsWidth : 1;
+    const finalWidths = colWidths.map(w => w * scaleFactor);
+    memoTableData.forEach(row => {
+      let cx = widthCss - sidePad; // نبدأ من اليمين (العمود الأول بالترتيب يكون أقصى اليمين)
+      row.forEach((cell, ci) => {
+        const w = finalWidths[ci];
+        cx -= w;
+        ops.push({ type:'rect', x: cx, y: y, w: w, h: rowH });
+        ops.push({ type:'text', text: cell || '', x: cx + w/2, y: y + rowH/2 + 5, font:'14px Tahoma, Arial', align:'center' });
+      });
+      y += rowH;
+    });
+  }
+
+  // "مع التقدير …" — سطر واحد تحت الجدول لو موجود، وإلا تحت المحتوى مباشرة
   y += lh;
   mctx.font = fontNormal;
   ops.push({ type:'text', text: 'مع التقدير …', x: widthCss/2, y: y + lh*0.7, font: fontNormal, align:'center' });
   const afterTeqdeerY = y;
-
-  // الجدول (لو موجود) — يُدرج بعد مع التقدير مباشرة
   y += lh * 1.6;
-  if (typeof memoTableData !== 'undefined' && memoTableData && memoTableData.length) {
-    const cols = memoTableData[0].length;
-    const colW = (widthCss - sidePad*2) / cols;
-    const rowH = 30;
-    memoTableData.forEach(row => {
-      row.forEach((cell, ci) => {
-        const cx = sidePad + ci*colW;
-        ops.push({ type:'rect', x: cx, y: y, w: colW, h: rowH });
-        mctx.font = '14px Tahoma, Arial';
-        ops.push({ type:'text', text: cell || '', x: cx + colW/2, y: y + rowH/2 + 5, font:'14px Tahoma, Arial', align:'center' });
-      });
-      y += rowH;
-    });
-    y += lh*0.5;
-  }
 
-  // عنوان واسم مقدم الطلب — مسحوبين نحو الوسط (لا أقصى اليسار)
+  // عنوان واسم مقدم الطلب — بالنص (محاذاة وسط)، مسحوبين نحو الوسط أفقياً (لا أقصى اليسار)
   // مذكرة طويلة (تقترب من ملء صفحة A4) → سطر واحد بعد مع التقدير | مذكرة قصيرة → 7 أسطر بعد (تنسحب للأسفل)
   const a4HeightAtThisWidth = widthCss * 1.414; // نسبة A4 الحقيقية
   const sigBlockHeight = lh * 2.5;
@@ -4886,8 +4900,8 @@ function buildMemoCanvasPNG(widthCss) {
   const isShortMemo = (sigShortY + sigBlockHeight) <= (a4HeightAtThisWidth - 20);
   let sigY = Math.max(y, isShortMemo ? sigShortY : sigLongY);
   const sigX = widthCss * 0.40; // مسحوب نحو الوسط، ليس أقصى اليسار
-  if (senderTitle) { ops.push({ type:'text', text: senderTitle, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'right' }); sigY += lh; }
-  if (senderName) { ops.push({ type:'text', text: senderName, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'right' }); }
+  if (senderTitle) { ops.push({ type:'text', text: senderTitle, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'center' }); sigY += lh; }
+  if (senderName) { ops.push({ type:'text', text: senderName, x: sigX, y: sigY + lh*0.7, font: fontNormal, align:'center' }); }
   y = sigY + lh;
 
   const totalHeight = y + 20;
@@ -4903,10 +4917,12 @@ function buildMemoCanvasPNG(widthCss) {
     if (op.type === 'rect') {
       ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(op.x, op.y, op.w, op.h);
     } else {
+      ctx.direction = op.dir === 'ltr' ? 'ltr' : 'rtl';
       ctx.font = op.font;
       ctx.textAlign = op.align === 'right' ? 'right' : op.align === 'center' ? 'center' : 'left';
       ctx.fillStyle = '#000';
       ctx.fillText(op.text, op.x, op.y);
+      ctx.direction = 'rtl';
     }
   });
   return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
@@ -4986,11 +5002,8 @@ async function buildMemoDocxBlob() {
   children.push(new Paragraph({ text: '' }));
 
   lines.forEach((line, i) => {
-    children.push(rtlP([rtlRun(line)], { alignment: AlignmentType.JUSTIFIED, indent: i === 0 ? { firstLine: 170 } : undefined }));
+    children.push(rtlP([rtlRun(line)], { alignment: AlignmentType.JUSTIFIED, indent: i === 0 ? { firstLine: 280 } : undefined }));
   });
-
-  children.push(new Paragraph({ text: '' }));
-  children.push(rtlP([rtlRun('مع التقدير …')], { alignment: AlignmentType.CENTER }));
 
   if (memoTableData && memoTableData.length) {
     children.push(new Paragraph({ text: '' }));
@@ -4999,17 +5012,21 @@ async function buildMemoDocxBlob() {
     const tblRows = memoTableData.map(row => new TableRow({
       children: row.map(cell => new TableCell({
         borders: fullBorders,
+        width: { size: 0, type: WidthType.AUTO },
         children: [rtlP([rtlRun(cell || '')], { alignment: AlignmentType.CENTER })]
       }))
     }));
-    children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: tblRows }));
+    children.push(new Table({ width: { size: 0, type: WidthType.AUTO }, rows: tblRows }));
   }
 
-  // عنوان واسم مقدم الطلب — مسحوبين نحو الوسط (مسافة بادئة من اليمين تقريباً 40% من العرض)
+  children.push(new Paragraph({ text: '' }));
+  children.push(rtlP([rtlRun('مع التقدير …')], { alignment: AlignmentType.CENTER }));
+
+  // عنوان واسم مقدم الطلب — بالنص، مسحوبين نحو الوسط (مذكرة طويلة: سطر بعد، قصيرة: 7 أسطر بعد)
   if (senderTitle || senderName) {
     for (let i = 0; i < 7; i++) children.push(new Paragraph({ text: '' }));
-    if (senderTitle) children.push(rtlP([rtlRun(senderTitle)], { indent: { right: 2500 } }));
-    if (senderName) children.push(rtlP([rtlRun(senderName)], { indent: { right: 2500 } }));
+    if (senderTitle) children.push(rtlP([rtlRun(senderTitle)], { alignment: AlignmentType.CENTER, indent: { right: 2500 } }));
+    if (senderName) children.push(rtlP([rtlRun(senderName)], { alignment: AlignmentType.CENTER, indent: { right: 2500 } }));
   }
 
   const doc = new Document({ sections: [{ properties: {}, children }] });
