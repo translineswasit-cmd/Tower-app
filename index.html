@@ -569,26 +569,38 @@ tbody tr:hover { background: #F7FAFC; }
           <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
           <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
         </div>
+        <div class="field" style="margin-top:10px"><label>درجة خطورة مغادرة العوازل</label>
+          <select id="f_sev_insulator"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+        </div>
       </div>
       <div class="form-card">
         <h3>🔩 تقاطعات الحديد</h3>
-        <div class="field"><label>ملاحظات</label>
-          <textarea id="f_iron_intersections" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
+        <div class="field"><label>درجة خطورة مغادرة تقاطعات الحديد</label>
+          <select id="f_sev_iron" onchange="onSeverityChange('iron')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+        </div>
+        <div class="field" id="block_iron" style="display:none;margin-top:10px"><label>ملاحظات</label>
+          <textarea id="f_iron_intersections" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
         </div>
       </div>
       <div class="form-card">
         <h3>🏗️ قواعد البرج</h3>
-        <div class="field"><label>ملاحظات</label>
-          <textarea id="f_tower_foundations" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
+        <div class="field"><label>درجة خطورة مغادرة القواعد</label>
+          <select id="f_sev_foundation" onchange="onSeverityChange('foundation')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+        </div>
+        <div class="field" id="block_foundation" style="display:none;margin-top:10px"><label>ملاحظات</label>
+          <textarea id="f_tower_foundations" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
         </div>
       </div>
   <div class="form-card">
     <h3>⚡ الأسلاك</h3>
     <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد الفقرة</p>
-    <div class="grid-3">
-      <div class="field"><label id="wireLbl_r1">الطور R</label><textarea id="f_wires_r1" rows="2" placeholder="دوّن اي ضربة بالسلك او نقص بالمباعدات ومخمدات الاهتزاز هنا، واكتب سليم بحالة لا توجد مشاكل"></textarea></div>
-      <div class="field"><label id="wireLbl_s1">الطور S</label><textarea id="f_wires_s1" rows="2" placeholder="دوّن اي ضربة بالسلك او نقص بالمباعدات ومخمدات الاهتزاز هنا، واكتب سليم بحالة لا توجد مشاكل"></textarea></div>
-      <div class="field"><label id="wireLbl_t1">الطور T</label><textarea id="f_wires_t1" rows="2" placeholder="دوّن اي ضربة بالسلك او نقص بالمباعدات ومخمدات الاهتزاز هنا، واكتب سليم بحالة لا توجد مشاكل"></textarea></div>
+    <div class="field"><label>درجة خطورة مغادرة الأسلاك</label>
+      <select id="f_sev_wires" onchange="onSeverityChange('wires')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+    </div>
+    <div class="grid-3" id="block_wires" style="display:none;margin-top:10px">
+      <div class="field"><label id="wireLbl_r1">الطور R</label><textarea id="f_wires_r1" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea></div>
+      <div class="field"><label id="wireLbl_s1">الطور S</label><textarea id="f_wires_s1" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea></div>
+      <div class="field"><label id="wireLbl_t1">الطور T</label><textarea id="f_wires_t1" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea></div>
     </div>
     <!-- حقول r2/s2/t2 مخفية — تُحفظ بنفس قيمة r1/s1/t1 تلقائياً -->
     <input type="hidden" id="f_wires_r2">
@@ -597,14 +609,17 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
   <div class="form-card">
     <h3>🌍 الأرضي</h3>
-    <div class="grid-2">
+    <div class="field"><label>درجة خطورة مغادرة الأرضي</label>
+      <select id="f_sev_ground" onchange="onSeverityChange('ground')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+    </div>
+    <div class="grid-2" id="block_ground" style="display:none;margin-top:10px">
       <div class="field">
         <label id="groundLbl1">الأرضي</label>
-        <textarea id="f_ground_1" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
+        <textarea id="f_ground_1" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
       </div>
       <div class="field" id="groundBlock2" style="display:none">
         <label id="groundLbl2">الأرضي 2</label>
-        <textarea id="f_ground_2" rows="2" placeholder="اكتب الحالة هنا — اكتب كلمة سليم إذا لا توجد مشاكل"></textarea>
+        <textarea id="f_ground_2" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
       </div>
     </div>
   </div>
@@ -614,10 +629,13 @@ tbody tr:hover { background: #F7FAFC; }
       <div class="field"><label>مسببات الحرائق</label><select id="f_fire_causes"><option value="">-- اختر --</option><option>لا يوجد</option><option>أعشاب جافة</option><option>مخلفات</option><option>أشجار قريبة</option><option>تجاوزات</option></select></div>
       <div class="field"><label>وجود طريق</label><select id="f_road_access"><option value="">-- اختر --</option><option>متاح</option><option>صعب الوصول</option><option>غير متاح</option></select></div>
     </div>
+    <div class="field" style="margin-top:10px"><label>درجة خطورة مغادرة مسببات الحرائق</label>
+      <select id="f_sev_fire" onchange="onSeverityChange('fire')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+    </div>
     <div class="grid-2" style="margin-top:10px">
-      <div class="field">
+      <div class="field" id="block_fire" style="display:none">
         <label>ملاحظات مسببات الحرائق</label>
-        <textarea id="f_fire_causes_notes" rows="2" placeholder="اكتب التفاصيل إن وجدت"></textarea>
+        <textarea id="f_fire_causes_notes" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
       </div>
       <div class="field">
         <label>ملاحظات وجود الطريق</label>
@@ -1322,6 +1340,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="cards-grid" style="grid-template-columns:repeat(2,1fr);max-width:600px;margin:0 auto">
       <div class="card" onclick="showInventoryTools()"><span class="icon">🧰</span><span class="label">عدة العمل</span><span class="sublabel">أدوات وعدد العمل الميداني</span></div>
       <div class="card" onclick="showInventoryMaterials()"><span class="icon">🔩</span><span class="label">مواد خطوط النقل</span><span class="sublabel">حديد، عوازل، أسلاك...</span></div>
+      <div class="card" onclick="showInventoryBorrowed()"><span class="icon">🤝</span><span class="label">المواد المستعارة</span><span class="sublabel">عدّة مستعارة من المخزن</span></div>
     </div>
   </div>
 
@@ -1357,6 +1376,40 @@ tbody tr:hover { background: #F7FAFC; }
       <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">الجهد</th><th style="padding:10px">النوع/الحجم</th><th style="padding:10px">الكمية</th><th style="padding:10px">الوحدة</th><th style="padding:10px">مكان الخزن</th><th style="padding:10px">ملاحظات</th><th style="padding:10px">إجراء</th></tr></thead>
       <tbody id="materialsBody"><tr><td colspan="8" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
     </table>
+    </div>
+  </div>
+
+  <!-- BORROWED ITEMS VIEW -->
+  <div id="invBorrowedView" style="display:none">
+    <div class="records-toolbar">
+      <button class="btn btn-secondary btn-sm" onclick="showInventoryHome()">⬅ رجوع</button>
+      <button class="btn btn-primary btn-sm" id="btnAddBorrow" onclick="openAddBorrowModal()" style="display:none">➕ إضافة مادة</button>
+    </div>
+    <div style="overflow-x:auto">
+    <table class="records-table" style="width:100%;background:white;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05)">
+      <thead><tr style="text-align:right"><th style="padding:10px">اسم المادة</th><th style="padding:10px">العدد المستعار</th><th style="padding:10px">التاريخ</th><th style="padding:10px">المستعير</th><th style="padding:10px">الحالة</th><th style="padding:10px">إجراء</th></tr></thead>
+      <tbody id="borrowedBody"><tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Add Borrowed Item -->
+<div id="addBorrowModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;overflow-y:auto">
+  <div style="background:white;max-width:460px;margin:20px auto;border-radius:14px;padding:24px">
+    <h3 style="margin-bottom:16px;color:#1a2e4a">🤝 إضافة مادة مستعارة</h3>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="field"><label>اسم المادة</label>
+        <select id="bw_tool_id" onchange="updateBorrowAvailable()"><option value="">-- اختر المادة --</option></select>
+        <div id="bw_available_hint" style="font-size:0.78rem;color:#718096;margin-top:4px"></div>
+      </div>
+      <div class="field"><label>العدد المستعار</label><input type="number" id="bw_qty" min="1"></div>
+      <div class="field"><label>التاريخ</label><input type="date" id="bw_date"></div>
+      <div class="field"><label>اسم الشخص المستعير</label><input id="bw_borrower" placeholder="الاسم الكامل"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:18px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="closeAddBorrowModal()">إلغاء</button>
+      <button class="btn btn-primary" onclick="saveBorrowedItem()">💾 حفظ</button>
     </div>
   </div>
 </div>
@@ -1745,8 +1798,8 @@ const ROLE_LABELS = { admin: 'مدير', supervisor: 'مشرف', technician: 'ف
 let insulatorState = { R: [], S: [], T: [] };
 // مستوى دورة المعالجة لكل موضع عازل (0=لم يُعالج سابقاً، 1=عولج مرة، 2=عولج مرتين...) — يحدد غمق اللون
 let insulatorCycleState = { R: [], S: [], T: [] };
-const INS_RED_SHADES   = ['#FC4444','#E0303A','#B91C2C','#8B0000'];
-const INS_GREEN_SHADES = ['#48BB78','#2F9E5C','#1F7A45','#145C33'];
+const INS_RED_SHADES   = ['#FFB3B3','#FF6B6B','#E63946','#8B0000'];
+const INS_GREEN_SHADES = ['#9AE6B4','#68D391','#38A169','#145C33'];
 function insShade(arr, cycle) { return arr[Math.max(0, Math.min(cycle||0, arr.length-1))]; }
 // مهم: عمود insulator_cycle من نوع jsonb يرجعه Supabase REST كـ object جاهز مباشرة (مو نص)،
 // بعكس insulator_state (نص قديم يحتاج JSON.parse دائماً). هذي الدالة تتعامل مع الحالتين بأمان
@@ -2102,8 +2155,33 @@ function maxConsecutiveDamaged(arr) {
   return max;
 }
 
+const SEVERITY_RANK = { simple: 0, moderate: 1, below_critical: 2, critical: 3 };
+const SEVERITY_TO_COLOR = { simple: 'green', moderate: 'yellow', below_critical: 'orange', critical: 'red' };
+
+// يرجع رموز فئات المغادرات المفتوحة لهذا البرج (⚡ كهربائية / ⚙️ ميكانيكية / 🔥 حرائق) — يختفي الرمز تلقائياً
+// لحظة معالجة آخر مغادرة بهذي الفئة (لأنه يعتمد مباشرة على درجة الخطورة الحالية بالسجل، نفس مصدر الألوان)
+function getDepartureCategoryIcons(rec) {
+  if (!rec) return '';
+  const isIssue = s => s && s !== 'ok';
+  let icons = '';
+  if (isIssue(rec.sev_insulator) || isIssue(rec.sev_wires) || isIssue(rec.sev_ground)) icons += '⚡';
+  if (isIssue(rec.sev_iron) || isIssue(rec.sev_foundation)) icons += '⚙️';
+  if (isIssue(rec.sev_fire)) icons += '🔥';
+  return icons;
+}
+
 function getTowerCriticalityLevel(rec) {
   if (!rec) return 'none';
+
+  // الأولوية لدرجة الخطورة المحدّدة يدوياً من الفاحص (لو موجودة بأي قسم) — هذا المعتمد بكشوفات النظام الجديد
+  const sevFields = [rec.sev_insulator, rec.sev_iron, rec.sev_foundation, rec.sev_wires, rec.sev_ground, rec.sev_fire].filter(Boolean);
+  if (sevFields.length) {
+    let worst = null, worstRank = -1;
+    sevFields.forEach(s => { const r = SEVERITY_RANK[s]; if (r != null && r > worstRank) { worstRank = r; worst = s; } });
+    return worst ? SEVERITY_TO_COLOR[worst] : 'green';
+  }
+
+  // لا توجد درجة خطورة محدّدة بهذا السجل (كشف قديم قبل هذي الميزة) — نستخدم الحساب التقديري القديم كحل بديل
   const voltage = rec.voltage || 132;
   const consecutiveCritical = 3;
   const scatteredCritical = voltage === 400 ? 7 : 4;
@@ -2155,6 +2233,7 @@ function isInspectionComplete(rec) {
 const TOWER_LEVEL_META = {
   none:   { bg:'#e2e8f0', border:'#cbd5e0', text:'#4a5568' },
   green:  { bg:'#9AE6B4', border:'#68D391', text:'#22543D' },
+  teal:   { bg:'#B2F5EA', border:'#4FD1C5', text:'#234E52' },
   yellow: { bg:'#FDE9A0', border:'#F0C75E', text:'#7C5E10' },
   orange: { bg:'#F8C193', border:'#ED9A52', text:'#7B341E' },
   red:    { bg:'#FCA5A5', border:'#F56565', text:'#742A2A' },
@@ -2185,11 +2264,19 @@ async function renderTowersGrid(lineName) {
     const complete = rec ? isInspectionComplete(rec) : null;
     const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) : 'لم يُكشف بعد';
     const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
-    return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
+    let staleLine = '';
+    if (rec && rec.inspection_date) {
+      const monthsSince = (Date.now() - new Date(rec.inspection_date).getTime()) / (1000*60*60*24*30.44);
+      if (monthsSince >= 6) staleLine = `⏰ لم يُكشف منذ ${Math.floor(monthsSince)} شهر تقريباً`;
+    }
+    const catIcons = getDepartureCategoryIcons(rec);
+    return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text};position:relative" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
+      ${catIcons ? `<div style="position:absolute;top:4px;left:4px;font-size:0.8rem">${catIcons}</div>` : ''}
       <div class="tower-box-num">${t.num}</div>
       <div class="tower-box-type">${t.type||''}</div>
       <div class="tower-box-date">${dateLine}</div>
       ${completeLine ? `<div class="tower-box-complete">${completeLine}</div>` : ''}
+      ${staleLine ? `<div class="tower-box-complete" style="color:#c0392b;font-weight:700">${staleLine}</div>` : ''}
     </div>`;
   }).join('');
   renderActiveLinesTabs();
@@ -2281,6 +2368,7 @@ function resetTowerFieldsOnly() {
   document.getElementById('insulatorSection').style.display = 'none';
   document.getElementById('incompleteBanner').style.display = 'none';
   FIELDS.forEach(f => { const el = document.getElementById('f_'+f); if (el) el.value=''; });
+  Object.keys(SEVERITY_SECTION_MAP).forEach(onSeverityChange);
   insulatorState = {R:[],S:[],T:[]};
 }
 
@@ -2683,9 +2771,35 @@ function renderInsulatorSVG(svgStr) { return svgStr || '—'; }
 // ========================
 // FORM
 // ========================
+const SEVERITY_SECTION_MAP = {
+  iron: { blockId: 'block_iron', fields: ['f_iron_intersections'] },
+  foundation: { blockId: 'block_foundation', fields: ['f_tower_foundations'] },
+  wires: { blockId: 'block_wires', fields: ['f_wires_r1','f_wires_s1','f_wires_t1'] },
+  ground: { blockId: 'block_ground', fields: ['f_ground_1','f_ground_2'] },
+  fire: { blockId: 'block_fire', fields: ['f_fire_causes_notes'] },
+};
+// لما تتغيّر درجة خطورة قسم: لو "سليم" يختفي صندوق النص ويُسجَّل "سليم" تلقائياً، وإلا يظهر الصندوق فاضي لكتابة وصف المغادرة
+function onSeverityChange(section) {
+  const cfg = SEVERITY_SECTION_MAP[section];
+  if (!cfg) return;
+  const sevVal = document.getElementById('f_sev_'+section).value;
+  const block = document.getElementById(cfg.blockId);
+  if (sevVal === 'ok') {
+    if (block) block.style.display = 'none';
+    cfg.fields.forEach(fid => { const el = document.getElementById(fid); if (el) el.value = 'سليم'; });
+  } else if (sevVal === '') {
+    if (block) block.style.display = 'none';
+    cfg.fields.forEach(fid => { const el = document.getElementById(fid); if (el) el.value = ''; });
+  } else {
+    if (block) block.style.display = '';
+    cfg.fields.forEach(fid => { const el = document.getElementById(fid); if (el && el.value === 'سليم') el.value = ''; });
+  }
+}
+
 const FIELDS = ['iron_intersections','tower_foundations',
   'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
-  'ground_1','ground_2','fire_causes','fire_causes_notes','road_access','road_access_notes','notes'];
+  'ground_1','ground_2','fire_causes','fire_causes_notes','road_access','road_access_notes','notes',
+  'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire'];
 
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
@@ -2733,6 +2847,7 @@ function setFormData(d) {
     document.getElementById('f_tower_type').value = d.tower_type||'';
     document.getElementById('f_inspection_date').value = d.inspection_date||'';
     FIELDS.forEach(f => { const el=document.getElementById('f_'+f); if(el) el.value=d[f]||''; });
+    Object.keys(SEVERITY_SECTION_MAP).forEach(onSeverityChange);
     (d._treatedBadgeFields||[]).forEach(fieldId => {
       const el = document.getElementById('f_'+fieldId);
       if (!el) return;
@@ -2775,6 +2890,26 @@ function cancelEdit() {
 async function saveRecord() {
   const d = getFormData();
   if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
+
+  // التحقق: لازم تكون درجة الخطورة محدّدة لكل قسم، وإذا كانت "مغادرة" (مو سليم) لازم صندوق الوصف معبّى
+  const hasInsulatorDamage = ['R','S','T'].some(p => (insulatorState[p]||[]).some(Boolean));
+  if (hasInsulatorDamage && !d.sev_insulator) {
+    showToast('⚠️ حدّد درجة خطورة مغادرة "العوازل" قبل الحفظ', 'error');
+    return;
+  }
+  const sevChecks = [
+    { sev: d.sev_iron, fields: [d.iron_intersections], label: 'تقاطعات الحديد' },
+    { sev: d.sev_foundation, fields: [d.tower_foundations], label: 'قواعد البرج' },
+    { sev: d.sev_wires, fields: [d.wires_r1, d.wires_s1, d.wires_t1], label: 'الأسلاك' },
+    { sev: d.sev_ground, fields: [d.ground_1, d.ground_2], label: 'الأرضي' },
+    { sev: d.sev_fire, fields: [d.fire_causes_notes], label: 'مسببات الحرائق' },
+  ];
+  for (const c of sevChecks) {
+    if (!c.sev) { showToast(`⚠️ حدّد درجة خطورة "${c.label}" (سليم أو نوع المغادرة) قبل الحفظ`, 'error'); return; }
+    if (c.sev !== 'ok' && c.fields.every(v => !v || !v.trim())) {
+      showToast(`⚠️ اكتب وصف مغادرة "${c.label}" قبل الحفظ`, 'error'); return;
+    }
+  }
 
   const btn = document.getElementById('saveBtn');
   btn.disabled = true;
@@ -6479,8 +6614,10 @@ function renderLineTowerList(lineName) {
       else if (allTreated) { statusBadge = '✅ معالج'; borderColor = '#48BB78'; }
       else { statusBadge = '🔴 مغادرات'; borderColor = '#FC4444'; }
     }
+    const catIcons = getDepartureCategoryIcons(r);
     html += `<div onclick="openTowerDetail('${lineName.replace(/'/g,"\\'")}','${t.num}')"
-      style="cursor:pointer;border:2px solid ${borderColor};border-radius:10px;padding:10px;text-align:center;background:white">
+      style="cursor:pointer;border:2px solid ${borderColor};border-radius:10px;padding:10px;text-align:center;background:white;position:relative">
+      ${catIcons ? `<div style="position:absolute;top:4px;left:4px;font-size:0.8rem">${catIcons}</div>` : ''}
       <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${t.num}</div>
       <div style="font-size:0.72rem;color:#718096;margin:2px 0">${t.type||''}</div>
       <div style="font-size:0.78rem;font-weight:700">${statusBadge}</div>
@@ -7358,13 +7495,41 @@ function renderDepLineTowers(lineName) {
 
   activeTowers.sort((a,b) => parseInt(a.r.tower_number) - parseInt(b.r.tower_number));
 
-  let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
+  // عدّادات: عدد الأبراج (ضمن هذا الخط) اللي فيها مغادرة بكل فئة — برج واحد ممكن يُحسب بأكثر من فئة
+  const isIssue = s => s && s !== 'ok';
+  let elCount = 0, mCount = 0, fireCount = 0;
+  activeTowers.forEach(({r}) => {
+    if (isIssue(r.sev_insulator) || isIssue(r.sev_wires) || isIssue(r.sev_ground)) elCount++;
+    if (isIssue(r.sev_iron) || isIssue(r.sev_foundation)) mCount++;
+    if (isIssue(r.sev_fire)) fireCount++;
+  });
+
+  let html = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+    <div style="flex:1;min-width:140px;background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.75rem;color:#2C5282;font-weight:700">⚡ مغادرات كهربائية</div>
+      <div style="font-size:1.3rem;font-weight:700;color:#2B6CB0">${elCount}</div>
+    </div>
+    <div style="flex:1;min-width:140px;background:#FFFAF0;border:1.5px solid #F6AD55;border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.75rem;color:#7B341E;font-weight:700">⚙️ مغادرات ميكانيكية</div>
+      <div style="font-size:1.3rem;font-weight:700;color:#C05621">${mCount}</div>
+    </div>
+    <div style="flex:1;min-width:140px;background:#FFF5F5;border:1.5px solid #FC8181;border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.75rem;color:#742A2A;font-weight:700">🔥 مسببات الحرائق</div>
+      <div style="font-size:1.3rem;font-weight:700;color:#C53030">${fireCount}</div>
+    </div>
+  </div>`;
+
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
   activeTowers.forEach(({r, deps}) => {
+    const level = getTowerCriticalityLevel(r);
+    const meta = TOWER_LEVEL_META[level] || TOWER_LEVEL_META.red;
+    const catIcons = getDepartureCategoryIcons(r);
     html += `<div onclick="openDepTowerDetail('${lineName.replace(/'/g,"\\'")}','${r.tower_number}')"
-      style="cursor:pointer;border:2px solid #FC4444;border-radius:10px;padding:10px;text-align:center;background:white">
+      style="cursor:pointer;border:2px solid ${meta.border};border-radius:10px;padding:10px;text-align:center;background:${meta.bg};position:relative">
+      ${catIcons ? `<div style="position:absolute;top:4px;left:4px;font-size:0.8rem">${catIcons}</div>` : ''}
       <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${r.tower_number}</div>
       <div style="font-size:0.72rem;color:#718096;margin:2px 0">${TOWER_TYPES[r.tower_type]||r.tower_type||''}</div>
-      <div style="font-size:0.78rem;font-weight:700;color:#C0392B">🔴 ${deps.length} مغادرة</div>
+      <div style="font-size:0.78rem;font-weight:700;color:${meta.text}">🔴 ${deps.length} مغادرة</div>
     </div>`;
   });
   html += '</div>';
@@ -8072,7 +8237,13 @@ function calcLineHealthWithTreatments(lineName) {
   const towers = LINES_DATA[lineName]||[];
   const coverage = towers.length>0 ? rec.length/towers.length : 0;
   let elIss=0, elTot=0, mIss=0, mTot=0;
+  let elSevSum=0, elSevCnt=0, mSevSum=0, mSevCnt=0;
   rec.forEach(r => {
+    // درجة الخطورة المحدّدة يدوياً من الفاحص (الطريقة الجديدة) — نجمعها لو موجودة بهذا السجل
+    [r.sev_insulator, r.sev_wires].forEach(s => { if (s && SEVERITY_RANK[s]!=null) { elSevSum += SEVERITY_RANK[s]; elSevCnt++; } });
+    [r.sev_iron, r.sev_foundation, r.sev_ground, r.sev_fire].forEach(s => { if (s && SEVERITY_RANK[s]!=null) { mSevSum += SEVERITY_RANK[s]; mSevCnt++; } });
+
+    // الطريقة القديمة (نسبة العناصر المتضررة) — تبقى تُحسب دائماً كما هي
     if (r.insulator_state) {
       try {
         const state = safeParseJSON(r.insulator_state);
@@ -8090,7 +8261,16 @@ function calcLineHealthWithTreatments(lineName) {
       if (r[f]!=null&&r[f]!=='') { mTot++; if(!isTreatedInDB(r.id,k)&&r[f].trim()) mIss++; }
     });
   });
-  return { coverage, electricalScore: Math.min(100,Math.max(0,Math.round((elTot>0?(1-elIss/elTot)*100:70)*coverage+50*(1-coverage)))), mechanicalScore: Math.min(100,Math.max(0,Math.round((mTot>0?(1-mIss/mTot)*100:70)*coverage+50*(1-coverage)))) };
+
+  // نمزج الطريقتين بوزن متساوٍ: الطريقة القديمة (نسبة تلف) + درجة الخطورة المحدّدة يدوياً (لو موجودة)
+  const oldElScore = elTot>0 ? (1-elIss/elTot)*100 : 70;
+  const oldMScore = mTot>0 ? (1-mIss/mTot)*100 : 70;
+  const sevElScore = elSevCnt>0 ? (1 - (elSevSum/elSevCnt)/3)*100 : null;
+  const sevMScore = mSevCnt>0 ? (1 - (mSevSum/mSevCnt)/3)*100 : null;
+  const finalElScore = sevElScore!=null ? (oldElScore+sevElScore)/2 : oldElScore;
+  const finalMScore = sevMScore!=null ? (oldMScore+sevMScore)/2 : oldMScore;
+
+  return { coverage, electricalScore: Math.min(100,Math.max(0,Math.round(finalElScore*coverage+50*(1-coverage)))), mechanicalScore: Math.min(100,Math.max(0,Math.round(finalMScore*coverage+50*(1-coverage)))) };
 }
 // ========================
 // EMERGENCY DEPARTURES
@@ -8465,12 +8645,14 @@ function showInventoryHome() {
   document.getElementById('invHomeView').style.display = '';
   document.getElementById('invToolsView').style.display = 'none';
   document.getElementById('invMaterialsView').style.display = 'none';
+  document.getElementById('invBorrowedView').style.display = 'none';
 }
 
 function showInventoryTools() {
   document.getElementById('invHomeView').style.display = 'none';
   document.getElementById('invToolsView').style.display = '';
   document.getElementById('invMaterialsView').style.display = 'none';
+  document.getElementById('invBorrowedView').style.display = 'none';
   document.getElementById('btnAddTool').style.display = canManageInventory() ? '' : 'none';
   loadInventoryTools();
 }
@@ -8479,8 +8661,18 @@ function showInventoryMaterials() {
   document.getElementById('invHomeView').style.display = 'none';
   document.getElementById('invToolsView').style.display = 'none';
   document.getElementById('invMaterialsView').style.display = '';
+  document.getElementById('invBorrowedView').style.display = 'none';
   document.getElementById('btnAddMaterial').style.display = canManageInventory() ? '' : 'none';
   loadInventoryMaterials();
+}
+
+function showInventoryBorrowed() {
+  document.getElementById('invHomeView').style.display = 'none';
+  document.getElementById('invToolsView').style.display = 'none';
+  document.getElementById('invMaterialsView').style.display = 'none';
+  document.getElementById('invBorrowedView').style.display = '';
+  document.getElementById('btnAddBorrow').style.display = canManageInventory() ? '' : 'none';
+  loadInventoryTools().then(loadBorrowedItems); // نحتاج allTools محمّلة لقائمة الاختيار ولحساب المتاح
 }
 
 // ---- TOOLS ----
@@ -8503,9 +8695,11 @@ function renderTools() {
   const canEdit = canManageInventory();
   tbody.innerHTML = allTools.map(t => {
     const working = t.qty_working || 0, broken = t.qty_broken || 0;
+    const borrowed = t.borrowed_qty || 0;
     const editBtn = canEdit ? `<button class="btn-sm btn-edit" onclick="openEditToolModal('${t.id}')">✏️</button>` : '—';
+    const borrowBadge = borrowed > 0 ? `<div style="margin-top:3px;color:#B7791F;font-size:11px;font-weight:700">🔶 مستعار: ${borrowed}</div>` : '';
     return `<tr>
-      <td style="padding:8px">${t.name}</td>
+      <td style="padding:8px">${t.name}${borrowBadge}</td>
       <td style="padding:8px">${t.size||'—'}</td>
       <td style="padding:8px;color:#1e8449;font-weight:700">${working}</td>
       <td style="padding:8px;color:${broken>0?'#c0392b':'#999'};font-weight:700">${broken}</td>
@@ -8515,6 +8709,119 @@ function renderTools() {
       <td style="padding:8px">${editBtn}</td>
     </tr>`;
   }).join('');
+}
+
+// ---- BORROWED ITEMS ----
+let allBorrowed = [];
+async function loadBorrowedItems() {
+  const tbody = document.getElementById('borrowedBody');
+  tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  try {
+    const res = await sbFetch('inventory_borrowed?select=*&order=created_at.desc');
+    if (!res.ok) throw new Error();
+    allBorrowed = await res.json();
+    renderBorrowedItems();
+  } catch {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
+  }
+}
+
+function renderBorrowedItems() {
+  const tbody = document.getElementById('borrowedBody');
+  if (!allBorrowed.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">لا توجد مواد مستعارة حالياً</td></tr>'; return; }
+  const canEdit = canManageInventory();
+  tbody.innerHTML = allBorrowed.map(b => {
+    const statusHTML = b.returned
+      ? `<span style="color:#1e8449;font-weight:700">✅ تم الإرجاع (${b.return_date||''})</span>`
+      : `<span style="color:#B7791F;font-weight:700">🔶 مستعارة</span>`;
+    const actionBtn = (!b.returned && canEdit)
+      ? `<button class="btn-sm btn-edit" onclick="markBorrowReturned('${b.id}')">✅ تأكيد الإرجاع</button>` : '—';
+    return `<tr>
+      <td style="padding:8px">${b.tool_name}</td>
+      <td style="padding:8px;font-weight:700">${b.qty}</td>
+      <td style="padding:8px;font-size:12px">${b.borrow_date||'—'}</td>
+      <td style="padding:8px">${b.borrower_name||'—'}</td>
+      <td style="padding:8px">${statusHTML}</td>
+      <td style="padding:8px">${actionBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function openAddBorrowModal() {
+  if (!canManageInventory()) { showToast('⛔ لا تملك صلاحية إدارة المخزن', 'error'); return; }
+  const sel = document.getElementById('bw_tool_id');
+  sel.innerHTML = '<option value="">-- اختر المادة --</option>' +
+    allTools.map(t => `<option value="${t.id}">${t.name}${t.size?(' - '+t.size):''}</option>`).join('');
+  document.getElementById('bw_qty').value = '';
+  document.getElementById('bw_date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('bw_borrower').value = '';
+  document.getElementById('bw_available_hint').textContent = '';
+  document.getElementById('addBorrowModal').style.display = '';
+}
+function closeAddBorrowModal() { document.getElementById('addBorrowModal').style.display = 'none'; }
+
+function updateBorrowAvailable() {
+  const toolId = document.getElementById('bw_tool_id').value;
+  const hint = document.getElementById('bw_available_hint');
+  const t = allTools.find(x => x.id === toolId);
+  if (!t) { hint.textContent = ''; return; }
+  hint.textContent = `📦 المتاح حالياً: ${t.qty_working||0}`;
+}
+
+async function saveBorrowedItem() {
+  const toolId = document.getElementById('bw_tool_id').value;
+  const qty = parseInt(document.getElementById('bw_qty').value);
+  const date = document.getElementById('bw_date').value;
+  const borrower = document.getElementById('bw_borrower').value.trim();
+  if (!toolId) { showToast('⚠️ اختر المادة', 'error'); return; }
+  if (!qty || qty < 1) { showToast('⚠️ أدخل عدد مستعار صحيح', 'error'); return; }
+  if (!date || !borrower) { showToast('⚠️ أكمل التاريخ واسم المستعير', 'error'); return; }
+  const t = allTools.find(x => x.id === toolId);
+  if (!t) { showToast('❌ المادة غير موجودة', 'error'); return; }
+  if (qty > (t.qty_working||0)) { showToast(`⚠️ العدد المتاح فقط ${t.qty_working||0}`, 'error'); return; }
+
+  const payload = { tool_id: toolId, tool_name: t.name, qty, borrow_date: date, borrower_name: borrower, returned: false, client_uuid: genUUID() };
+  try {
+    const res = await sbFetch('inventory_borrowed?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error();
+    // خصم العدد المستعار من "تعمل" + إضافته لـ"borrowed_qty" بنفس المادة
+    const newWorking = (t.qty_working||0) - qty;
+    const newBorrowed = (t.borrowed_qty||0) + qty;
+    const patchRes = await sbFetch(`inventory_tools?id=eq.${toolId}`, { method: 'PATCH', body: JSON.stringify({ qty_working: newWorking, borrowed_qty: newBorrowed }) });
+    if (!patchRes.ok) throw new Error();
+    t.qty_working = newWorking; t.borrowed_qty = newBorrowed;
+    showToast('✅ تم تسجيل الاستعارة');
+    closeAddBorrowModal();
+    await loadBorrowedItems();
+    renderTools();
+  } catch (e) {
+    showToast('❌ تعذر حفظ الاستعارة', 'error');
+  }
+}
+
+async function markBorrowReturned(id) {
+  if (!canManageInventory()) { showToast('⛔ لا تملك صلاحية', 'error'); return; }
+  const b = allBorrowed.find(x => x.id === id);
+  if (!b) return;
+  if (!confirm(`تأكيد إرجاع ${b.qty} من "${b.tool_name}"؟`)) return;
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const res = await sbFetch(`inventory_borrowed?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ returned: true, return_date: today }) });
+    if (!res.ok) throw new Error();
+    // إرجاع الكمية تلقائياً لـ"تعمل" + إنقاص "borrowed_qty" بنفس المادة
+    const t = allTools.find(x => x.id === b.tool_id);
+    if (t) {
+      const newWorking = (t.qty_working||0) + b.qty;
+      const newBorrowed = Math.max(0, (t.borrowed_qty||0) - b.qty);
+      const patchRes = await sbFetch(`inventory_tools?id=eq.${b.tool_id}`, { method: 'PATCH', body: JSON.stringify({ qty_working: newWorking, borrowed_qty: newBorrowed }) });
+      if (patchRes.ok) { t.qty_working = newWorking; t.borrowed_qty = newBorrowed; }
+    }
+    showToast('✅ تم تأكيد الإرجاع');
+    await loadBorrowedItems();
+    renderTools();
+  } catch (e) {
+    showToast('❌ تعذر تأكيد الإرجاع', 'error');
+  }
 }
 
 let toolRowCount = 0;
