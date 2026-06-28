@@ -7457,25 +7457,40 @@ function renderDepLinesList() {
 
   if (!uniqueLines.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>'; return; }
 
+  const isIssue = s => s && s !== 'ok';
   const rows = uniqueLines.map(lineName => {
     const activeTowers = getActiveDepartureTowers(lineName);
-    return { lineName, count: activeTowers.length };
+    let elCount = 0, mCount = 0, fireCount = 0;
+    activeTowers.forEach(({r}) => {
+      if (isIssue(r.sev_insulator) || isIssue(r.sev_wires) || isIssue(r.sev_ground)) elCount++;
+      if (isIssue(r.sev_iron) || isIssue(r.sev_foundation)) mCount++;
+      if (isIssue(r.sev_fire)) fireCount++;
+    });
+    return { lineName, count: activeTowers.length, elCount, mCount, fireCount };
   });
 
   // الخطوط اللي فيها مغادرات تظهر أول، مرتبة تنازلياً، والسليمة بالأسفل
   rows.sort((a,b) => b.count - a.count || a.lineName.localeCompare(b.lineName,'ar'));
 
-  body.innerHTML = rows.map(({lineName, count}) => {
+  body.innerHTML = rows.map(({lineName, count, elCount, mCount, fireCount}) => {
     const borderColor = count > 0 ? '#FC4444' : '#48BB78';
     const badge = count > 0
       ? `<span style="background:#FED7D7;color:#822727;padding:3px 12px;border-radius:20px;font-size:0.78rem;font-weight:700">🔴 ${count} مغادرة</span>`
       : `<span style="background:#C6F6D5;color:#22543D;padding:3px 12px;border-radius:20px;font-size:0.78rem;font-weight:700">✅ سليم</span>`;
     const clickable = count > 0 ? ` onclick="openDepLineTowers('${lineName.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
+    const breakdownParts = [];
+    if (elCount > 0) breakdownParts.push(`<span style="color:#2B6CB0">⚡ كهربائية: ${elCount}</span>`);
+    if (mCount > 0) breakdownParts.push(`<span style="color:#C05621">⚙️ ميكانيكية: ${mCount}</span>`);
+    if (fireCount > 0) breakdownParts.push(`<span style="color:#C53030">🔥 حرائق: ${fireCount}</span>`);
+    const breakdown = breakdownParts.length
+      ? `<div style="margin-top:6px;font-size:0.74rem;font-weight:700;display:flex;gap:12px;flex-wrap:wrap">${breakdownParts.join('')}</div>`
+      : '';
     return `<div class="form-card" style="margin-bottom:10px;padding:14px;border-right:4px solid ${borderColor}"${clickable}>
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div style="font-weight:700;color:#1a2e4a;font-size:0.92rem">${lineName}${count>0?' 🔍':''}</div>
         ${badge}
       </div>
+      ${breakdown}
     </div>`;
   }).join('');
 }
@@ -7743,6 +7758,8 @@ function renderTreatItems() {
   const body = document.getElementById('treatItemsBody');
   if (!currentTreatRecord) return;
   const r = currentTreatRecord;
+  const stalePrompt = document.getElementById('treatSeverityPrompts');
+  if (stalePrompt) stalePrompt.remove();
   const saveBtn = document.querySelector('#treatItemsCard .btn-primary');
   if (saveBtn) saveBtn.disabled = false; // ضمان دائم: الزر يفضل مفعّل بكل مرة نفتح فيها برج جديد للمعالجة
   const deps = extractDepsFromRecord(r);
@@ -7935,9 +7952,92 @@ function buildTreatVisual(phase, mode) {
   return wrap;
 }
 
+const SEVERITY_TREAT_SECTIONS = {
+  insulator: { label: 'العوازل', field: 'sev_insulator' },
+  iron: { label: 'تقاطعات الحديد', field: 'sev_iron', keys: ['iron'] },
+  foundation: { label: 'قواعد البرج', field: 'sev_foundation', keys: ['foundation'] },
+  wires: { label: 'الأسلاك', field: 'sev_wires', keys: ['wire_r1','wire_s1','wire_t1'] },
+  ground: { label: 'الأرضي', field: 'sev_ground', keys: ['ground_1','ground_2'] },
+  fire: { label: 'مسببات الحرائق', field: 'sev_fire', keys: ['fire'] },
+};
+
+// يحدّد أي الأقسام عولجت بهذي الجلسة، وهل صار القسم سليم بالكامل (كل عناصره المفتوحة عولجت) أو لسا فيه متبقي
+function getTouchedSeveritySections(r) {
+  const allDeps = extractDepsFromRecord(r);
+  const touched = [];
+
+  // العوازل
+  const wrap = document.getElementById('treatPhasesWrap');
+  let insTouched = false, insResolved = true;
+  if (wrap) {
+    const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
+    const blocks = wrap.querySelectorAll('.phase-block');
+    blocks.forEach((block, pi) => {
+      const phase = ['R','S','T'][pi]; if (!phase) return;
+      const els = mode === 'v' ? block.querySelectorAll('polygon') : block.querySelectorAll('.ins-rect');
+      els.forEach(el => {
+        const idx = parseInt(el.dataset.idx, 10);
+        const dmg = (treatInsulatorState[phase]||[])[idx];
+        const fixedNow = el.dataset.treated === 'true';
+        if (dmg && fixedNow) insTouched = true;
+        if (dmg && !fixedNow) insResolved = false; // باقي شي متضرر لسا
+      });
+    });
+  }
+  if (insTouched) touched.push({ key:'insulator', label: SEVERITY_TREAT_SECTIONS.insulator.label, field: SEVERITY_TREAT_SECTIONS.insulator.field, resolved: insResolved });
+
+  // باقي الأقسام
+  ['iron','foundation','wires','ground','fire'].forEach(sec => {
+    const cfg = SEVERITY_TREAT_SECTIONS[sec];
+    const sectionDeps = allDeps.filter(d => cfg.keys.includes(d.key));
+    if (!sectionDeps.length) return;
+    const touchedAny = sectionDeps.some(d => otherDepTreatState[d.key]);
+    if (!touchedAny) return;
+    const resolved = sectionDeps.every(d => otherDepTreatState[d.key]);
+    touched.push({ key: sec, label: cfg.label, field: cfg.field, resolved });
+  });
+
+  return touched;
+}
+
+function renderSeverityPromptsBlock(touched) {
+  const opts = [
+    ['ok','🟢 سليم'], ['simple','⚪ مغادرة بسيطة'], ['moderate','🟡 مغادرة متوسطة'],
+    ['below_critical','🟠 مغادرة دون الحرجة'], ['critical','🔴 مغادرة حرجة']
+  ];
+  return `<div id="treatSeverityPrompts" style="margin-top:18px;padding:14px;background:#FFFBEA;border:1.5px solid #F0C75E;border-radius:10px">
+    <div style="font-weight:700;color:#7C5E10;margin-bottom:10px">⚠️ حدّد درجة الخطورة الجديدة بعد المعالجة لكل قسم لمسته:</div>
+    ${touched.map(t => `
+      <div class="field" style="margin-bottom:10px">
+        <label>${t.label}</label>
+        <select id="sevnew_${t.key}" data-field="${t.field}">
+          <option value="">-- اختر --</option>
+          ${opts.map(([v,l]) => `<option value="${v}" ${t.resolved && v==='ok' ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>
+      </div>`).join('')}
+  </div>`;
+}
+
 async function saveTreatment() {
   if (!currentTreatRecord) return;
   const r = currentTreatRecord;
+
+  // الخطوة 1: لو فيه أقسام عولجت بهذي الجلسة وما طلبنا منك تحدد درجتها الجديدة بعد، نطلبها أول
+  const touched = getTouchedSeveritySections(r);
+  const existingPrompt = document.getElementById('treatSeverityPrompts');
+  if (touched.length && !existingPrompt) {
+    const card = document.getElementById('treatItemsCard');
+    const saveBtnRow = document.querySelector('#treatItemsCard .form-actions') || document.querySelector('#treatItemsCard .btn-primary');
+    const promptHTML = renderSeverityPromptsBlock(touched);
+    if (saveBtnRow && saveBtnRow.insertAdjacentHTML) saveBtnRow.insertAdjacentHTML('beforebegin', promptHTML);
+    showToast('⚠️ حدّد درجة الخطورة الجديدة لكل قسم بالأسفل، ثم اضغط حفظ مرة ثانية', 'error');
+    return;
+  }
+  if (existingPrompt) {
+    const missing = touched.find(t => !document.getElementById('sevnew_'+t.key).value);
+    if (missing) { showToast(`⚠️ حدّد درجة خطورة "${missing.label}" قبل الحفظ`, 'error'); return; }
+  }
+
   const now = new Date().toISOString().split('T')[0];
   const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
   const stateAfter = JSON.parse(JSON.stringify(treatInsulatorState));
@@ -8022,6 +8122,13 @@ async function saveTreatment() {
   // هذا يجعله المصدر الوحيد للحقيقة بكل مكان (الكشف الجديد، المغادرات، حالة الخطوط، PDF) بدون أي
   // حساب أو دمج لاحق، ويحل مشكلة "ما يظهر أخضر بمكان ثاني" نهائياً
   const inspectionPatch = { insulator_state: JSON.stringify(stateAfter), insulator_cycle: JSON.stringify(cycleAfter) };
+  // ندمج درجات الخطورة الجديدة المحدّدة لكل قسم عولج بهذي الجلسة (لو فيه)
+  if (existingPrompt) {
+    touched.forEach(t => {
+      const sel = document.getElementById('sevnew_'+t.key);
+      if (sel && sel.value) inspectionPatch[t.field] = sel.value;
+    });
+  }
 
   // نحدّث النسخة المحلية بالذاكرة فوراً (بغض النظر عن النت)، لضمان ظهور النتيجة الصحيحة بنفس الجلسة فوراً
   function applyPatchLocally() {
