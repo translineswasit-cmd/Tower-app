@@ -168,7 +168,6 @@ tbody tr:hover { background: #F7FAFC; }
 .records-footer { margin-top: 12px; color: #718096; font-size: 0.82rem; }
 .empty-state { text-align: center; padding: 40px; color: #A0AEC0; }
 .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500; align-items: center; justify-content: center; padding: 16px; }
-body.body-scroll-locked { overflow: hidden; touch-action: none; }
 .modal-bg.show { display: flex; }
 .modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 380px; width: 100%; text-align: center; max-height: 90vh; overflow-y: auto; }
 .manage-acc-btn { background:#eef1f6; color:#4a5568; border:none; width:38px; height:38px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s; }
@@ -1761,24 +1760,6 @@ function genUUID() {
   });
 }
 
-// قفل تمرير الصفحة الخلفية تلقائياً وقت فتح أي نافذة منبثقة (.modal-bg.show) — يمنع تحرك المحتوى
-// والهيدر/زر الرجوع بالخلفية أثناء التمرير بداخل النافذة، ويرجّع كل شي طبيعي عند الإغلاق
-// (نسخة مبسّطة بدون position:fixed على body، لتجنّب أي تجمّد بالتخطيط)
-function _isAnyModalOpen() {
-  return !!document.querySelector('.modal-bg.show');
-}
-function _lockBodyScroll() {
-  document.body.classList.add('body-scroll-locked');
-}
-function _unlockBodyScroll() {
-  document.body.classList.remove('body-scroll-locked');
-}
-new MutationObserver(() => {
-  if (_isAnyModalOpen()) _lockBodyScroll();
-  else _unlockBodyScroll();
-}).observe(document.documentElement, { attributes: true, attributeFilter: ['class'], subtree: true });
-_unlockBodyScroll(); // ضمان: الصفحة تبدأ دائماً غير مقفلة عند كل تحميل
-
 async function sbFetch(path, options = {}) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`;
   const headers = {
@@ -2057,6 +2038,12 @@ function goToParentPage(id) {
 }
 
 function showPage(id, btn) {
+  // إلغاء تركيز أي حقل (خاصة حقول التاريخ) قبل أي تنقّل — يمنع عالق منتقي التاريخ الأصلي بالآيفون فوق الصفحة
+  if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
+  // إغلاق قسري لأي نافذة منبثقة عالقة (.modal-bg) — يمنع أي طبقة شفافة عالقة تحجب اللمس فوق الصفحة الجديدة
+  document.querySelectorAll('.modal-bg.show').forEach(m => m.classList.remove('show'));
   // صلاحية القراءة فقط: ممنوع الدخول لصفحة إضافة كشف
   if (id === 'form' && currentUser && currentUser.role === 'readonly') {
     isGoingBack = false;
@@ -2183,6 +2170,11 @@ function onLineChange() {
   if (!document.getElementById('f_inspection_date').value) {
     document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
   }
+  // إلغاء تركيز أي حقل + إغلاق أي نافذة منبثقة عالقة قبل عرض شبكة الأبراج — يمنع أي طبقة عالقة تحجب اللمس
+  if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
+  document.querySelectorAll('.modal-bg.show').forEach(m => m.classList.remove('show'));
   addActiveLineTab(name);
   renderTowersGrid(name);
 }
