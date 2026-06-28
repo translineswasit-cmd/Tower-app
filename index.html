@@ -3985,6 +3985,7 @@ function padOfficialFormRowsToMinimum(min) {
 
 // تعبّى حرارة الجو مرة واحدة فقط (عادةً بالبرج الأول)، وتُستخدم لتوليد قراءات تقريبية بالأبراج غير المكشوفة فعلياً
 function applyAmbientAutoFill(ambient) {
+  ambient = parseFloat(ambient); // مهم: القيمة تجي كنص من الحقل — بدون هذا التحويل يصير دمج نصوص بدل جمع رياضي (44+7 تصبح "447" بدل 51)
   if (ambient === '' || ambient == null || isNaN(ambient)) return;
   officialFormRows.forEach(row => {
     if (!row.inspected) {
