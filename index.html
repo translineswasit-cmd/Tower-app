@@ -2126,7 +2126,10 @@ async function manualSyncAll() {
   if (btn) { btn.disabled = false; btn.textContent = '🔄 رفع الآن'; }
   if (after === 0) showToast('✅ تم رفع جميع العناصر المعلقة بنجاح');
   else if (after < before) showToast(`✅ تم رفع ${before-after} من ${before}، تبقى ${after}`);
-  else showToast('⚠️ تعذر رفع العناصر، تحقق من الاتصال وحاول مرة أخرى', 'error');
+  else {
+    const firstErr = (getQueue().find(r => r._lastError) || {})._lastError;
+    showToast(firstErr ? `⚠️ تعذر الرفع: ${firstErr}` : '⚠️ تعذر رفع العناصر، تحقق من الاتصال وحاول مرة أخرى', 'error');
+  }
   renderPendingSyncPage();
 }
 
@@ -3113,8 +3116,19 @@ async function syncQueue() {
     if (!rec.client_uuid) rec.client_uuid = genUUID();
     try {
       const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-      if (res.ok) synced++; else remaining.push(rec);
-    } catch { remaining.push(rec); }
+      if (res.ok) { synced++; delete rec._lastError; }
+      else {
+        let bodyText = '';
+        try { bodyText = await res.text(); } catch(e) {}
+        rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,300)}`;
+        console.error('❌ فشل رفع كشف من القائمة المعلقة', { status: res.status, body: bodyText, record: rec });
+        remaining.push(rec);
+      }
+    } catch (e) {
+      rec._lastError = `خطأ شبكة: ${e && e.message ? e.message : e}`;
+      console.error('❌ خطأ شبكة أثناء رفع كشف معلق', e, rec);
+      remaining.push(rec);
+    }
   }
   localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
   updatePendingBadge();
@@ -6588,6 +6602,7 @@ function renderPendingSyncPage() {
           <div class="dep-card-title">📡 ${rec.line_name||'—'} — برج ${rec.tower_number||'—'}</div>
           <div class="dep-card-meta">📅 ${rec.inspection_date||'—'}</div>
         </div>
+        ${rec._lastError ? `<div style="font-size:0.72rem;color:#c0392b;background:#fdecea;border-radius:6px;padding:6px 8px;margin-top:6px;direction:ltr;text-align:left;word-break:break-all">⚠️ ${rec._lastError}</div>` : ''}
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button class="btn btn-secondary btn-sm" onclick="editPendingInspection(${i})">✏️ تعديل</button>
           <button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="deletePendingInspection(${i})">🗑️ حذف</button>
