@@ -2210,22 +2210,18 @@ function getDepartureCategoryIcons(rec) {
     fire: isIssue(rec.sev_fire),
   };
 }
-// يبني شريط رموز بشكل حرف L: ⚡ كهربائية / 🔧 تقاطعات حديد / ⚪ قواعد (عمودياً)، و🔥 حرائق يمتد يمين الدائرة بالأسفل
+// يبني شريط رموز بصف واحد عادي (داخل تدفق المحتوى، بدون absolute) — يمنع أي تداخل مع باقي عناصر البطاقة
+// ⚡ كهربائية / 🔧 تقاطعات حديد / ⚪ قواعد / 🔥 حرائق
 function buildCategoryIconsHTML(rec) {
   const c = getDepartureCategoryIcons(rec);
   if (!c.electrical && !c.iron && !c.foundation && !c.fire) return '';
   const grayCircle = `<span style="display:inline-block;width:0.62em;height:0.62em;border-radius:50%;background:#A0AEC0;vertical-align:middle"></span>`;
-  let html = `<div style="position:absolute;top:8px;left:8px;font-size:0.8rem">`;
-  html += `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">`;
+  let html = `<div style="display:flex;gap:5px;align-items:center;justify-content:center;font-size:0.75rem;line-height:1">`;
   if (c.electrical) html += `<span>⚡</span>`;
   if (c.iron) html += `<span>🔧</span>`;
-  if (c.foundation || c.fire) {
-    html += `<div style="display:flex;gap:4px;align-items:center">`;
-    if (c.foundation) html += `<span>${grayCircle}</span>`;
-    if (c.fire) html += `<span>🔥</span>`;
-    html += `</div>`;
-  }
-  html += `</div></div>`;
+  if (c.foundation) html += `<span>${grayCircle}</span>`;
+  if (c.fire) html += `<span>🔥</span>`;
+  html += `</div>`;
   return html;
 }
 
@@ -2329,9 +2325,9 @@ async function renderTowersGrid(lineName) {
       if (monthsSince >= 6) staleLine = `⏰ لم يُكشف منذ ${Math.floor(monthsSince)} شهر تقريباً`;
     }
     const catIconsHTML = buildCategoryIconsHTML(rec);
-    return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text};position:relative" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
-      ${catIconsHTML}
+    return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
       <div class="tower-box-num">${t.num}</div>
+      ${catIconsHTML}
       <div class="tower-box-type">${t.type||''}</div>
       <div class="tower-box-date">${dateLine}</div>
       ${completeLine ? `<div class="tower-box-complete">${completeLine}</div>` : ''}
