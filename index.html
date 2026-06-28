@@ -168,6 +168,7 @@ tbody tr:hover { background: #F7FAFC; }
 .records-footer { margin-top: 12px; color: #718096; font-size: 0.82rem; }
 .empty-state { text-align: center; padding: 40px; color: #A0AEC0; }
 .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500; align-items: center; justify-content: center; padding: 16px; }
+body.body-scroll-locked { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .modal-bg.show { display: flex; }
 .modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 380px; width: 100%; text-align: center; max-height: 90vh; overflow-y: auto; }
 .manage-acc-btn { background:#eef1f6; color:#4a5568; border:none; width:38px; height:38px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s; }
@@ -592,9 +593,9 @@ tbody tr:hover { background: #F7FAFC; }
         </div>
       </div>
   <div class="form-card">
-    <h3>⚡ الأسلاك</h3>
+    <h3>⚡ الأسلاك + المباعدات + موانع الاهتزاز</h3>
     <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد الفقرة</p>
-    <div class="field"><label>درجة خطورة مغادرة الأسلاك</label>
+    <div class="field"><label>درجة خطورة مغادرة الأسلاك + المباعدات + موانع الاهتزاز</label>
       <select id="f_sev_wires" onchange="onSeverityChange('wires')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
     </div>
     <div class="grid-3" id="block_wires" style="display:none;margin-top:10px">
@@ -624,19 +625,17 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
   </div>
   <div class="form-card">
-    <h3>🔥 مسببات الحرائق ووجود الطريق</h3>
-    <div class="grid-2">
-      <div class="field"><label>مسببات الحرائق</label><select id="f_fire_causes"><option value="">-- اختر --</option><option>لا يوجد</option><option>أعشاب جافة</option><option>مخلفات</option><option>أشجار قريبة</option><option>تجاوزات</option></select></div>
-      <div class="field"><label>وجود طريق</label><select id="f_road_access"><option value="">-- اختر --</option><option>متاح</option><option>صعب الوصول</option><option>غير متاح</option></select></div>
-    </div>
+    <h3>🔥 مسببات الحرائق</h3>
     <div class="field" style="margin-top:10px"><label>درجة خطورة مغادرة مسببات الحرائق</label>
       <select id="f_sev_fire" onchange="onSeverityChange('fire')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
     </div>
-    <div class="grid-2" style="margin-top:10px">
-      <div class="field" id="block_fire" style="display:none">
-        <label>ملاحظات مسببات الحرائق</label>
-        <textarea id="f_fire_causes_notes" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
-      </div>
+    <div class="field" id="block_fire" style="display:none;margin-top:10px">
+      <label>ملاحظات مسببات الحرائق</label>
+      <textarea id="f_fire_causes_notes" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
+    </div>
+    <h3 style="margin-top:18px">🛣️ وجود الطريق</h3>
+    <div class="grid-2">
+      <div class="field"><label>وجود طريق</label><select id="f_road_access"><option value="">-- اختر --</option><option>متاح</option><option>صعب الوصول</option><option>غير متاح</option></select></div>
       <div class="field">
         <label>ملاحظات وجود الطريق</label>
         <textarea id="f_road_access_notes" rows="2" placeholder="اكتب التفاصيل إن وجدت"></textarea>
@@ -1744,6 +1743,29 @@ function genUUID() {
   });
 }
 
+// قفل تمرير الصفحة الخلفية تلقائياً وقت فتح أي نافذة منبثقة (.modal-bg.show) — يمنع تحرك المحتوى
+// والهيدر/زر الرجوع بالخلفية أثناء التمرير بداخل النافذة، ويرجّع كل شي طبيعي عند الإغلاق
+let _bodyScrollLockY = 0;
+function _isAnyModalOpen() {
+  return !!document.querySelector('.modal-bg.show');
+}
+function _lockBodyScroll() {
+  if (document.body.classList.contains('body-scroll-locked')) return;
+  _bodyScrollLockY = window.scrollY || window.pageYOffset || 0;
+  document.body.classList.add('body-scroll-locked');
+  document.body.style.top = (-_bodyScrollLockY) + 'px';
+}
+function _unlockBodyScroll() {
+  if (!document.body.classList.contains('body-scroll-locked')) return;
+  document.body.classList.remove('body-scroll-locked');
+  document.body.style.top = '';
+  window.scrollTo(0, _bodyScrollLockY);
+}
+new MutationObserver(() => {
+  if (_isAnyModalOpen()) _lockBodyScroll();
+  else _unlockBodyScroll();
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['class'], subtree: true });
+
 async function sbFetch(path, options = {}) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`;
   const headers = {
@@ -2161,13 +2183,19 @@ const SEVERITY_TO_COLOR = { simple: 'green', moderate: 'yellow', below_critical:
 // يرجع رموز فئات المغادرات المفتوحة لهذا البرج (⚡ كهربائية / ⚙️ ميكانيكية / 🔥 حرائق) — يختفي الرمز تلقائياً
 // لحظة معالجة آخر مغادرة بهذي الفئة (لأنه يعتمد مباشرة على درجة الخطورة الحالية بالسجل، نفس مصدر الألوان)
 function getDepartureCategoryIcons(rec) {
-  if (!rec) return '';
+  if (!rec) return [];
   const isIssue = s => s && s !== 'ok';
-  let icons = '';
-  if (isIssue(rec.sev_insulator) || isIssue(rec.sev_wires) || isIssue(rec.sev_ground)) icons += '⚡';
-  if (isIssue(rec.sev_iron) || isIssue(rec.sev_foundation)) icons += '⚙️';
-  if (isIssue(rec.sev_fire)) icons += '🔥';
+  const icons = [];
+  if (isIssue(rec.sev_insulator) || isIssue(rec.sev_wires) || isIssue(rec.sev_ground)) icons.push('⚡');
+  if (isIssue(rec.sev_iron) || isIssue(rec.sev_foundation)) icons.push('⚙️');
+  if (isIssue(rec.sev_fire)) icons.push('🔥');
   return icons;
+}
+// يبني شريط رموز عمودي (كهربائية فوق، ميكانيكية بالنص، حرائق بالأسفل) على يسار البطاقة، بمسافة عن الرقم
+function buildCategoryIconsHTML(rec) {
+  const icons = getDepartureCategoryIcons(rec);
+  if (!icons.length) return '';
+  return `<div style="position:absolute;top:8px;left:8px;display:flex;flex-direction:column;gap:4px;font-size:0.8rem">${icons.map(i=>`<span>${i}</span>`).join('')}</div>`;
 }
 
 function getTowerCriticalityLevel(rec) {
@@ -2226,7 +2254,7 @@ function getTowerCriticalityLevel(rec) {
 
 function isInspectionComplete(rec) {
   if (!rec) return false;
-  const core = ['iron_intersections','tower_foundations','tower_attachments','fire_causes','road_access'];
+  const core = ['iron_intersections','tower_foundations','tower_attachments','road_access'];
   return core.every(f => rec[f] && String(rec[f]).trim() !== '');
 }
 
@@ -2269,9 +2297,9 @@ async function renderTowersGrid(lineName) {
       const monthsSince = (Date.now() - new Date(rec.inspection_date).getTime()) / (1000*60*60*24*30.44);
       if (monthsSince >= 6) staleLine = `⏰ لم يُكشف منذ ${Math.floor(monthsSince)} شهر تقريباً`;
     }
-    const catIcons = getDepartureCategoryIcons(rec);
+    const catIconsHTML = buildCategoryIconsHTML(rec);
     return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text};position:relative" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
-      ${catIcons ? `<div style="position:absolute;top:4px;left:4px;font-size:0.8rem">${catIcons}</div>` : ''}
+      ${catIconsHTML}
       <div class="tower-box-num">${t.num}</div>
       <div class="tower-box-type">${t.type||''}</div>
       <div class="tower-box-date">${dateLine}</div>
@@ -2798,7 +2826,7 @@ function onSeverityChange(section) {
 
 const FIELDS = ['iron_intersections','tower_foundations',
   'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
-  'ground_1','ground_2','fire_causes','fire_causes_notes','road_access','road_access_notes','notes',
+  'ground_1','ground_2','fire_causes_notes','road_access','road_access_notes','notes',
   'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire'];
 
 function getFormData() {
@@ -2891,12 +2919,8 @@ async function saveRecord() {
   const d = getFormData();
   if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
 
-  // التحقق: لازم تكون درجة الخطورة محدّدة لكل قسم، وإذا كانت "مغادرة" (مو سليم) لازم صندوق الوصف معبّى
-  const hasInsulatorDamage = ['R','S','T'].some(p => (insulatorState[p]||[]).some(Boolean));
-  if (hasInsulatorDamage && !d.sev_insulator) {
-    showToast('⚠️ حدّد درجة خطورة مغادرة "العوازل" قبل الحفظ', 'error');
-    return;
-  }
+  // التحقق: القسم اللي ما لمسته (تركت قائمته فاضية) يُقبل بدون إلزام — يبقى ناقص لين كشف جديد لاحقاً.
+  // القسم اللي حددت له درجة (سليم أو غيرها) ولو كانت "مغادرة" لازم صندوق الوصف معبّى
   const sevChecks = [
     { sev: d.sev_iron, fields: [d.iron_intersections], label: 'تقاطعات الحديد' },
     { sev: d.sev_foundation, fields: [d.tower_foundations], label: 'قواعد البرج' },
@@ -2905,7 +2929,7 @@ async function saveRecord() {
     { sev: d.sev_fire, fields: [d.fire_causes_notes], label: 'مسببات الحرائق' },
   ];
   for (const c of sevChecks) {
-    if (!c.sev) { showToast(`⚠️ حدّد درجة خطورة "${c.label}" (سليم أو نوع المغادرة) قبل الحفظ`, 'error'); return; }
+    if (!c.sev) continue; // قسم لم يُكشف بهذي المرة — يُقبل بدون إلزام
     if (c.sev !== 'ok' && c.fields.every(v => !v || !v.trim())) {
       showToast(`⚠️ اكتب وصف مغادرة "${c.label}" قبل الحفظ`, 'error'); return;
     }
@@ -6614,10 +6638,10 @@ function renderLineTowerList(lineName) {
       else if (allTreated) { statusBadge = '✅ معالج'; borderColor = '#48BB78'; }
       else { statusBadge = '🔴 مغادرات'; borderColor = '#FC4444'; }
     }
-    const catIcons = getDepartureCategoryIcons(r);
+    const catIconsHTML = buildCategoryIconsHTML(r);
     html += `<div onclick="openTowerDetail('${lineName.replace(/'/g,"\\'")}','${t.num}')"
       style="cursor:pointer;border:2px solid ${borderColor};border-radius:10px;padding:10px;text-align:center;background:white;position:relative">
-      ${catIcons ? `<div style="position:absolute;top:4px;left:4px;font-size:0.8rem">${catIcons}</div>` : ''}
+      ${catIconsHTML}
       <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${t.num}</div>
       <div style="font-size:0.72rem;color:#718096;margin:2px 0">${t.type||''}</div>
       <div style="font-size:0.78rem;font-weight:700">${statusBadge}</div>
@@ -7094,7 +7118,7 @@ const TREAT_FIELD_MAP = {
   wire_t1: [{field:'wires_t1', healthy:'سليم'}],
   ground_1: [{field:'ground_1', healthy:''}],
   ground_2: [{field:'ground_2', healthy:''}],
-  fire: [{field:'fire_causes', healthy:'لا يوجد'},{field:'fire_causes_notes', healthy:''}],
+  fire: [{field:'fire_causes_notes', healthy:''}],
   road: [{field:'road_access', healthy:'متاح'},{field:'road_access_notes', healthy:''}]
 };
 
@@ -7538,10 +7562,10 @@ function renderDepLineTowers(lineName) {
   activeTowers.forEach(({r, deps}) => {
     const level = getTowerCriticalityLevel(r);
     const meta = TOWER_LEVEL_META[level] || TOWER_LEVEL_META.red;
-    const catIcons = getDepartureCategoryIcons(r);
+    const catIconsHTML = buildCategoryIconsHTML(r);
     html += `<div onclick="openDepTowerDetail('${lineName.replace(/'/g,"\\'")}','${r.tower_number}')"
       style="cursor:pointer;border:2px solid ${meta.border};border-radius:10px;padding:10px;text-align:center;background:${meta.bg};position:relative">
-      ${catIcons ? `<div style="position:absolute;top:4px;left:4px;font-size:0.8rem">${catIcons}</div>` : ''}
+      ${catIconsHTML}
       <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${r.tower_number}</div>
       <div style="font-size:0.72rem;color:#718096;margin:2px 0">${TOWER_TYPES[r.tower_type]||r.tower_type||''}</div>
       <div style="font-size:0.78rem;font-weight:700;color:${meta.text}">🔴 ${deps.length} مغادرة</div>
