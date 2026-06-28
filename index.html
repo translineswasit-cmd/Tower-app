@@ -2143,7 +2143,7 @@ function showToast(msg, type='success') {
 // ========================
 // LINE / TOWER SELECTS
 // ========================
-function onLineChange() {
+function onLineChange(skipModalClose) {
   const name = document.getElementById('f_line_name').value;
   const tSel = document.getElementById('f_tower_number');
   const lineInfo = document.getElementById('lineInfoStrip');
@@ -2153,6 +2153,7 @@ function onLineChange() {
   document.getElementById('insulatorSection').style.display = 'none';
   if (!name) {
     tSel.disabled = true; lineInfo.style.display = 'none'; currentVoltage = 0; updateWiresGroundUI();
+    if (skipModalClose) return;
     currentGridLine = null;
     document.getElementById('towersGridSection').style.display = 'none';
     renderActiveLinesTabs();
@@ -2173,11 +2174,13 @@ function onLineChange() {
   if (!document.getElementById('f_inspection_date').value) {
     document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
   }
-  // إلغاء تركيز أي حقل + إغلاق أي نافذة منبثقة عالقة قبل عرض شبكة الأبراج — يمنع أي طبقة عالقة تحجب اللمس
+  // مهم: لو الاستدعاء جاء فقط لتعبئة الفورم ببيانات (setFormData، مثلاً تحميل كشف سابق بنافذة مفتوحة أصلاً)،
+  // ما نغلق أي نافذة مفتوحة عمداً — يمنع إغلاق النافذة بالغلط لحظة تعبئتها (الخلل المكتشف اليوم).
+  // نبقي تحديث الشبكة وعلامة التبويب يصير بكل الحالات لأنه غير مرتبط بسبب المشكلة
   if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
     document.activeElement.blur();
   }
-  document.querySelectorAll('.modal-bg.show').forEach(m => m.classList.remove('show'));
+  if (!skipModalClose) document.querySelectorAll('.modal-bg.show').forEach(m => m.classList.remove('show'));
   addActiveLineTab(name);
   renderTowersGrid(name);
 }
@@ -2983,7 +2986,7 @@ function getFormData() {
 function setFormData(d) {
   document.querySelectorAll('.treated-prev-badge').forEach(b => b.remove());
   document.getElementById('f_line_name').value = d.line_name||'';
-  onLineChange();
+  onLineChange(true);
   currentVoltage = d.voltage || (LINE_VOLTAGE[d.line_name]||132);
   setTimeout(() => {
     document.getElementById('f_tower_number').value = d.tower_number||'';
