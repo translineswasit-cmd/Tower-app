@@ -1196,7 +1196,7 @@ tbody tr:hover { background: #F7FAFC; }
           <div style="font-weight:700;font-size:0.95rem">الإصدار: 2 &nbsp; | &nbsp; استمارة: الكشف الحراري لخطوط نقل الطاقة &nbsp; | &nbsp; الشركة العامة لنقل الطاقة الكهربائية</div>
           <div style="font-size:0.8rem;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &nbsp; | &nbsp; الرمز: (MOE/T2-FO-177) &nbsp; | &nbsp; المنطقة الوسطى</div>
         </div>
-        <div style="overflow-x:auto;margin-bottom:10px">
+        <div style="overflow-x:auto;margin-bottom:20px">
           <table class="thermal-points-table" id="officialFormHeaderTable" style="min-width:680px;width:100%">
             <thead><tr>
               <th style="width:42%">اسم الخط</th>
@@ -1232,11 +1232,11 @@ tbody tr:hover { background: #F7FAFC; }
         <div style="margin-top:10px">
           <button class="btn-sm btn-secondary" onclick="addOfficialFormRow()">➕ إضافة برج</button>
         </div>
-        <div style="display:flex;justify-content:space-between;margin-top:28px;font-size:0.82rem;color:#333">
-          <div>اسم وتوقيع الفاحص: ..............................</div>
-          <div>مصادقة رئيس القسم: ..............................</div>
+        <div style="display:flex;justify-content:space-between;margin-top:56px;font-size:0.82rem;color:#333">
+          <div>اسم وتوقيع الفاحص: </div>
+          <div>مصادقة رئيس القسم: </div>
         </div>
-        <div style="margin-top:28px;font-size:0.82rem;color:#333">لجنة الكشف الحراري: ..............................</div>
+        <div style="margin-top:56px;font-size:0.82rem;color:#333;text-align:center">لجنة الكشف الحراري: </div>
       </div>
       <div class="form-actions" style="margin-top:14px">
         <button class="btn btn-primary" onclick="saveOfficialForm()">💾 حفظ بالأرشيف</button>
@@ -3988,6 +3988,8 @@ function applyAmbientAutoFill(ambient) {
   ambient = parseFloat(ambient); // مهم: القيمة تجي كنص من الحقل — بدون هذا التحويل يصير دمج نصوص بدل جمع رياضي (44+7 تصبح "447" بدل 51)
   if (ambient === '' || ambient == null || isNaN(ambient)) return;
   officialFormRows.forEach(row => {
+    // تجاهل صفوف الحشو الفاضية (بلا رقم برج) — هذي فقط لإكمال 23 سطر بالشكل الرسمي وما يجوز تتعبى بقيم وهمية
+    if (row.tower_number === '' || row.tower_number === null || row.tower_number === undefined) return;
     if (!row.inspected) {
       if (row.t === '' || row.t === null || row.t === undefined) row.t = Math.round(ambient + 7 + Math.random() * 3);
       if (row.s === '' || row.s === null || row.s === undefined) row.s = Math.round(ambient + 7 + Math.random() * 3);
@@ -4130,7 +4132,7 @@ function buildOfficialFormBodyHTML() {
       <div style="font-weight:700;font-size:15px">الإصدار: 2 &#160;|&#160; استمارة: الكشف الحراري لخطوط نقل الطاقة &#160;|&#160; الشركة العامة لنقل الطاقة الكهربائية</div>
       <div style="font-size:12px;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &#160;|&#160; الرمز: (MOE/T2-FO-177) &#160;|&#160; المنطقة الوسطى</div>
     </div>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:13px">
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:13px">
       <tr style="background:#f0f0f0">
         <th style="border:1px solid #000;padding:6px;width:42%">اسم الخط</th>
         <th style="border:1px solid #000;padding:6px">نوع السلك</th>
@@ -4162,11 +4164,11 @@ function buildOfficialFormBodyHTML() {
       </thead>
       <tbody>${rowsHTML || '<tr><td colspan="8" style="border:1px solid #000;padding:6px">لا توجد أبراج</td></tr>'}</tbody>
     </table>
-    <div style="display:flex;justify-content:space-between;margin-top:28px;font-size:13px;color:#333">
-      <div>اسم وتوقيع الفاحص: ..............................</div>
-      <div>مصادقة رئيس القسم: ..............................</div>
+    <div style="display:flex;justify-content:space-between;margin-top:56px;font-size:13px;color:#333">
+      <div>اسم وتوقيع الفاحص: </div>
+      <div>مصادقة رئيس القسم: </div>
     </div>
-    <div style="margin-top:28px;font-size:13px;color:#333">لجنة الكشف الحراري: ..............................</div>
+    <div style="margin-top:56px;font-size:13px;color:#333;text-align:center">لجنة الكشف الحراري: </div>
   `;
 }
 
@@ -4255,7 +4257,7 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
     ops.push({ type:'text', text: valCols[i], x: hx-w/2, y: y+cellH/2+4, font:'12px Tahoma, Arial', align:'center' });
     hx -= w;
   });
-  y += cellH + 14;
+  y += cellH + 28;
 
   // جدول قراءات الأبراج — أعمدة بعرض المحتوى، من اليمين لليسار، يشمل عمود درجة حرارة الجو
   const headers = ['رقم برج الشد', 'مسافة الفحص', 'T', 'S', 'R', 'حمل الخط MW', 'درجة حرارة الجو', 'الملاحظات'];
@@ -4297,10 +4299,10 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
   // التوقيعات — فقط بالصفحة الأخيرة: سطرين تحت الجدول (يمين/يسار)، وسطرين إضافيين لـ"لجنة الكشف الحراري"
   if (pageNum === totalPages) {
     y += lh*2;
-    ops.push({ type:'text', text: 'اسم وتوقيع الفاحص: ..............................', x: widthCss-sidePad, y, font:'12px Tahoma, Arial', align:'right' });
-    ops.push({ type:'text', text: 'مصادقة رئيس القسم: ..............................', x: sidePad, y, font:'12px Tahoma, Arial', align:'left' });
-    y += lh*2;
-    ops.push({ type:'text', text: 'لجنة الكشف الحراري: ..............................', x: widthCss-sidePad, y, font:'12px Tahoma, Arial', align:'right' });
+    ops.push({ type:'text', text: 'اسم وتوقيع الفاحص: ', x: widthCss-sidePad, y, font:'12px Tahoma, Arial', align:'right' });
+    ops.push({ type:'text', text: 'مصادقة رئيس القسم: ', x: sidePad, y, font:'12px Tahoma, Arial', align:'left' });
+    y += lh*4;
+    ops.push({ type:'text', text: 'لجنة الكشف الحراري: ', x: widthCss/2, y, font:'12px Tahoma, Arial', align:'center' });
   }
 
   const totalHeight = y + 20;
@@ -4389,7 +4391,7 @@ async function buildOfficialFormDocxBlob() {
       ] })
     ]
   });
-  children.push(headerTable, new Paragraph({ text: '' }));
+  children.push(headerTable, new Paragraph({ text: '' }), new Paragraph({ text: '' }));
 
   const dataHeaders = ['رقم برج الشد', 'مسافة الفحص', 'T', 'S', 'R', 'حمل الخط MW', 'درجة حرارة الجو', 'الملاحظات'];
   const tableRows = [new TableRow({ children: dataHeaders.map(headCell) })];
@@ -4408,12 +4410,12 @@ async function buildOfficialFormDocxBlob() {
   const footerTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [new TableRow({ children: [
-      new TableCell({ borders: { top:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, bottom:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, left:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, right:{style:BorderStyle.NONE,size:0,color:'FFFFFF'} }, children: [rtlP([rtlRun('اسم وتوقيع الفاحص: ..............................')], { alignment: AlignmentType.RIGHT })] }),
-      new TableCell({ borders: { top:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, bottom:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, left:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, right:{style:BorderStyle.NONE,size:0,color:'FFFFFF'} }, children: [rtlP([rtlRun('مصادقة رئيس القسم: ..............................')], { alignment: AlignmentType.LEFT })] })
+      new TableCell({ borders: { top:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, bottom:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, left:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, right:{style:BorderStyle.NONE,size:0,color:'FFFFFF'} }, children: [rtlP([rtlRun('اسم وتوقيع الفاحص: ')], { alignment: AlignmentType.RIGHT })] }),
+      new TableCell({ borders: { top:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, bottom:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, left:{style:BorderStyle.NONE,size:0,color:'FFFFFF'}, right:{style:BorderStyle.NONE,size:0,color:'FFFFFF'} }, children: [rtlP([rtlRun('مصادقة رئيس القسم: ')], { alignment: AlignmentType.LEFT })] })
     ]})]
   });
-  children.push(footerTable, new Paragraph({ text: '' }), new Paragraph({ text: '' }));
-  children.push(rtlP([rtlRun('لجنة الكشف الحراري: ..............................')], { alignment: AlignmentType.RIGHT }));
+  children.push(footerTable, new Paragraph({ text: '' }), new Paragraph({ text: '' }), new Paragraph({ text: '' }), new Paragraph({ text: '' }));
+  children.push(rtlP([rtlRun('لجنة الكشف الحراري: ')], { alignment: AlignmentType.CENTER }));
 
   const doc = new Document({ sections: [{ properties: {}, children }] });
   return await Packer.toBlob(doc);
