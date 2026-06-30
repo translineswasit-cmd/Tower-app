@@ -4113,9 +4113,24 @@ async function renderOfficialFormArchive() {
           <div class="dep-card-title">📄 ${f.line_name}</div>
           <div class="dep-card-meta">📅 ${f.inspection_date} | 🗼 ${n} برج | 👤 ${f.created_by||'—'}</div>
         </div>
+        <div style="margin-top:8px">
+          <button class="btn-sm btn-del" onclick="event.stopPropagation();deleteOfficialFormFromArchive('${f.id}')">🗑️ حذف</button>
+        </div>
       </div>`;
     }).join('');
   } catch (e) { body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>'; }
+}
+
+async function deleteOfficialFormFromArchive(id) {
+  if (!confirm('🗑️ تأكيد حذف هذه الاستمارة من الأرشيف؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.')) return;
+  try {
+    const res = await sbFetch(`thermal_official_forms?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('فشل الحذف');
+    showToast('✅ تم حذف الاستمارة');
+    renderOfficialFormArchive();
+  } catch (e) {
+    showToast('❌ تعذر حذف الاستمارة، تحقق من الاتصال', 'error');
+  }
 }
 
 async function openOfficialFormFromArchive(id) {
@@ -5236,9 +5251,24 @@ async function renderMemoArchive() {
           <div class="dep-card-title">📝 ${preview}</div>
           <div class="dep-card-meta">🔢 العدد: ${m.memo_number||'—'} | 📅 ${m.memo_date} | 👤 ${m.created_by||'—'}</div>
         </div>
+        <div style="margin-top:8px">
+          <button class="btn-sm btn-del" onclick="event.stopPropagation();deleteMemoFromArchive('${m.id}')">🗑️ حذف</button>
+        </div>
       </div>`;
     }).join('');
   } catch (e) { body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>'; }
+}
+
+async function deleteMemoFromArchive(id) {
+  if (!confirm('🗑️ تأكيد حذف هذه المذكرة من الأرشيف؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.')) return;
+  try {
+    const res = await sbFetch(`memos?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('فشل الحذف');
+    showToast('✅ تم حذف المذكرة');
+    renderMemoArchive();
+  } catch (e) {
+    showToast('❌ تعذر حذف المذكرة، تحقق من الاتصال', 'error');
+  }
 }
 
 async function openMemoFromArchive(id) {
@@ -5692,10 +5722,25 @@ async function renderDailyReportArchive() {
           <div class="dep-card-title">📅 ${rep.report_date}</div>
           <div class="dep-card-meta">📋 ${rowCount} خط | 👤 ${rep.created_by||'—'}</div>
         </div>
+        <div style="margin-top:8px">
+          <button class="btn-sm btn-del" onclick="event.stopPropagation();deleteDailyReportFromArchive('${rep.id}')">🗑️ حذف</button>
+        </div>
       </div>`;
     }).join('');
   } catch (e) {
     body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>';
+  }
+}
+
+async function deleteDailyReportFromArchive(id) {
+  if (!confirm('🗑️ تأكيد حذف هذا التقرير اليومي من الأرشيف؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.')) return;
+  try {
+    const res = await sbFetch(`daily_reports?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('فشل الحذف');
+    showToast('✅ تم حذف التقرير');
+    renderDailyReportArchive();
+  } catch (e) {
+    showToast('❌ تعذر حذف التقرير، تحقق من الاتصال', 'error');
   }
 }
 
