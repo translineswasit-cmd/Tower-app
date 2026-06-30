@@ -1193,7 +1193,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="officialFormEditArea" style="display:none">
       <div class="form-card" id="officialFormPrintArea">
         <div id="officialFormHeaderWrapLive" style="position:relative;text-align:center;margin-bottom:10px">
-          <img id="officialFormStampImgLive" src="" style="position:absolute;width:60px;height:60px;left:240px;top:-68px">
+          <img id="officialFormStampImgLive" src="" style="position:absolute;width:120px;height:120px;left:210px;top:-76px">
           <div style="font-weight:700;font-size:0.95rem">الإصدار: 2 &nbsp; | &nbsp; <span id="officialFormTitleSpanLive">استمارة: الكشف الحراري لخطوط نقل الطاقة</span> &nbsp; | &nbsp; الشركة العامة لنقل الطاقة الكهربائية</div>
           <div style="font-size:0.8rem;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &nbsp; | &nbsp; الرمز: (MOE/T2-FO-177) &nbsp; | &nbsp; المنطقة الوسطى</div>
         </div>
@@ -4026,10 +4026,10 @@ function placeOfficialFormStampLive() {
     const wrapRect = wrap.getBoundingClientRect();
     const spanRect = span.getBoundingClientRect();
     if (wrapRect.width === 0) { setTimeout(placeOfficialFormStampLive, 150); return; } // العنصر غير ظاهر بعد (display:none)
-    const stampSize = wrapRect.height; // يمتد طول ارتفاع الترويسة، فحافته السفلى تلامس بداية الجدول تقريباً
+    const stampSize = wrapRect.height * 2; // مضاعف الحجم الأساسي
     const leftEdge = spanRect.left - wrapRect.left;
     img.style.left = (leftEdge - stampSize/2) + 'px';
-    img.style.top = '0px';
+    img.style.top = (-(stampSize - wrapRect.height)) + 'px';
     img.style.width = stampSize + 'px';
     img.style.height = stampSize + 'px';
     img.style.visibility = 'visible';
@@ -4157,7 +4157,7 @@ function buildOfficialFormBodyHTML() {
     </tr>`).join('');
   return `
     <div id="officialFormHeaderWrap" style="position:relative;text-align:center;margin-bottom:10px">
-      <img id="officialFormStampImg" src="${STAMP_IMG_SRC}" style="position:absolute;width:70px;height:70px;left:280px;top:-78px">
+      <img id="officialFormStampImg" src="${STAMP_IMG_SRC}" style="position:absolute;width:140px;height:140px;left:245px;top:-86px">
       <div style="font-weight:700;font-size:15px">الإصدار: 2 &#160;|&#160; <span id="officialFormTitleSpan">استمارة: الكشف الحراري لخطوط نقل الطاقة</span> &#160;|&#160; الشركة العامة لنقل الطاقة الكهربائية</div>
       <div style="font-size:12px;color:#555;margin-top:4px">تاريخ الإصدار: 27/3/2019 &#160;|&#160; الرمز: (MOE/T2-FO-177) &#160;|&#160; المنطقة الوسطى</div>
     </div>
@@ -4212,13 +4212,15 @@ function placeOfficialFormStampInDoc(doc) {
     const wrapRect = wrap.getBoundingClientRect();
     const spanRect = span.getBoundingClientRect();
     if (wrapRect.width === 0) { setTimeout(() => placeOfficialFormStampInDoc(doc), 100); return; }
-    const stampSize = wrapRect.height; // يمتد طول ارتفاع الترويسة كاملاً، فحافته السفلى تلامس بداية الجدول تقريباً
+    const stampSize = wrapRect.height * 2; // مضاعف الحجم الأساسي
     const leftEdge = spanRect.left - wrapRect.left;
+    const overflow = stampSize - wrapRect.height;
     img.style.left = (leftEdge - stampSize/2) + 'px';
-    img.style.top = '0px';
+    img.style.top = (-overflow) + 'px';
     img.style.width = stampSize + 'px';
     img.style.height = stampSize + 'px';
     img.style.visibility = 'visible';
+    wrap.style.marginTop = overflow + 'px';
   } catch (e) {}
 }
 
@@ -4264,8 +4266,16 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
 
   const ops = [];
   const hasStamp = pageNum === 1 && stampImgReady;
-  let y = 24;
   const lh = 18;
+  // مضاعفة حجم الختم فقط: نحسب الحجم الأساسي (المساحة بين أعلى الصفحة والخط الفاصل) ثم نضاعفه،
+  // ونزيح بداية الترويسة كاملة للأسفل بما يكفي حتى يبقى الختم داخل الصفحة وحافته السفلى ملاصقة للخط الفاصل
+  const stampTopY = 6;
+  const stampBottomGap = 3;
+  const baseDividerY = 24 + lh + lh*0.9;
+  const baseStampD = baseDividerY - stampBottomGap - stampTopY;
+  const stampD = hasStamp ? baseStampD * 2 : 0;
+  const extraShift = hasStamp ? Math.max(0, (stampTopY + stampD + stampBottomGap) - baseDividerY) : 0;
+  let y = 24 + extraShift;
 
   // ترويسة بثلاث مناطق: يمين (الإصدار/تاريخه) | وسط (عنوان الاستمارة/الرمز) | يسار (الشركة/المنطقة) —
   // كل سطرين بمنطقتهم يتوسطان فوق بعض بشكل مستقل (مو بداية واحدة)
@@ -4275,13 +4285,8 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
   const leftCx = sidePad + colW/2;
   const rightEdgeX = widthCss - sidePad; // نقطة بداية واحدة من اليمين للإصدار وتاريخه
 
-  // الختم: يمتد رأسياً من قرب أعلى الصفحة إلى قرب الخط الأسود الفاصل فوق الجدول الأول (حافته السفلى قريبة جداً من الخط)
-  // وأفقياً فوق آخر حرف من "الطاقة" بعنوان الاستمارة
+  // الختم: حجمه مضاعف، حافته السفلى ملاصقة للخط الأسود الفاصل فوق الجدول الأول، وأفقياً فوق آخر حرف من "الطاقة"
   if (hasStamp) {
-    const dividerY = y + lh + lh*0.9; // موضع الخط الأسود الفاصل (محسوب بنفس منطق الترويسة أدناه)
-    const stampTopY = 6;
-    const stampBottomGap = 3; // قريب جداً من الخط
-    const stampD = dividerY - stampBottomGap - stampTopY;
     mctx.font = 'bold 12px Tahoma, Arial';
     const titleText = 'استمارة : الكشف الحراري لخطوط نقل الطاقة';
     const titleWidth = mctx.measureText(titleText).width;
@@ -4451,7 +4456,7 @@ async function buildOfficialFormDocxBlob() {
     children: [
       new ImageRun({
         data: stampBytes,
-        transformation: { width: 70, height: 70 },
+        transformation: { width: 140, height: 140 },
         floating: {
           horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: 3300000 },
           verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: 250000 },
