@@ -5913,10 +5913,9 @@ async function generateDailyReport() {
         fire: hasFire
       });
 
-      // دمج الملاحظات بفاصلة
-      const treatNotes = notesParts.join('، ');
-      if (row.notes && treatNotes) row.notes = treatNotes + '، ' + row.notes;
-      else if (treatNotes) row.notes = treatNotes;
+      // التفاصيل التشغيلية تذهب لحقل "تفاصيل العمل" بدل "الملاحظات"
+      row.work_details = notesParts.join('، ');
+      // حقل الملاحظات يبقى فقط للملاحظات الثابتة (مشترك مع...) التي تملأها buildDailyReportRow
 
       return row;
     });
@@ -5934,15 +5933,9 @@ async function generateDailyReport() {
 }
 
 function buildWorkDetailsText(row) {
-  const parts = [];
-  if (row.visual) parts.push('كشف بصري');
-  if (row.thermal) parts.push('كشف حراري');
-  if (row.sched_no_outage) parts.push('صيانة مبرمجة بدون إطفاء الخط');
-  if (row.sched_outage) parts.push('صيانة مبرمجة بإطفاء الخط');
-  if (row.emergency_outage) parts.push('صيانة طارئة بإطفاء الخط');
-  if (row.fire_removal) parts.push('إزالة مسببات حرائق');
-  if (!parts.length) return '';
-  return 'تم إجراء: ' + parts.join(' + ');
+  // التفاصيل التشغيلية باتت تُبنى مباشرة بدالة generateDailyReport وتُوضع بـwork_details
+  // هذه الدالة تبقى للخطوط المضافة يدوياً أو المجموعات الجماعية فقط
+  return '';
 }
 
 function buildDailyReportRow(lineName, info) {
