@@ -8194,15 +8194,15 @@ function extractDepsFromRecord(r) {
       });
     } catch(e) {}
   }
-  if (r.iron_intersections && r.iron_intersections.trim()) deps.push({ type:'iron', label:'تقاطعات الحديد: '+r.iron_intersections, key:'iron' });
-  if (r.tower_foundations && r.tower_foundations.trim()) deps.push({ type:'foundation', label:'قواعد البرج: '+r.tower_foundations, key:'foundation' });
-  if (r.tower_attachments && r.tower_attachments.trim()) deps.push({ type:'attachment', label:'ملحقات البرج: '+r.tower_attachments, key:'attachment' });
+  if (r.iron_intersections && r.iron_intersections.trim() && r.iron_intersections.trim()!=='سليم') deps.push({ type:'iron', label:'تقاطعات الحديد: '+r.iron_intersections, key:'iron' });
+  if (r.tower_foundations && r.tower_foundations.trim() && r.tower_foundations.trim()!=='سليم') deps.push({ type:'foundation', label:'قواعد البرج: '+r.tower_foundations, key:'foundation' });
+  if (r.tower_attachments && r.tower_attachments.trim() && r.tower_attachments.trim()!=='سليم') deps.push({ type:'attachment', label:'ملحقات البرج: '+r.tower_attachments, key:'attachment' });
   ['r1','s1','t1'].forEach(f => { const v=r['wires_'+f]; if(v&&v!=='سليم'&&v!=='') deps.push({type:'wire',label:`أسلاك ${f.replace('1','').toUpperCase()}: ${v}`,key:'wire_'+f}); });
   if (isDouble) {
     ['r1','s1','t1'].forEach(f => { const v=r['wires_'+f+'_c2']; if(v&&v!=='سليم'&&v!=='') deps.push({type:'wire',label:`أسلاك ${f.replace('1','').toUpperCase()} (الدائرة الثانية): ${v}`,key:'wire_'+f+'_c2'}); });
   }
-  if (r.ground_1&&r.ground_1.trim()) deps.push({type:'ground',label:'الأرضي 1: '+r.ground_1,key:'ground_1'});
-  if (r.ground_2&&r.ground_2.trim()) deps.push({type:'ground',label:'الأرضي 2: '+r.ground_2,key:'ground_2'});
+  if (r.ground_1&&r.ground_1.trim()&&r.ground_1.trim()!=='سليم') deps.push({type:'ground',label:'الأرضي 1: '+r.ground_1,key:'ground_1'});
+  if (r.ground_2&&r.ground_2.trim()&&r.ground_2.trim()!=='سليم') deps.push({type:'ground',label:'الأرضي 2: '+r.ground_2,key:'ground_2'});
   if (r.fire_causes&&r.fire_causes!=='لا يوجد'&&r.fire_causes!=='') deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes,key:'fire'});
   else if (r.fire_causes_notes&&r.fire_causes_notes.trim()) deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes_notes.trim(),key:'fire'});
   if (r.road_access&&r.road_access!=='متاح'&&r.road_access!=='') deps.push({type:'road',label:'الطريق: '+r.road_access,key:'road'});
