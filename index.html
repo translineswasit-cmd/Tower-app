@@ -8047,7 +8047,13 @@ function renderDepTowerDetail(lineName, towerNum) {
   deps.forEach(d => {
     html += `<span class="dep-item damaged">🔴 ${d.label}</span>`;
   });
-  html += `</div></div>`;
+  html += `</div>`;
+  // تنبيه الطريق — منفصل عن المغادرات، يظهر فقط إذا غير متاح
+  if (r && r.road_access && r.road_access !== 'متاح' && r.road_access !== '') {
+    const roadNote = r.road_access_notes && r.road_access_notes.trim() ? ` — ${r.road_access_notes.trim()}` : '';
+    html += `<div style="margin-top:10px;background:rgba(197,48,48,0.1);border:1px solid rgba(197,48,48,0.35);border-radius:8px;padding:8px 12px;font-size:0.82rem;color:#C53030">⚠️ الطريق غير متاح${roadNote}</div>`;
+  }
+  html += `</div>`;
 
   body.innerHTML = html;
 
@@ -8205,8 +8211,7 @@ function extractDepsFromRecord(r) {
   if (r.ground_2&&r.ground_2.trim()&&r.ground_2.trim()!=='سليم') deps.push({type:'ground',label:'الأرضي 2: '+r.ground_2,key:'ground_2'});
   if (r.fire_causes&&r.fire_causes!=='لا يوجد'&&r.fire_causes!=='') deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes,key:'fire'});
   else if (r.fire_causes_notes&&r.fire_causes_notes.trim()) deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes_notes.trim(),key:'fire'});
-  if (r.road_access&&r.road_access!=='متاح'&&r.road_access!=='') deps.push({type:'road',label:'الطريق: '+r.road_access,key:'road'});
-  else if (r.road_access_notes&&r.road_access_notes.trim()) deps.push({type:'road',label:'الطريق: '+r.road_access_notes.trim(),key:'road'});
+  // الطريق لا يُعدّ مغادرة — يُعالج كتنبيه منفصل أسفل قسم المغادرات
   return deps;
 }
 
