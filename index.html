@@ -5767,7 +5767,17 @@ async function openDailyReportFromArchive(id) {
 }
 
 function findLineInfo(lineName) {
-  return LINES_INFO.find(l => l.name === lineName) || null;
+  if (!lineName) return null;
+  const clean = lineName.trim().replace(/\s+/g, ' ');
+  // مطابقة تامة أولاً
+  let found = LINES_INFO.find(l => l.name === clean);
+  if (found) return found;
+  // مطابقة مرنة: تجاهل الفروق البسيطة بالمسافات
+  found = LINES_INFO.find(l => l.name.trim().replace(/\s+/g, ' ') === clean);
+  if (found) return found;
+  // مطابقة جزئية: يحتوي على نفس الكلمات
+  found = LINES_INFO.find(l => l.name.replace(/\s+/g,' ').includes(clean) || clean.includes(l.name.replace(/\s+/g,' ')));
+  return found || null;
 }
 
 async function generateDailyReport() {
@@ -5781,28 +5791,136 @@ async function generateDailyReport() {
       sbFetch(`inspections?select=line_name,tower_number&inspection_date=eq.${date}`),
       sbFetch(`thermal_inspections?select=line_name,tower_number&inspection_date=eq.${date}`),
       sbFetch(`line_entry_thermal?select=line_name&inspection_date=eq.${date}`),
-      sbFetch(`treatments?select=line_name,items_treated&treatment_date=eq.${date}`)
+      sbFetch(`treatments?select=line_name,tower_number,items_treated&treatment_date=eq.${date}`)
     ]);
     const [insp, therm, lineTherm, treat] = await Promise.all([
       inspRes.json(), thermRes.json(), lineThermRes.json(), treatRes.json()
     ]);
 
-    const byLine = {}; // line_name -> partial row
+    const byLine = {};
     function ensure(line) {
-      if (!byLine[line]) byLine[line] = { visualTowers: new Set(), thermalTowers: new Set(), hasThermal: false, fire: false };
+      if (!byLine[line]) byLine[line] = {
+        visualTowers: new Set(),
+        thermalTowers: new Set(),
+        hasThermal: false,
+        lineEntryThermal: false,
+        // معالجات: مصفوفة كائنات { tower, types: Set }
+        ironTowers: new Set(),      // حديد → بدون إطفاء
+        insulatorTowers: new Set(), // عوازل → بإطفاء
+        wireTowers: new Set(),      // أسلاك → بإطفاء
+        groundTowers: new Set(),    // أرضي → بإطفاء
+        foundationTowers: new Set(),// قواعد → بدون إطفاء
+        fireTowers: new Set(),      // حرائق
+        hasOutage: false,           // يُحدَّث لاحقاً
+        hasNoOutage: false
+      };
       return byLine[line];
     }
-    insp.forEach(r => { if (r.line_name) { const e = ensure(r.line_name); if (r.tower_number != null) e.visualTowers.add(r.tower_number); } });
-    therm.forEach(r => { if (r.line_name) { const e = ensure(r.line_name); e.hasThermal = true; if (r.tower_number != null) e.thermalTowers.add(r.tower_number); } });
-    lineTherm.forEach(r => { if (r.line_name) { ensure(r.line_name).hasThermal = true; } });
-    treat.forEach(r => {
+
+    insp.forEach(r => {
       if (!r.line_name) return;
-      let items = r.items_treated;
-      if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
-      if (Array.isArray(items) && items.some(it => it.key === 'fire')) ensure(r.line_name).fire = true;
+      const e = ensure(r.line_name);
+      if (r.tower_number != null) e.visualTowers.add(String(r.tower_number));
+    });
+    therm.forEach(r => {
+      if (!r.line_name) return;
+      const e = ensure(r.line_name);
+      e.hasThermal = true;
+      if (r.tower_number != null) e.thermalTowers.add(String(r.tower_number));
+    });
+    lineTherm.forEach(r => {
+      if (!r.line_name) return;
+      const e = ensure(r.line_name);
+      e.hasThermal = true;
+      e.lineEntryThermal = true;
     });
 
-    dailyReportRows = Object.keys(byLine).map(lineName => buildDailyReportRow(lineName, byLine[lineName]));
+    treat.forEach(r => {
+      if (!r.line_name) return;
+      const e = ensure(r.line_name);
+      let items = r.items_treated;
+      if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
+      if (!Array.isArray(items)) return;
+      const tNum = r.tower_number != null ? String(r.tower_number) : null;
+      items.forEach(it => {
+        const k = (it.key || '').toLowerCase();
+        if (k.startsWith('ins'))  { if (tNum) e.insulatorTowers.add(tNum); }
+        else if (k === 'iron')    { if (tNum) e.ironTowers.add(tNum); }
+        else if (k.startsWith('wire')) { if (tNum) e.wireTowers.add(tNum); }
+        else if (k.startsWith('ground')) { if (tNum) e.groundTowers.add(tNum); }
+        else if (k === 'foundation') { if (tNum) e.foundationTowers.add(tNum); }
+        else if (k === 'fire')    { if (tNum) e.fireTowers.add(tNum); }
+      });
+    });
+
+    // تحديد نوع الصيانة وبناء الملاحظات
+    dailyReportRows = Object.keys(byLine).map(lineName => {
+      const info = byLine[lineName];
+      // أنواع تحتاج إطفاء: عوازل + أسلاك + أرضي
+      const outageTypes = info.insulatorTowers.size > 0 || info.wireTowers.size > 0 || info.groundTowers.size > 0;
+      // أنواع بدون إطفاء: حديد + قواعد
+      const noOutageTypes = info.ironTowers.size > 0 || info.foundationTowers.size > 0;
+      const hasFire = info.fireTowers.size > 0;
+
+      // ترتيب الأبراج تصاعدياً للعرض
+      const sortT = s => [...s].sort((a,b) => Number(a)-Number(b));
+
+      // بناء الملاحظات
+      const notesParts = [];
+
+      // كشف بصري
+      if (info.visualTowers.size > 0) {
+        const nums = sortT(info.visualTowers).join('، ');
+        notesParts.push(`تم الكشف البصري على الأبراج التالية: ${nums}`);
+      }
+      // كشف حراري بأبراج
+      if (info.thermalTowers.size > 0) {
+        const nums = sortT(info.thermalTowers).join('، ');
+        notesParts.push(`تم الكشف الحراري على الأبراج: ${nums}`);
+      }
+      // معالجة حديد
+      if (info.ironTowers.size > 0) {
+        sortT(info.ironTowers).forEach(t => notesParts.push(`تم تعويض تقاطعات حديد على البرج ${t}`));
+      }
+      // معالجة عوازل
+      if (info.insulatorTowers.size > 0) {
+        sortT(info.insulatorTowers).forEach(t => notesParts.push(`العمل على تبديل عوازل البرج رقم ${t}`));
+      }
+      // معالجة أسلاك
+      if (info.wireTowers.size > 0) {
+        sortT(info.wireTowers).forEach(t => notesParts.push(`تم معالجة قطوعات جزئية بين الأبراج ${t}-${Number(t)+1}`));
+      }
+      // معالجة أرضي
+      if (info.groundTowers.size > 0) {
+        sortT(info.groundTowers).forEach(t => notesParts.push(`تم معالجة قطوعات جزئية بين الأبراج ${t}-${Number(t)+1}`));
+      }
+      // معالجة قواعد
+      if (info.foundationTowers.size > 0) {
+        sortT(info.foundationTowers).forEach(t => notesParts.push(`تم معالجة قواعد البرج ${t}`));
+      }
+      // معالجة حرائق
+      if (hasFire) {
+        sortT(info.fireTowers).forEach(t => notesParts.push(`تم إزالة مسببات الحرائق وقطع الأشجار بين الأبراج ${t}-${Number(t)+1}`));
+      }
+
+      const row = buildDailyReportRow(lineName, {
+        visualTowers: info.visualTowers,
+        thermalTowers: info.thermalTowers,
+        hasThermal: info.hasThermal,
+        // إذا بإطفاء، يلغي بدون إطفاء
+        sched_outage: outageTypes,
+        sched_no_outage: noOutageTypes && !outageTypes,
+        fire: hasFire
+      });
+
+      // دمج الملاحظات بفاصلة
+      const treatNotes = notesParts.join('، ');
+      if (row.notes && treatNotes) row.notes = treatNotes + '، ' + row.notes;
+      else if (treatNotes) row.notes = treatNotes;
+
+      return row;
+    });
+
     renderDailyReportRows();
     populateAddLineSelect();
     document.getElementById('dailyReportActions').style.display = 'flex';
@@ -5839,12 +5957,12 @@ function buildDailyReportRow(lineName, info) {
     tension_towers: li ? li.tension_towers : '',
     visual: info ? info.visualTowers.size > 0 : false,
     thermal: info ? info.hasThermal : false,
-    sched_no_outage: false,
-    sched_outage: false,
+    sched_no_outage: info ? (info.sched_no_outage || false) : false,
+    sched_outage: info ? (info.sched_outage || false) : false,
     emergency_outage: false,
-    fire_removal: info ? info.fire : false,
+    fire_removal: info ? (info.fire || false) : false,
     visual_length: '',
-    thermal_towers: info ? info.thermalTowers.size : '',
+    thermal_towers: info ? info.thermalTowers.size || '' : '',
     thermal_load: '',
     work_details: '',
     notes: ''
