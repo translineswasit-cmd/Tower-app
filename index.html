@@ -8881,46 +8881,138 @@ function getLatestRecordsPerTower(lineName) {
   return Object.values(byTower);
 }
 
+// ===== حساب قيمة السلسلة الواحدة من العوازل =====
+// maxVal = القيمة الكاملة للسلسلة (20 أو 10 أو 5)
+// damaged = مصفوفة boolean للعوازل المتضررة
+// يُحسب: هل الضرر متتالٍ (3+) أم متفرق، ثم يُطبَّق التدرج
+function calcChainScore(damaged, maxVal) {
+  const total = damaged.length;
+  const dmgCount = damaged.filter(Boolean).length;
+  if (dmgCount === 0) return maxVal;
+  // فحص التتالي: ابحث عن 3 متتالية فأكثر
+  let consecutive = 0, maxConsec = 0;
+  for (let i = 0; i < total; i++) {
+    if (damaged[i]) { consecutive++; maxConsec = Math.max(maxConsec, consecutive); }
+    else consecutive = 0;
+  }
+  if (maxConsec >= 3) return 0; // 3+ متتالية = السلسلة صفر
+  // متفرقة: كل عازل متضرر يخسر 1 نقطة من قيمة السلسلة
+  return Math.max(0, maxVal - dmgCount);
+}
+
+// ===== تدرج قيمة الأسلاك والأرضي حسب الخطورة =====
+function wireGroundScore(val, maxVal) {
+  if (!val || val === '' || val === 'سليم') return maxVal;
+  if (val === 'simple')        return Math.round(maxVal * 0.8);
+  if (val === 'moderate')      return Math.round(maxVal * 0.6);
+  if (val === 'below_critical') return Math.round(maxVal * 0.3);
+  if (val === 'critical')      return 0;
+  return maxVal;
+}
+
+// ===== تدرج قيمة الحديد والقواعد حسب الخطورة =====
+function mechSevScore(sev, maxVal) {
+  if (!sev || sev === '' || sev === 'ok') return maxVal;
+  if (sev === 'simple')        return Math.round(maxVal * 0.8);
+  if (sev === 'moderate')      return Math.round(maxVal * 0.6);
+  if (sev === 'below_critical') return Math.round(maxVal * 0.35);
+  if (sev === 'critical')      return Math.round(maxVal * 0.1);
+  return maxVal;
+}
+
 function calcLineHealthWithTreatments(lineName) {
   const rec = getLatestRecordsPerTower(lineName);
   if (!rec.length) return null;
-  const towers = LINES_DATA[lineName]||[];
-  const coverage = towers.length>0 ? rec.length/towers.length : 0;
-  let elIss=0, elTot=0, mIss=0, mTot=0;
-  let elSevSum=0, elSevCnt=0, mSevSum=0, mSevCnt=0;
-  rec.forEach(r => {
-    // درجة الخطورة المحدّدة يدوياً من الفاحص (الطريقة الجديدة) — نجمعها لو موجودة بهذا السجل
-    [r.sev_insulator, r.sev_wires].forEach(s => { if (s && SEVERITY_RANK[s]!=null) { elSevSum += SEVERITY_RANK[s]; elSevCnt++; } });
-    [r.sev_iron, r.sev_foundation, r.sev_ground, r.sev_fire].forEach(s => { if (s && SEVERITY_RANK[s]!=null) { mSevSum += SEVERITY_RANK[s]; mSevCnt++; } });
+  const towers = LINES_DATA[lineName] || [];
+  const coverage = towers.length > 0 ? rec.length / towers.length : 0;
 
-    // الطريقة القديمة (نسبة العناصر المتضررة) — تبقى تُحسب دائماً كما هي
-    if (r.insulator_state) {
-      try {
-        const state = safeParseJSON(r.insulator_state);
-        ['R','S','T'].forEach(phase => {
-          const ps = state[phase]||[];
-          elTot += ps.length;
-          if (!isTreatedInDB(r.id,`ins_${phase}`,r)) elIss += ps.filter(Boolean).length;
+  let totalElScore = 0, totalMScore = 0;
+
+  rec.forEach(r => {
+    // ===== الحالة الكهربائية للبرج (من 100) =====
+    const mode = getInsulatorMode(
+      LINE_VOLTAGE[lineName] || 132,
+      r.tower_type || '',
+      lineName
+    );
+
+    // عدد السلاسل وقيمة كل سلسلة لكل طور
+    // كل طور = 20 نقطة، السلاسل تقسّمها
+    const chainsPerPhase = (mode === 'chain1_10') ? 1
+      : (mode === 'chain2_10' || mode === 'chain2_12' || mode === 'v') ? 2
+      : 4; // chain4_12 أو straight4
+    const chainVal = Math.round(20 / chainsPerPhase); // 20، 10، أو 5
+
+    // حساب نقاط العوازل (60 نقطة)
+    let insScore = 0;
+    try {
+      const state = r.insulator_state ? safeParseJSON(r.insulator_state) : null;
+      const cycle = r.insulator_cycle ? safeParseJSON(r.insulator_cycle) : null;
+      if (state) {
+        ['R', 'S', 'T'].forEach(phase => {
+          const ps = state[phase] || [];
+          const cy = cycle ? (cycle[phase] || []) : [];
+          const total = ps.length;
+          if (total === 0) { insScore += 20; return; }
+
+          // تقسيم العوازل على السلاسل
+          const perChain = Math.ceil(total / chainsPerPhase);
+          let phaseScore = 0;
+          for (let c = 0; c < chainsPerPhase; c++) {
+            const start = c * perChain;
+            const end = Math.min(start + perChain, total);
+            // العوازل المتضررة الغير معالجة
+            const damaged = [];
+            for (let i = start; i < end; i++) {
+              const treated = cy[i] === true;
+              damaged.push(ps[i] && !treated);
+            }
+            phaseScore += calcChainScore(damaged, chainVal);
+          }
+          insScore += phaseScore;
         });
-      } catch(e) {}
-    }
-    ['wires_r1','wires_s1','wires_t1'].forEach(f => {
-      if (r[f]!=null&&r[f]!=='') { elTot++; if(!isTreatedInDB(r.id,'wire_'+f.replace('wires_',''))&&['تلف بسيط','تلف شديد','منقطع','ترهل'].includes(r[f])) elIss++; }
+      } else {
+        insScore = 60; // لا بيانات عوازل = سليم
+      }
+    } catch (e) { insScore = 60; }
+
+    // حساب نقاط الأسلاك (30 نقطة — كل طور 10)
+    const wireScore =
+      wireGroundScore(r.sev_wires, 10) + // نستخدم sev_wires كتقييم كلي للأسلاك
+      wireGroundScore(r.sev_wires, 10) +
+      wireGroundScore(r.sev_wires, 10);
+    // ملاحظة: الكود يخزن حالة كل سلك (r1,s1,t1) كنص — نستخدم sev_wires كتقييم موحّد
+    // إذا فيه قيم فردية نفصلها
+    let wireFinalScore = 0;
+    const wireFields = [r.wires_r1, r.wires_s1, r.wires_t1];
+    const wireMap = { 'سليم': 10, '': 10, 'ترهل': 8, 'تلف بسيط': 6, 'تلف شديد': 3, 'منقطع': 0 };
+    let hasWireData = false;
+    wireFields.forEach(w => {
+      if (w != null && w !== '') {
+        hasWireData = true;
+        wireFinalScore += wireMap[w] !== undefined ? wireMap[w] : 10;
+      } else {
+        wireFinalScore += 10;
+      }
     });
-    [['iron','iron_intersections'],['foundation','tower_foundations'],['attachment','tower_attachments']].forEach(([k,f]) => {
-      if (r[f]!=null&&r[f]!=='') { mTot++; if(!isTreatedInDB(r.id,k)&&r[f].trim()) mIss++; }
-    });
+
+    // حساب نقاط الأرضي (10 نقطة)
+    const groundVal = wireGroundScore(r.sev_ground, 10);
+
+    const elScore = Math.min(100, insScore + wireFinalScore + groundVal);
+    totalElScore += elScore;
+
+    // ===== الحالة الميكانيكية للبرج (من 100) =====
+    const ironScore = mechSevScore(r.sev_iron, 50);
+    const foundScore = mechSevScore(r.sev_foundation, 50);
+    const mScore = Math.min(100, ironScore + foundScore);
+    totalMScore += mScore;
   });
 
-  // نمزج الطريقتين بوزن متساوٍ: الطريقة القديمة (نسبة تلف) + درجة الخطورة المحدّدة يدوياً (لو موجودة)
-  const oldElScore = elTot>0 ? (1-elIss/elTot)*100 : 70;
-  const oldMScore = mTot>0 ? (1-mIss/mTot)*100 : 70;
-  const sevElScore = elSevCnt>0 ? (1 - (elSevSum/elSevCnt)/3)*100 : null;
-  const sevMScore = mSevCnt>0 ? (1 - (mSevSum/mSevCnt)/3)*100 : null;
-  const finalElScore = sevElScore!=null ? (oldElScore+sevElScore)/2 : oldElScore;
-  const finalMScore = sevMScore!=null ? (oldMScore+sevMScore)/2 : oldMScore;
+  const electricalScore = Math.min(100, Math.max(0, Math.round(totalElScore / rec.length)));
+  const mechanicalScore = Math.min(100, Math.max(0, Math.round(totalMScore / rec.length)));
 
-  return { coverage, electricalScore: Math.min(100,Math.max(0,Math.round(finalElScore))), mechanicalScore: Math.min(100,Math.max(0,Math.round(finalMScore))) };
+  return { coverage, electricalScore, mechanicalScore };
 }
 // ========================
 // EMERGENCY DEPARTURES
