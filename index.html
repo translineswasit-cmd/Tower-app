@@ -6781,8 +6781,8 @@ function calcLineHealth(lineName) {
       if (r[f] != null && r[f] !== '') { mTot++; if (['خلل','ضعيف','تالف','يحتاج صيانة'].includes(r[f])) mIss++; }
     });
   });
-  const elScore = Math.round((elTot > 0 ? (1-elIss/elTot)*100 : 70) * coverage + 50*(1-coverage));
-  const mScore = Math.round((mTot > 0 ? (1-mIss/mTot)*100 : 70) * coverage + 50*(1-coverage));
+  const elScore = Math.round(elTot > 0 ? (1-elIss/elTot)*100 : 70);
+  const mScore = Math.round(mTot > 0 ? (1-mIss/mTot)*100 : 70);
   return { coverage, electricalScore: elScore, mechanicalScore: mScore };
 }
 
@@ -8920,7 +8920,7 @@ function calcLineHealthWithTreatments(lineName) {
   const finalElScore = sevElScore!=null ? (oldElScore+sevElScore)/2 : oldElScore;
   const finalMScore = sevMScore!=null ? (oldMScore+sevMScore)/2 : oldMScore;
 
-  return { coverage, electricalScore: Math.min(100,Math.max(0,Math.round(finalElScore*coverage+50*(1-coverage)))), mechanicalScore: Math.min(100,Math.max(0,Math.round(finalMScore*coverage+50*(1-coverage)))) };
+  return { coverage, electricalScore: Math.min(100,Math.max(0,Math.round(finalElScore))), mechanicalScore: Math.min(100,Math.max(0,Math.round(finalMScore))) };
 }
 // ========================
 // EMERGENCY DEPARTURES
