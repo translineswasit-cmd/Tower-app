@@ -7918,19 +7918,20 @@ function renderDepLinesList() {
   const isIssue = s => s && s !== 'ok';
   const rows = uniqueLines.map(lineName => {
     const activeTowers = getActiveDepartureTowers(lineName);
-    let elCount = 0, mCount = 0, fireCount = 0;
+    let elCount = 0, mCount = 0, fireCount = 0, washCount = 0;
     activeTowers.forEach(({r}) => {
       if (isIssue(r.sev_insulator) || isIssue(r.sev_wires) || isIssue(r.sev_ground)) elCount++;
       if (isIssue(r.sev_iron) || isIssue(r.sev_foundation)) mCount++;
       if (isIssue(r.sev_fire)) fireCount++;
+      if (r.insulator_washing && r.insulator_washing !== '' && r.insulator_washing !== 'clean') washCount++;
     });
-    return { lineName, count: activeTowers.length, elCount, mCount, fireCount };
+    return { lineName, count: activeTowers.length, elCount, mCount, fireCount, washCount };
   });
 
   // الخطوط اللي فيها مغادرات تظهر أول، مرتبة تنازلياً، والسليمة بالأسفل
   rows.sort((a,b) => b.count - a.count || a.lineName.localeCompare(b.lineName,'ar'));
 
-  body.innerHTML = rows.map(({lineName, count, elCount, mCount, fireCount}) => {
+  body.innerHTML = rows.map(({lineName, count, elCount, mCount, fireCount, washCount}) => {
     const borderColor = count > 0 ? '#FC4444' : '#48BB78';
     const badge = count > 0
       ? `<span style="background:#FED7D7;color:#822727;padding:3px 12px;border-radius:20px;font-size:0.78rem;font-weight:700">🔴 ${count} مغادرة</span>`
@@ -7940,6 +7941,7 @@ function renderDepLinesList() {
     if (elCount > 0) breakdownParts.push(`<span style="color:#2B6CB0">⚡ كهربائية: ${elCount}</span>`);
     if (mCount > 0) breakdownParts.push(`<span style="color:#C05621">⚙️ ميكانيكية: ${mCount}</span>`);
     if (fireCount > 0) breakdownParts.push(`<span style="color:#C53030">🔥 حرائق: ${fireCount}</span>`);
+    if (washCount > 0) breakdownParts.push(`<span style="color:#2B6CB0">💧 نظافة: ${washCount}</span>`);
     const breakdown = breakdownParts.length
       ? `<div style="margin-top:6px;font-size:0.74rem;font-weight:700;display:flex;gap:12px;flex-wrap:wrap">${breakdownParts.join('')}</div>`
       : '';
@@ -7970,11 +7972,12 @@ function renderDepLineTowers(lineName) {
 
   // عدّادات: عدد الأبراج (ضمن هذا الخط) اللي فيها مغادرة بكل فئة — برج واحد ممكن يُحسب بأكثر من فئة
   const isIssue = s => s && s !== 'ok';
-  let elCount = 0, mCount = 0, fireCount = 0;
+  let elCount = 0, mCount = 0, fireCount = 0, washCount = 0;
   activeTowers.forEach(({r}) => {
     if (isIssue(r.sev_insulator) || isIssue(r.sev_wires) || isIssue(r.sev_ground)) elCount++;
     if (isIssue(r.sev_iron) || isIssue(r.sev_foundation)) mCount++;
     if (isIssue(r.sev_fire)) fireCount++;
+    if (r.insulator_washing && r.insulator_washing !== '' && r.insulator_washing !== 'clean') washCount++;
   });
 
   let html = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
@@ -7990,6 +7993,10 @@ function renderDepLineTowers(lineName) {
       <div style="font-size:0.75rem;color:#742A2A;font-weight:700">🔥 مسببات الحرائق</div>
       <div style="font-size:1.3rem;font-weight:700;color:#C53030">${fireCount}</div>
     </div>
+    ${washCount > 0 ? `<div style="flex:1;min-width:140px;background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.75rem;color:#2B6CB0;font-weight:700">💧 نظافة العوازل</div>
+      <div style="font-size:1.3rem;font-weight:700;color:#2B6CB0">${washCount}</div>
+    </div>` : ''}
   </div>`;
 
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
@@ -8226,6 +8233,8 @@ function extractDepsFromRecord(r) {
   if (r.ground_2&&r.ground_2.trim()&&r.ground_2.trim()!=='سليم') deps.push({type:'ground',label:'الأرضي 2: '+r.ground_2,key:'ground_2'});
   if (r.fire_causes&&r.fire_causes!=='لا يوجد'&&r.fire_causes!=='') deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes,key:'fire'});
   else if (r.fire_causes_notes&&r.fire_causes_notes.trim()) deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes_notes.trim(),key:'fire'});
+  if (r.insulator_washing === 'needs_washing') deps.push({type:'washing',label:'💧 العوازل تحتاج غسل',key:'washing'});
+  else if (r.insulator_washing === 'very_dirty') deps.push({type:'washing',label:'💧 العوازل ملوثة جداً (منطقة معامل)',key:'washing'});
   // الطريق لا يُعدّ مغادرة — يُعالج كتنبيه منفصل أسفل قسم المغادرات
   return deps;
 }
