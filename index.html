@@ -572,6 +572,9 @@ tbody tr:hover { background: #F7FAFC; }
         <div class="field" style="margin-top:10px"><label>درجة خطورة مغادرة العوازل</label>
           <select id="f_sev_insulator"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
         </div>
+        <div class="field" style="margin-top:10px"><label>حالة نظافة العوازل</label>
+          <select id="f_insulator_washing"><option value="">-- اختر --</option><option value="clean">🟢 نظيف</option><option value="needs_washing">💧 يحتاج غسل</option><option value="very_dirty">🔴 ملوث جداً (منطقة معامل)</option></select>
+        </div>
       </div>
       <div class="form-card">
         <h3>🔩 تقاطعات الحديد</h3>
@@ -2213,26 +2216,28 @@ const SEVERITY_TO_COLOR = { simple: 'green', moderate: 'yellow', below_critical:
 // يرجع رموز فئات المغادرات المفتوحة لهذا البرج (⚡ كهربائية / ⚙️ ميكانيكية / 🔥 حرائق) — يختفي الرمز تلقائياً
 // لحظة معالجة آخر مغادرة بهذي الفئة (لأنه يعتمد مباشرة على درجة الخطورة الحالية بالسجل، نفس مصدر الألوان)
 function getDepartureCategoryIcons(rec) {
-  if (!rec) return { electrical:false, iron:false, foundation:false, fire:false };
+  if (!rec) return { electrical:false, iron:false, foundation:false, fire:false, washing:false };
   const isIssue = s => s && s !== 'ok';
   return {
     electrical: isIssue(rec.sev_insulator) || isIssue(rec.sev_wires) || isIssue(rec.sev_ground),
     iron: isIssue(rec.sev_iron),
     foundation: isIssue(rec.sev_foundation),
     fire: isIssue(rec.sev_fire),
+    washing: rec.insulator_washing === 'needs_washing' || rec.insulator_washing === 'very_dirty'
   };
 }
 // يبني شريط رموز بصف واحد عادي (داخل تدفق المحتوى، بدون absolute) — يمنع أي تداخل مع باقي عناصر البطاقة
-// ⚡ كهربائية / 🔧 تقاطعات حديد / ⚪ قواعد / 🔥 حرائق
+// ⚡ كهربائية / 🔧 تقاطعات حديد / ⚪ قواعد / 🔥 حرائق / 💧 يحتاج غسل
 function buildCategoryIconsHTML(rec) {
   const c = getDepartureCategoryIcons(rec);
-  if (!c.electrical && !c.iron && !c.foundation && !c.fire) return '';
+  if (!c.electrical && !c.iron && !c.foundation && !c.fire && !c.washing) return '';
   const grayCircle = `<span style="display:inline-block;width:0.62em;height:0.62em;border-radius:50%;background:#A0AEC0;vertical-align:middle"></span>`;
   let html = `<div style="display:flex;gap:5px;align-items:center;justify-content:center;font-size:0.75rem;line-height:1">`;
   if (c.electrical) html += `<span>⚡</span>`;
   if (c.iron) html += `<span>🔧</span>`;
   if (c.foundation) html += `<span>${grayCircle}</span>`;
   if (c.fire) html += `<span>🔥</span>`;
+  if (c.washing) html += `<span>💧</span>`;
   html += `</div>`;
   return html;
 }
@@ -2946,7 +2951,7 @@ const FIELDS = ['iron_intersections','tower_foundations',
   'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
   'wires_r1_c2','wires_s1_c2','wires_t1_c2','wires_circuit',
   'ground_1','ground_2','fire_causes_notes','road_access','road_access_notes','notes',
-  'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire'];
+  'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire','insulator_washing'];
 
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
@@ -6796,18 +6801,27 @@ function renderLinesStatus() {
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
     const lineName = LINES_DATA[l.name+' 400 ك.ف'] ? l.name+' 400 ك.ف' : (LINES_DATA[l.name+' 132 ك.ف'] ? l.name+' 132 ك.ف' : null);
     const health = lineName ? calcLineHealthWithTreatments(lineName) : null;
-    let badge, elBar, mBar;
+    let badge, elBar, mBar, washBar;
     const getColor = s => s>=80?'#1e8449':s>=60?'#f39c12':'#c0392b';
     const getLbl = s => s>=80?'جيد':s>=60?'متوسط':'ضعيف';
+    const getWashColor = pct => pct>=90?'#1e8449':pct>=60?'#f39c12':'#c0392b';
+    const getWashLbl = pct => pct>=90?'نظيف':pct>=60?'يحتاج متابعة':'يحتاج غسل';
     if (!health) {
       badge = '<span style="background:#95a5a6;color:white;padding:3px 10px;border-radius:20px;font-size:11px">لم يتم الكشف</span>';
       elBar = makeBar(0, '#95a5a6', 'لم يتم الكشف');
       mBar = makeBar(0, '#95a5a6', 'لم يتم الكشف');
+      washBar = makeBar(0, '#95a5a6', 'لم يتم الكشف');
     } else {
       const cov = Math.round(health.coverage*100);
       badge = cov>=95 ? '<span style="background:#1e8449;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف بالكامل</span>' : '<span style="background:#2980b9;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف (' + cov + '%)</span>';
       elBar = makeBar(health.electricalScore, getColor(health.electricalScore), getLbl(health.electricalScore));
       mBar = makeBar(health.mechanicalScore, getColor(health.mechanicalScore), getLbl(health.mechanicalScore));
+      // حساب مؤشر النظافة: نسبة الأبراج النظيفة
+      const recs = lineName ? getLatestRecordsPerTower(lineName) : [];
+      const withWash = recs.filter(r => r.insulator_washing && r.insulator_washing !== '');
+      const cleanCount = withWash.filter(r => r.insulator_washing === 'clean').length;
+      const washPct = withWash.length > 0 ? Math.round(cleanCount / withWash.length * 100) : 100;
+      washBar = makeBar(washPct, getWashColor(washPct), getWashLbl(washPct));
     }
     const clickAttr = lineName ? ` onclick="openLineTowerDetails('${lineName.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
     html += '<div class="form-card" style="margin-bottom:12px;padding:14px">' +
@@ -6815,7 +6829,8 @@ function renderLinesStatus() {
       '<div' + clickAttr + ' style="font-weight:700;font-size:14px;color:#1a5276;' + (lineName?'text-decoration:underline;':'') + '">' + l.name + (lineName?' 🔍':'') + '</div>' +
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:' + vc + ';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">' + l.voltage + ' ك.ف</span>' + badge + '</div></div>' +
       '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الكهربائية</div>' + elBar + '</div>' +
-      '<div><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الميكانيكية</div>' + mBar + '</div></div>';
+      '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الميكانيكية</div>' + mBar + '</div>' +
+      '<div><div style="font-size:12px;color:#555;margin-bottom:4px">💧 نظافة العوازل</div>' + washBar + '</div></div>';
   });
   body.innerHTML = html || '<div class="empty-state">لا توجد بيانات</div>';
 }
