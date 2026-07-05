@@ -1671,6 +1671,9 @@ tbody tr:hover { background: #F7FAFC; }
 
   <div id="memoArchiveView" style="display:none">
     <div class="page-title">📂 أرشيف المذكرات <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showMemoHome()">⬅ رجوع</button></div>
+    <div style="margin-bottom:12px">
+      <input id="memoSearchInput" type="search" placeholder="🔍 ابحث بكلمة من الموضوع أو المتن أو الرقم..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #CBD5E0;font-size:0.9rem;font-family:inherit" oninput="filterMemoArchive(this.value)">
+    </div>
     <div id="memoArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
 
@@ -5241,26 +5244,47 @@ async function saveMemo() {
   } catch (e) { showToast('❌ تعذر حفظ المذكرة', 'error'); }
 }
 
+let memoArchiveCache = [];
+
+function renderMemoCards(list) {
+  const body = document.getElementById('memoArchiveBody');
+  if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد نتائج</div>'; return; }
+  body.innerHTML = list.map(m => {
+    const preview = m.subject || (m.content || '').split('\n').map(l => l.trim()).filter(l => l)[0] || 'بدون عنوان';
+    return `
+    <div class="dep-card" style="cursor:pointer" onclick="openMemoFromArchive('${m.id}')">
+      <div class="dep-card-header">
+        <div class="dep-card-title">📝 ${preview}</div>
+        <div class="dep-card-meta">🔢 العدد: ${m.memo_number||'—'} | 📅 ${m.memo_date} | 👤 ${m.created_by||'—'}</div>
+      </div>
+      <div style="margin-top:8px">
+        <button class="btn-sm btn-del" onclick="event.stopPropagation();deleteMemoFromArchive('${m.id}')">🗑️ حذف</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function filterMemoArchive(q) {
+  if (!q || !q.trim()) { renderMemoCards(memoArchiveCache); return; }
+  const terms = q.trim().toLowerCase().split(/\s+/);
+  const filtered = memoArchiveCache.filter(m => {
+    const hay = [m.subject||'', m.content||'', m.memo_number||''].join(' ').toLowerCase();
+    return terms.every(t => hay.includes(t));
+  });
+  renderMemoCards(filtered);
+}
+
 async function renderMemoArchive() {
   const body = document.getElementById('memoArchiveBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  const searchInput = document.getElementById('memoSearchInput');
+  if (searchInput) searchInput.value = '';
   try {
     const res = await sbFetch('memos?select=id,memo_number,memo_date,subject,content,created_by&order=memo_date.desc');
     const list = await res.json();
+    memoArchiveCache = list;
     if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد مذكرات محفوظة بعد</div>'; return; }
-    body.innerHTML = list.map(m => {
-      const preview = m.subject || (m.content || '').split('\n').map(l => l.trim()).filter(l => l)[0] || 'بدون عنوان';
-      return `
-      <div class="dep-card" style="cursor:pointer" onclick="openMemoFromArchive('${m.id}')">
-        <div class="dep-card-header">
-          <div class="dep-card-title">📝 ${preview}</div>
-          <div class="dep-card-meta">🔢 العدد: ${m.memo_number||'—'} | 📅 ${m.memo_date} | 👤 ${m.created_by||'—'}</div>
-        </div>
-        <div style="margin-top:8px">
-          <button class="btn-sm btn-del" onclick="event.stopPropagation();deleteMemoFromArchive('${m.id}')">🗑️ حذف</button>
-        </div>
-      </div>`;
-    }).join('');
+    renderMemoCards(list);
   } catch (e) { body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>'; }
 }
 
@@ -5270,7 +5294,9 @@ async function deleteMemoFromArchive(id) {
     const res = await sbFetch(`memos?id=eq.${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('فشل الحذف');
     showToast('✅ تم حذف المذكرة');
-    renderMemoArchive();
+    memoArchiveCache = memoArchiveCache.filter(m => m.id !== id);
+    const q = document.getElementById('memoSearchInput');
+    filterMemoArchive(q ? q.value : '');
   } catch (e) {
     showToast('❌ تعذر حذف المذكرة، تحقق من الاتصال', 'error');
   }
