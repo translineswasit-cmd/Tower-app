@@ -2229,18 +2229,36 @@ function getDepartureCategoryIcons(rec) {
     washing: rec.insulator_washing === 'needs_washing' || rec.insulator_washing === 'very_dirty'
   };
 }
-// يبني شريط رموز بصف واحد عادي (داخل تدفق المحتوى، بدون absolute) — يمنع أي تداخل مع باقي عناصر البطاقة
-// ⚡ كهربائية / 🔧 تقاطعات حديد / ⚪ قواعد / 🔥 حرائق / 💧 يحتاج غسل
+// يبني شريط رموز الحالة للبرج — يظهر دائماً على كل برج مكشوف
+// ✅ = سليم (ok) | ❌ = لم يُكشف (فارغ) | بدون علامة = مغادرة موجودة
+// الرموز: ⚡ كهربائية / 🔧 حديد / ⚪ قواعد / 🔥 حرائق / 💧 غسل
 function buildCategoryIconsHTML(rec) {
-  const c = getDepartureCategoryIcons(rec);
-  if (!c.electrical && !c.iron && !c.foundation && !c.fire && !c.washing) return '';
+  if (!rec) return ''; // برج لم يُكشف بعد — لا شيء
   const grayCircle = `<span style="display:inline-block;width:0.62em;height:0.62em;border-radius:50%;background:#A0AEC0;vertical-align:middle"></span>`;
-  let html = `<div style="display:flex;gap:5px;align-items:center;justify-content:center;font-size:0.75rem;line-height:1">`;
-  if (c.electrical) html += `<span>⚡</span>`;
-  if (c.iron) html += `<span>🔧</span>`;
-  if (c.foundation) html += `<span>${grayCircle}</span>`;
-  if (c.fire) html += `<span>🔥</span>`;
-  if (c.washing) html += `<span>💧</span>`;
+  // دالة تبني رمزاً مع overlay حسب الحالة
+  function icon(symbol, sev, isWashing) {
+    let overlay = '';
+    if (isWashing) {
+      // الغسل: فارغ=لم يُكشف❌، clean=✅، غيره=مغادرة
+      if (!sev || sev === '') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#C53030">✕</span>`;
+      else if (sev === 'clean') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#276749">✓</span>`;
+    } else {
+      if (!sev || sev === '') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#C53030">✕</span>`;
+      else if (sev === 'ok') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#276749">✓</span>`;
+    }
+    return `<span style="position:relative;display:inline-flex">${symbol}${overlay}</span>`;
+  }
+  // للكهربائي نأخذ أسوأ قيمة بين العوازل والأسلاك والأرضي
+  const elSev = [rec.sev_insulator, rec.sev_wires, rec.sev_ground]
+    .find(s => s && s !== '' && s !== 'ok') ||
+    ([rec.sev_insulator, rec.sev_wires, rec.sev_ground].every(s => s === 'ok') ? 'ok' : '');
+  const washBadge = rec.insulator_washing && rec.insulator_washing !== '' ? rec.insulator_washing : '';
+  let html = `<div style="display:flex;gap:5px;align-items:center;justify-content:center;font-size:0.75rem;line-height:1;flex-wrap:wrap">`;
+  html += icon(`<span>⚡</span>`, elSev);
+  html += icon(`<span>🔧</span>`, rec.sev_iron || '');
+  html += icon(`<span>${grayCircle}</span>`, rec.sev_foundation || '');
+  html += icon(`<span>🔥</span>`, rec.sev_fire || '');
+  if (washBadge !== '') html += icon(`<span>💧</span>`, washBadge, true);
   html += `</div>`;
   return html;
 }
