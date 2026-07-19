@@ -7923,24 +7923,24 @@ async function exportOpenDeparturesPDF() {
             insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2);
           }
 
+          // حساب الارتفاع الكلي للكتلة (تفاصيل المغادرات + صورة العوازل معاً)
+          const usableW = pageW - margin*2;
           let blockH = 0;
-          if (towerImg) blockH += towerImg.h * ((pageW - margin*2) / towerImg.w) + 8;
-          if (insImg) blockH += insImg.h * ((pageW - margin*2) / insImg.w) + 6;
+          let towerH = 0, insH = 0;
+          if (towerImg) { towerH = usableW * (towerImg.h / towerImg.w); blockH += towerH + 8; }
+          if (insImg) { insH = usableW * (insImg.h / insImg.w); blockH += insH + 6; }
+          blockH += 10;
 
+          // إذا الكتلة الكاملة ما تسع بالصفحة الحالية، ننتقل لصفحة جديدة قبل رسم أي شيء
           if (y + blockH > pageH - margin) { doc.addPage(); y = margin; }
 
           if (towerImg) {
-            const w = pageW - margin*2;
-            const h = w * (towerImg.h / towerImg.w);
-            doc.addImage(towerImg.dataUrl, 'PNG', margin, y, w, h);
-            y += h + 8;
+            doc.addImage(towerImg.dataUrl, 'PNG', margin, y, usableW, towerH);
+            y += towerH + 8;
           }
           if (insImg) {
-            const w = pageW - margin*2;
-            const h = w * (insImg.h / insImg.w);
-            if (y + h > pageH - margin) { doc.addPage(); y = margin; }
-            doc.addImage(insImg.dataUrl, 'PNG', margin, y, w, h);
-            y += h + 6;
+            doc.addImage(insImg.dataUrl, 'PNG', margin, y, usableW, insH);
+            y += insH + 6;
           }
           y += 10;
         }
