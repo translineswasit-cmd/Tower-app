@@ -1854,7 +1854,8 @@ const EXCLUDED_132_LINES = [
   'الكوت القديمة - جنوب الكوت',
   'الكوت القديمة - شيخ سعد',
   'الدجيلي - الحي',
-  'جنوب الكوت - الدجيلي'
+  'جنوب الكوت - الدجيلي',
+  'دبوني - جصان'
 ];
 function isExcluded132Line(lineName) {
   return EXCLUDED_132_LINES.some(ex => lineName && lineName.includes(ex.split(' - ')[0]) && lineName.includes(ex.split(' - ')[1]));
