@@ -3964,7 +3964,7 @@ function svgStringToPNGDataURL(svgString, scale) {
           ctx.scale(scale, scale);
           ctx.drawImage(img, 0, 0, w, h);
           URL.revokeObjectURL(url);
-          resolve({ dataUrl: canvas.toDataURL('image/png'), w, h });
+          resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.75), w, h });
         } catch (e) { URL.revokeObjectURL(url); resolve(null); }
       };
       img.onerror = () => { clearTimeout(timer); URL.revokeObjectURL(url); resolve(null); };
@@ -4019,7 +4019,7 @@ async function exportDepLogPDF() {
           if (result) {
             const ratio = result.w && result.h ? (result.w / result.h) : 1;
             const imgW = Math.min(imgH * ratio, 150) || 100;
-            try { doc.addImage(result.dataUrl, 'PNG', x, y, imgW, imgH); } catch(e) {}
+            try { doc.addImage(result.dataUrl, 'JPEG', x, y, imgW, imgH); } catch(e) {}
             doc.setFontSize(8);
             doc.text(label, x + 4, y + imgH + 10);
             x += 160;
@@ -4525,7 +4525,7 @@ function printOfficialForm() {
 // تصدير PDF مباشر برسم النص بـ Canvas 2D — بدون أي نص زائد يضيفه نظام iOS تلقائياً عند الطباعة المباشرة
 function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
   const v = id => (document.getElementById(id).value || '');
-  const sidePad = 26, scale = 2;
+  const sidePad = 26, scale = 1.2;
   const mctx = document.createElement('canvas').getContext('2d');
   function wrapText(ctx, text, maxWidth) {
     const words = String(text).split(' ').filter(w => w !== '');
@@ -5684,7 +5684,7 @@ function buildMemoCanvasPNG(widthCss) {
   const senderTitle = document.getElementById('memo_sender_title').value || '';
   const senderName = document.getElementById('memo_sender_name').value || '';
 
-  const sidePad = 30, scale = 2;
+  const sidePad = 30, scale = 1.2;
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
   const fontNormal = '15px Tahoma, Arial';
@@ -8081,7 +8081,7 @@ async function exportOpenDeparturesPDF() {
       if (lineHeaderImg) {
         const w = pageW - margin*2;
         const h = w * (lineHeaderImg.h / lineHeaderImg.w);
-        doc.addImage(lineHeaderImg.dataUrl, 'PNG', margin, y, w, h);
+        doc.addImage(lineHeaderImg.dataUrl, 'JPEG', margin, y, w, h);
         y += h + 14;
       }
 
@@ -8125,7 +8125,7 @@ async function exportOpenDeparturesPDF() {
           if (y + blockH > pageH - margin) { doc.addPage(); y = margin; }
 
           if (towerImg) {
-            doc.addImage(towerImg.dataUrl, 'PNG', margin, y, usableW, towerH);
+            doc.addImage(towerImg.dataUrl, 'JPEG', margin, y, usableW, towerH);
             y += towerH + 8;
           }
           if (insImg) {
@@ -8153,7 +8153,7 @@ async function exportOpenDeparturesPDF() {
 // items: [{text, fontSize, fontWeight, color, bg, padY}]
 function drawArabicTextPNG(items, widthCss, opts) {
   opts = opts || {};
-  const scale = 2; // دقة أعلى للطباعة
+  const scale = 1.2; // دقة كافية للطباعة مع توفير بالحجم
   const sidePadding = 14;
   const lineHeightFactor = 1.45;
   const measureCanvas = document.createElement('canvas');
