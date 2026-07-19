@@ -2169,26 +2169,36 @@ async function syncAllQueues() {
 }
 
 async function cleanAndSync() {
-  // تنظيف كل الحقول المؤقتة من قوائم الانتظار قبل الرفع
   const tempFields = ['_lastError', '_retryCount', '_localId'];
-  [QUEUE_KEY, THERMAL_QUEUE_KEY, TREATMENT_QUEUE_KEY, LINE_ENTRY_QUEUE_KEY, INSPECTION_PATCH_QUEUE_KEY].forEach(key => {
+  // تنظيف القوائم العادية
+  [QUEUE_KEY, THERMAL_QUEUE_KEY, TREATMENT_QUEUE_KEY, LINE_ENTRY_QUEUE_KEY].forEach(key => {
     try {
       const q = JSON.parse(localStorage.getItem(key) || '[]');
       if (!Array.isArray(q)) return;
-      const cleaned = q.map(rec => {
+      localStorage.setItem(key, JSON.stringify(q.map(rec => {
         const r = { ...rec };
         tempFields.forEach(f => delete r[f]);
         return r;
-      });
-      localStorage.setItem(key, JSON.stringify(cleaned));
+      })));
     } catch(e) {}
   });
+  // تنظيف inspection_patch_queue (البنية مختلفة: {id, patch, _lastError})
+  try {
+    const pq = JSON.parse(localStorage.getItem(INSPECTION_PATCH_QUEUE_KEY) || '[]');
+    if (Array.isArray(pq)) {
+      localStorage.setItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(pq.map(item => {
+        const r = { ...item };
+        tempFields.forEach(f => delete r[f]);
+        if (r.patch) { const p = { ...r.patch }; tempFields.forEach(f => delete p[f]); r.patch = p; }
+        return r;
+      })));
+    }
+  } catch(e) {}
   showToast('🧹 تم تنظيف البيانات، جاري الرفع...');
   await manualSyncAll();
 }
 
 async function manualSyncAll() {
-  if (!navigator.onLine) { showToast('⚠️ لا يوجد اتصال بالإنترنت حالياً', 'error'); return; }
   const btn = document.getElementById('manualSyncBtn');
   const before = getTotalPendingCount();
   if (before === 0) { showToast('✅ لا توجد عناصر معلقة'); return; }
@@ -2625,17 +2635,114 @@ function getInsulatorCount(mode) {
 let insulatorState2 = {R:[],S:[],T:[]};
 let insulatorCycleState2 = {R:[],S:[],T:[]};
 
-function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState2, savedCycle2) {
+// نوع كل سلسلة: { "R": ["glass","plastic"], "S": ["glass","glass"], "T": ["plastic"] }
+// "glass" = زجاج (مربعات) | "plastic" = بلاستيك (لولب)
+let chainTypes = { R: [], S: [], T: [] };
+
+// يُعيد عدد السلاسل لكل طور حسب النمط
+function getChainsPerPhase(mode) {
+  if (mode === 'chain1_10' || mode === 'straight4_single') return 1;
+  if (mode === 'straight4' || mode === 'chain4_12') return 4;
+  return 2; // chain2_10, chain2_12, v
+}
+
+// يبني سلسلة بلاستيك (لولب SVG) قابلة للضغط
+function buildPlasticChain(phase, chainIdx, stateObj, damaged, onToggle) {
+  const w = 28, h = 90, zigH = 10, pts = 8;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('width', w); svg.setAttribute('height', h);
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.style.cursor = 'pointer'; svg.style.display = 'block';
+
+  function paint(isDamaged) {
+    svg.innerHTML = '';
+    const color = isDamaged ? '#C53030' : '#2B6CB0';
+    const fill  = isDamaged ? '#FED7D7' : '#EBF8FF';
+    // رسم اللولب (زيكزاك)
+    let points = `${w/2},2`;
+    for (let i=0; i<pts; i++) {
+      const y = 2 + (i+1)*((h-4)/pts);
+      const x = (i%2===0) ? w-4 : 4;
+      points += ` ${x},${y}`;
+    }
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+    polyline.setAttribute('points', points);
+    polyline.setAttribute('stroke', color);
+    polyline.setAttribute('stroke-width', '3.5');
+    polyline.setAttribute('fill', 'none');
+    polyline.setAttribute('stroke-linecap', 'round');
+    polyline.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(polyline);
+    // دائرة في الأطراف
+    [[w/2,2],[w/2,h-2]].forEach(([cx,cy]) => {
+      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r','3');
+      c.setAttribute('fill',color); svg.appendChild(c);
+    });
+    // خلفية شفافة للضغط
+    const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
+    bg.setAttribute('x','0'); bg.setAttribute('y','0');
+    bg.setAttribute('width',w); bg.setAttribute('height',h);
+    bg.setAttribute('fill','transparent'); svg.appendChild(bg);
+  }
+
+  let isDmg = !!damaged;
+  paint(isDmg);
+
+  if (currentUser.role !== 'readonly') {
+    svg.addEventListener('click', () => {
+      isDmg = !isDmg;
+      paint(isDmg);
+      onToggle(isDmg);
+    });
+  }
+
+  // تأشيرة "بلاستيك"
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px';
+  const lbl = document.createElement('div');
+  lbl.textContent = 'polymer';
+  lbl.style.cssText = 'font-size:0.5rem;color:#2B6CB0;font-weight:700;background:#EBF8FF;padding:1px 4px;border-radius:4px';
+  wrapper.appendChild(lbl);
+  wrapper.appendChild(svg);
+  return wrapper;
+}
+
+// يبني زر التبديل بين زجاج/بلاستيك
+function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuild) {
+  const btn = document.createElement('button');
+  btn.textContent = '🔄';
+  btn.title = 'تبديل نوع السلسلة (زجاج ↔ بلاستيك)';
+  btn.style.cssText = 'font-size:0.65rem;padding:1px 5px;border:1px solid #CBD5E0;border-radius:8px;background:#F7FAFC;cursor:pointer;margin-bottom:2px';
+  btn.addEventListener('click', () => {
+    const cur = (chainTypes[phase] || [])[chainIdx] || 'glass';
+    if (!chainTypes[phase]) chainTypes[phase] = [];
+    chainTypes[phase][chainIdx] = cur === 'glass' ? 'plastic' : 'glass';
+    if (chainTypes[phase][chainIdx] === 'plastic') {
+      // تصفير عوازل هذه السلسلة (حذف القديمة)
+      for (let r=0; r<rows; r++) { stateObj[phase][chainIdx*rows+r] = false; cycleObj[phase][chainIdx*rows+r] = 0; }
+    }
+    onRebuild();
+  });
+  return btn;
+}
+
+function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState2, savedCycle2, savedChainTypes) {
   const sec = document.getElementById('insulatorSection');
   const wrap = document.getElementById('phasesWrap');
   sec.style.display = 'block';
   wrap.innerHTML = '';
 
-  // أسماء المحطتين (تظهر فوق كل مجموعة سلاسل بأنماط straight4 / chain2_12 / chain4_12)
   const lineName = document.getElementById('f_line_name') ? document.getElementById('f_line_name').value : '';
   const mode = getInsulatorMode(voltage, towerType, lineName);
   const count = getInsulatorCount(mode);
   const isDouble = isDoubleCircuitLine(lineName);
+  const chainsPerPhase = getChainsPerPhase(mode);
+  const rowsPerChain = Math.floor(count / chainsPerPhase);
+
+  // تهيئة chainTypes
+  chainTypes = savedChainTypes ? JSON.parse(JSON.stringify(savedChainTypes)) : { R: [], S: [], T: [] };
+  ['R','S','T'].forEach(p => { if (!chainTypes[p]) chainTypes[p] = []; });
 
   if (savedState) {
     insulatorState = JSON.parse(JSON.stringify(savedState));
@@ -2665,21 +2772,71 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
 
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['', ''];
 
+  function rebuildUI() { buildInsulatorUI(voltage, towerType, insulatorState, insulatorCycleState, insulatorState2, insulatorCycleState2, chainTypes); }
+
   function buildOneCircuit(targetWrap, stateObj, cycleObj) {
     ['R','S','T'].forEach(phase => {
       const block = document.createElement('div');
       block.className = 'phase-block';
       const lbl = document.createElement('div'); lbl.className = 'phase-label'; lbl.textContent = 'الفيز '+phase;
       block.appendChild(lbl);
-      let el;
-      if (mode === 'v') el = buildVShape(phase, stateObj, cycleObj);
-      else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB, 4, 32, stateObj, cycleObj);
-      else if (mode === 'chain4_12') el = buildStraight4Chain(phase, stA, stB, 4, 12, stateObj, cycleObj);
-      else if (mode === 'chain2_12') el = buildStraight4Chain(phase, stA, stB, 2, 12, stateObj, cycleObj);
-      else if (mode === 'chain1_10') el = buildSingleChain(phase, 10, stateObj, cycleObj);
-      else if (mode === 'chain2_10') el = buildChain(phase, 10, stateObj, cycleObj);
-      else el = buildChain(phase, 12, stateObj, cycleObj);
-      block.appendChild(el);
+
+      // للأنماط ذات السلاسل المتعددة: نبني كل سلسلة بشكل مستقل مع زر التبديل
+      if (mode === 'chain2_10' || mode === 'chain2_12') {
+        const chainsWrap = document.createElement('div');
+        chainsWrap.style.cssText = 'display:flex;gap:8px;justify-content:center';
+        for (let ci=0; ci<2; ci++) {
+          const chainWrap = document.createElement('div');
+          chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
+          const isPlastic = (chainTypes[phase]||[])[ci] === 'plastic';
+          const toggleBtn = buildChainToggleBtn(phase, ci, stateObj, cycleObj, rowsPerChain, rebuildUI);
+          chainWrap.appendChild(toggleBtn);
+          if (isPlastic) {
+            // حالة البلاستيك: نخزّنها في أول عازل بالسلسلة (true=متضرر)
+            const dmg = !!(stateObj[phase] && stateObj[phase][ci*rowsPerChain]);
+            const pEl = buildPlasticChain(phase, ci, stateObj, dmg, (isDmg) => {
+              for (let r=0; r<rowsPerChain; r++) stateObj[phase][ci*rowsPerChain+r] = isDmg;
+            });
+            chainWrap.appendChild(pEl);
+          } else {
+            const singleColDiv = document.createElement('div'); singleColDiv.className = 'chain-col';
+            for (let row=0; row<rowsPerChain; row++) {
+              const idx = ci*rowsPerChain+row;
+              const rect = document.createElement('div'); rect.className = 'ins-rect';
+              (function(i){ function paint() { const cyc=(cycleObj[phase]&&cycleObj[phase][i])||0; if(stateObj[phase][i]){rect.style.background=insShade(INS_RED_SHADES,cyc);rect.style.borderColor='#9B0000';}else if(cyc>0){rect.style.background=insShade(INS_GREEN_SHADES,cyc-1);rect.style.borderColor='#276749';}else{rect.style.background='white';rect.style.borderColor='#555';} } paint(); if(currentUser.role!=='readonly'){rect.addEventListener('click',()=>{stateObj[phase][i]=!stateObj[phase][i];paint();});} })(idx);
+              singleColDiv.appendChild(rect);
+            }
+            chainWrap.appendChild(singleColDiv);
+          }
+          chainsWrap.appendChild(chainWrap);
+        }
+        block.appendChild(chainsWrap);
+      } else if (mode === 'chain1_10') {
+        const chainWrap = document.createElement('div');
+        chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
+        const isPlastic = (chainTypes[phase]||[])[0] === 'plastic';
+        const toggleBtn = buildChainToggleBtn(phase, 0, stateObj, cycleObj, rowsPerChain, rebuildUI);
+        chainWrap.appendChild(toggleBtn);
+        if (isPlastic) {
+          const dmg = !!(stateObj[phase] && stateObj[phase][0]);
+          const pEl = buildPlasticChain(phase, 0, stateObj, dmg, (isDmg) => {
+            for (let r=0; r<rowsPerChain; r++) stateObj[phase][r] = isDmg;
+          });
+          chainWrap.appendChild(pEl);
+        } else {
+          const el = buildSingleChain(phase, rowsPerChain, stateObj, cycleObj);
+          chainWrap.appendChild(el);
+        }
+        block.appendChild(chainWrap);
+      } else {
+        // v, straight4, chain4_12 — نبقيهن كما هم بدون تبديل (بلاستيك نادر عليهم)
+        let el;
+        if (mode === 'v') el = buildVShape(phase, stateObj, cycleObj);
+        else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB, 4, 32, stateObj, cycleObj);
+        else if (mode === 'chain4_12') el = buildStraight4Chain(phase, stA, stB, 4, 12, stateObj, cycleObj);
+        else el = buildChain(phase, rowsPerChain, stateObj, cycleObj);
+        block.appendChild(el);
+      }
       targetWrap.appendChild(block);
     });
   }
@@ -3032,7 +3189,7 @@ const FIELDS = ['iron_intersections','tower_foundations',
   'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
   'wires_r1_c2','wires_s1_c2','wires_t1_c2','wires_circuit',
   'ground_1','ground_2','fire_causes_notes','road_access','road_access_notes','notes',
-  'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire','insulator_washing'];
+  'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire','insulator_washing','insulator_chain_types'];
 
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
@@ -3060,7 +3217,8 @@ function getFormData() {
     tower_type: towerType,
     voltage: currentVoltage,
     insulator_state: JSON.stringify(insulatorState),
-    insulator_cycle: JSON.stringify(insulatorCycleState), // مستوى دورة المعالجة المتوارث — يضمن ظهور الأخضر صحيح بكل الأماكن لاحقاً
+    insulator_cycle: JSON.stringify(insulatorCycleState),
+    insulator_chain_types: JSON.stringify(chainTypes),
     insulator_svg_r: svgFor(insulatorState.R),
     insulator_svg_s: svgFor(insulatorState.S),
     insulator_svg_t: svgFor(insulatorState.T),
@@ -3100,7 +3258,8 @@ function setFormData(d) {
     if (!savedCycle && d.insulator_cycle) { savedCycle = safeParseJSON(d.insulator_cycle); }
     const saved2 = d.insulator_state_2 ? safeParseJSON(d.insulator_state_2) : null;
     const savedCycle2 = d.insulator_cycle_2 ? safeParseJSON(d.insulator_cycle_2) : null;
-    buildInsulatorUI(currentVoltage, d.tower_type, saved, savedCycle || null, saved2, savedCycle2);
+    const savedChainTypes = d.insulator_chain_types ? safeParseJSON(d.insulator_chain_types) : null;
+    buildInsulatorUI(currentVoltage, d.tower_type, saved, savedCycle || null, saved2, savedCycle2, savedChainTypes);
     updateWiresGroundUI();
   }, 60);
 }
@@ -3136,12 +3295,11 @@ async function saveRecord() {
   const sevChecks = [
     { sev: d.sev_iron, fields: [d.iron_intersections], label: 'تقاطعات الحديد' },
     { sev: d.sev_foundation, fields: [d.tower_foundations], label: 'قواعد البرج' },
-    { sev: d.sev_wires, fields: [d.wires_r1, d.wires_s1, d.wires_t1], label: 'الأسلاك' },
-    { sev: d.sev_ground, fields: [d.ground_1, d.ground_2], label: 'الأرضي' },
+    // الأسلاك والأرضي: قيمهم من قوائم منسدلة (تلف بسيط، تلف شديد، إلخ) — الدرجة نفسها كافية دليلاً، لا يُطلب نص إضافي
     { sev: d.sev_fire, fields: [d.fire_causes_notes], label: 'مسببات الحرائق' },
   ];
   for (const c of sevChecks) {
-    if (!c.sev) continue; // قسم لم يُكشف بهذي المرة — يُقبل بدون إلزام
+    if (!c.sev) continue;
     if (c.sev !== 'ok' && c.fields.every(v => !v || !v.trim())) {
       showToast(`⚠️ اكتب وصف مغادرة "${c.label}" قبل الحفظ`, 'error'); return;
     }
@@ -3151,34 +3309,46 @@ async function saveRecord() {
   btn.disabled = true;
 
   if (editId) {
+    // تعديل سجل موجود — نحاول أونلاين أولاً، لو فشل نحفظ في قائمة انتظار الـPATCH
+    const patchData = { ...d };
+    delete patchData.client_uuid; // لا نرسل client_uuid في التعديل
     try {
-      const res = await sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(d) });
+      const res = await sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(patchData) });
       if (res.ok) {
         showToast('✅ تم تحديث السجل');
         document.getElementById('towerInspectionModal').classList.remove('show');
         cancelEdit(); loadRecords();
+      } else {
+        throw new Error(`HTTP ${res.status}`);
       }
-      else throw new Error();
-    } catch { showToast('❌ خطأ بالتحديث', 'error'); }
+    } catch (e) {
+      // فشل التعديل — نحفظ أوف لاين ونُعلم المستخدم
+      addToInspectionPatchQueue(editId, patchData);
+      showToast('📦 تعذّر التحديث، حُفظ محلياً وسيُرسل عند الاتصال');
+      document.getElementById('towerInspectionModal').classList.remove('show');
+      cancelEdit();
+      // تحديث الكاش المحلي فوراً بالبيانات الجديدة
+      const idx = fullRecordsCache.findIndex(r => r.id === editId);
+      if (idx !== -1) fullRecordsCache[idx] = { ...fullRecordsCache[idx], ...patchData };
+      if (currentGridLine) renderTowersGrid(currentGridLine);
+    }
   } else {
-    d.client_uuid = genUUID(); // مفتاح فريد يمنع تكرار الكشف عند إعادة الإرسال
-    if (navigator.onLine) {
-      try {
-        const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=representation'}, body: JSON.stringify(d) });
-        if (res.ok) {
-          let savedRow = d;
-          try { const arr = await res.json(); if (Array.isArray(arr) && arr.length && arr[0].id) savedRow = arr[0]; } catch(e) {}
-          showToast('✅ تم حفظ الكشف بنجاح'); afterGridSaveSuccess(savedRow);
-        }
-        else throw new Error();
-      } catch {
-        addToQueue(d);
-        showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
-        afterGridSaveSuccess(d);
+    // كشف جديد — دائماً نولّد client_uuid لمنع التكرار عند إعادة الإرسال
+    d.client_uuid = d.client_uuid || genUUID();
+    try {
+      const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=representation'}, body: JSON.stringify(d) });
+      if (res.ok) {
+        let savedRow = d;
+        try { const arr = await res.json(); if (Array.isArray(arr) && arr.length && arr[0].id) savedRow = arr[0]; } catch(e) {}
+        showToast('✅ تم حفظ الكشف بنجاح'); afterGridSaveSuccess(savedRow);
+      } else {
+        throw new Error(`HTTP ${res.status}`);
       }
-    } else {
+    } catch {
+      // أي فشل (انقطاع، خطأ سيرفر) → يُحفظ أوف لاين دائماً
       addToQueue(d);
-      showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
+      const msg = navigator.onLine ? '📦 خطأ بالإرسال، حُفظ محلياً وسيُرسل عند الاتصال' : '📦 حُفظ أوف لاين، سيُرسل تلقائياً';
+      showToast(msg);
       afterGridSaveSuccess(d);
     }
   }
@@ -3209,28 +3379,29 @@ async function syncQueue() {
   const remaining = [];
   for (const rec of q) {
     if (!rec.client_uuid) rec.client_uuid = genUUID();
-    // حذف الحقول المؤقتة قبل الإرسال — هذه حقول داخلية ولا وجود لها بقاعدة البيانات
     const toSend = { ...rec };
     delete toSend._lastError;
     try {
       const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
-      if (res.ok) { synced++; delete rec._lastError; }
-      else {
+      if (res.ok) {
+        synced++;
+        delete rec._lastError;
+      } else {
         let bodyText = '';
         try { bodyText = await res.text(); } catch(e) {}
-        rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,300)}`;
-        console.error('❌ فشل رفع كشف من القائمة المعلقة', { status: res.status, body: bodyText, record: rec });
+        rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
+        // 4xx = خطأ دائم في البيانات (عمود ناقص, إلخ) — يبقى في القائمة ليراه المستخدم
+        // 5xx = خطأ مؤقت في السيرفر — يُعاد المحاولة
         remaining.push(rec);
       }
     } catch (e) {
       rec._lastError = `خطأ شبكة: ${e && e.message ? e.message : e}`;
-      console.error('❌ خطأ شبكة أثناء رفع كشف معلق', e, rec);
       remaining.push(rec);
     }
   }
   localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
   updatePendingBadge();
-  if (synced > 0) showToast(`✅ تم إرسال ${synced} سجل محفوظ أوف لاين`);
+  if (synced > 0) showToast(`✅ تم إرسال ${synced} كشف محفوظ أوف لاين`);
 }
 
 // ========================
@@ -4843,18 +5014,14 @@ async function saveThermalPoint() {
 
   const btn = document.getElementById('thSaveBtn');
   btn.disabled = true;
-  if (navigator.onLine) {
-    try {
-      const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-      if (res.ok) showToast('✅ تم حفظ القياس — ' + rec.point_label);
-      else throw new Error();
-    } catch {
-      addToThermalQueue(rec);
-      showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
-    }
-  } else {
+  try {
+    const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
+    if (res.ok) showToast('✅ تم حفظ القياس — ' + rec.point_label);
+    else throw new Error(`HTTP ${res.status}`);
+  } catch {
     addToThermalQueue(rec);
-    showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
+    const msg = navigator.onLine ? '📦 خطأ بالإرسال، حُفظ محلياً' : '📦 حُفظ أوف لاين، سيُرسل تلقائياً';
+    showToast(msg);
   }
   btn.disabled = false;
   resetThermalReadingInputs();
@@ -4933,10 +5100,21 @@ async function syncLineEntryQueue() {
   const remaining = [];
   for (const rec of q) {
     if (!rec.client_uuid) rec.client_uuid = genUUID();
+    const toSend = { ...rec };
+    delete toSend._lastError;
     try {
-      const res = await sbFetch('line_entry_thermal?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-      if (res.ok) synced++; else remaining.push(rec);
-    } catch { remaining.push(rec); }
+      const res = await sbFetch('line_entry_thermal?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
+      if (res.ok) synced++;
+      else {
+        let bodyText = '';
+        try { bodyText = await res.text(); } catch(e) {}
+        rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
+        remaining.push(rec);
+      }
+    } catch(e) {
+      rec._lastError = `خطأ شبكة: ${e && e.message ? e.message : e}`;
+      remaining.push(rec);
+    }
   }
   localStorage.setItem(LINE_ENTRY_QUEUE_KEY, JSON.stringify(remaining));
   updatePendingBadge();
@@ -4961,10 +5139,21 @@ async function syncThermalQueue() {
   const remaining = [];
   for (const rec of q) {
     if (!rec.client_uuid) rec.client_uuid = genUUID();
+    const toSend = { ...rec };
+    delete toSend._lastError;
     try {
-      const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-      if (res.ok) synced++; else remaining.push(rec);
-    } catch { remaining.push(rec); }
+      const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
+      if (res.ok) synced++;
+      else {
+        let bodyText = '';
+        try { bodyText = await res.text(); } catch(e) {}
+        rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
+        remaining.push(rec);
+      }
+    } catch(e) {
+      rec._lastError = `خطأ شبكة: ${e && e.message ? e.message : e}`;
+      remaining.push(rec);
+    }
   }
   localStorage.setItem(THERMAL_QUEUE_KEY, JSON.stringify(remaining));
   updatePendingBadge();
@@ -8402,6 +8591,21 @@ function extractDepsFromRecord(r) {
   else if (r.fire_causes_notes&&r.fire_causes_notes.trim()) deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes_notes.trim(),key:'fire'});
   if (r.insulator_washing === 'needs_washing') deps.push({type:'washing',label:'💧 العوازل تحتاج غسل',key:'washing'});
   else if (r.insulator_washing === 'very_dirty') deps.push({type:'washing',label:'💧 العوازل ملوثة جداً (منطقة معامل)',key:'washing'});
+
+  // عوازل بلاستيك متضررة
+  try {
+    const cTypes = r.insulator_chain_types ? safeParseJSON(r.insulator_chain_types) : null;
+    const state = r.insulator_state ? safeParseJSON(r.insulator_state) : null;
+    if (cTypes && state) {
+      ['R','S','T'].forEach(phase => {
+        (cTypes[phase]||[]).forEach((t, ci) => {
+          if (t === 'plastic' && state[phase] && state[phase][ci * Math.ceil((state[phase].length||10) / (cTypes[phase].length||1))]) {
+            deps.push({type:'insulator',label:`عازل بلاستيك متضرر — فيز ${phase} (سلسلة ${ci+1})`,key:`plastic_${phase}_${ci}`});
+          }
+        });
+      });
+    }
+  } catch(e) {}
   // الطريق لا يُعدّ مغادرة — يُعالج كتنبيه منفصل أسفل قسم المغادرات
   return deps;
 }
@@ -8893,26 +9097,19 @@ async function saveTreatment() {
     try { renderDepLinesList(); } catch(e) { console.error(e); }
   }
 
-  // مهم: try/finally يضمن دائماً إعادة تفعيل الزر بأي حال، حتى لو حدث خطأ غير متوقع بخطوة التنظيف
   try {
-    if (navigator.onLine) {
-      try {
-        const res = await sbFetch('treatments?on_conflict=client_uuid', {method:'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body:JSON.stringify(treatment)});
-        if (!res.ok) throw new Error();
-        const patchRes = await sbFetch(`inspections?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(inspectionPatch) });
-        if (!patchRes.ok) throw new Error('patch-failed');
-        showToast('✅ تم حفظ المعالجة بقاعدة البيانات');
-        await finishUpSuccess();
-      } catch {
-        addToTreatmentQueue(treatment);
-        addToInspectionPatchQueue(r.id, inspectionPatch);
-        showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
-        await finishUpSuccess();
-      }
-    } else {
+    try {
+      const res = await sbFetch('treatments?on_conflict=client_uuid', {method:'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body:JSON.stringify(treatment)});
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const patchRes = await sbFetch(`inspections?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(inspectionPatch) });
+      if (!patchRes.ok) throw new Error('patch-failed');
+      showToast('✅ تم حفظ المعالجة بقاعدة البيانات');
+      await finishUpSuccess();
+    } catch {
       addToTreatmentQueue(treatment);
       addToInspectionPatchQueue(r.id, inspectionPatch);
-      showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
+      const msg = navigator.onLine ? '📦 خطأ بالإرسال، حُفظ محلياً' : '📦 حُفظ أوف لاين، سيُرسل تلقائياً';
+      showToast(msg);
       await finishUpSuccess();
     }
   } finally {
@@ -8935,10 +9132,19 @@ async function syncInspectionPatchQueue() {
   let synced = 0;
   const remaining = [];
   for (const item of q) {
+    const patchToSend = { ...item.patch };
+    delete patchToSend._lastError;
     try {
-      const res = await sbFetch(`inspections?id=eq.${item.id}`, { method: 'PATCH', body: JSON.stringify(item.patch) });
-      if (res.ok) synced++; else remaining.push(item);
-    } catch { remaining.push(item); }
+      const res = await sbFetch(`inspections?id=eq.${item.id}`, { method: 'PATCH', body: JSON.stringify(patchToSend) });
+      if (res.ok) synced++;
+      else {
+        let bodyText = '';
+        try { bodyText = await res.text(); } catch(e) {}
+        remaining.push({ ...item, _lastError: `HTTP ${res.status}: ${bodyText.slice(0,200)}` });
+      }
+    } catch(e) {
+      remaining.push({ ...item, _lastError: `خطأ شبكة: ${e && e.message ? e.message : e}` });
+    }
   }
   localStorage.setItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(remaining));
   updatePendingBadge();
@@ -8958,10 +9164,21 @@ async function syncTreatmentQueue() {
   const remaining = [];
   for (const rec of q) {
     if (!rec.client_uuid) rec.client_uuid = genUUID();
+    const toSend = { ...rec };
+    delete toSend._lastError;
     try {
-      const res = await sbFetch('treatments?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-      if (res.ok) synced++; else remaining.push(rec);
-    } catch { remaining.push(rec); }
+      const res = await sbFetch('treatments?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
+      if (res.ok) synced++;
+      else {
+        let bodyText = '';
+        try { bodyText = await res.text(); } catch(e) {}
+        rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
+        remaining.push(rec);
+      }
+    } catch(e) {
+      rec._lastError = `خطأ شبكة: ${e && e.message ? e.message : e}`;
+      remaining.push(rec);
+    }
   }
   localStorage.setItem(TREATMENT_QUEUE_KEY, JSON.stringify(remaining));
   updatePendingBadge();
@@ -9139,6 +9356,7 @@ function calcLineHealthWithTreatments(lineName) {
     try {
       const state = r.insulator_state ? safeParseJSON(r.insulator_state) : null;
       const cycle = r.insulator_cycle ? safeParseJSON(r.insulator_cycle) : null;
+      const cTypes = r.insulator_chain_types ? safeParseJSON(r.insulator_chain_types) : null;
       if (state) {
         ['R', 'S', 'T'].forEach(phase => {
           const ps = state[phase] || [];
@@ -9146,24 +9364,29 @@ function calcLineHealthWithTreatments(lineName) {
           const total = ps.length;
           if (total === 0) { insScore += 20; return; }
 
-          // تقسيم العوازل على السلاسل
           const perChain = Math.ceil(total / chainsPerPhase);
           let phaseScore = 0;
           for (let c = 0; c < chainsPerPhase; c++) {
-            const start = c * perChain;
-            const end = Math.min(start + perChain, total);
-            // العوازل المتضررة الغير معالجة
-            const damaged = [];
-            for (let i = start; i < end; i++) {
-              const treated = cy[i] === true;
-              damaged.push(ps[i] && !treated);
+            const isPlastic = cTypes && cTypes[phase] && cTypes[phase][c] === 'plastic';
+            if (isPlastic) {
+              // البلاستيك: إما سليم = chainVal كامل أو متضرر = 0
+              const damaged = ps[c * perChain] === true;
+              phaseScore += damaged ? 0 : chainVal;
+            } else {
+              const start = c * perChain;
+              const end = Math.min(start + perChain, total);
+              const damaged = [];
+              for (let i = start; i < end; i++) {
+                const treated = cy[i] === true;
+                damaged.push(ps[i] && !treated);
+              }
+              phaseScore += calcChainScore(damaged, chainVal);
             }
-            phaseScore += calcChainScore(damaged, chainVal);
           }
           insScore += phaseScore;
         });
       } else {
-        insScore = 60; // لا بيانات عوازل = سليم
+        insScore = 60;
       }
     } catch (e) { insScore = 60; }
 
