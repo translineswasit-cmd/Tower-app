@@ -1775,8 +1775,16 @@ async function sbFetch(path, options = {}) {
     'Authorization': `Bearer ${SUPABASE_KEY}`,
     ...options.headers
   };
+  const method = (options.method || 'GET').toUpperCase();
+  const isMutating = ['POST','PATCH','PUT','DELETE'].includes(method);
+  if (isMutating) {
+    // طلبات الرفع: keepalive=true يضمن إكمال الطلب حتى لو التطبيق راح للخلفية (iOS Safari)
+    // لا نستخدم AbortController هنا لأنه يتسبب بـ"Fetch is aborted"
+    return await fetch(url, { ...options, headers, keepalive: true });
+  }
+  // طلبات القراءة: نبقي الـtimeout العادي
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 ثانية حد أقصى
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
   try {
     const res = await fetch(url, { ...options, headers, signal: controller.signal });
     clearTimeout(timeoutId);
@@ -3149,8 +3157,11 @@ async function syncQueue() {
   const remaining = [];
   for (const rec of q) {
     if (!rec.client_uuid) rec.client_uuid = genUUID();
+    // حذف الحقول المؤقتة قبل الإرسال — هذه حقول داخلية ولا وجود لها بقاعدة البيانات
+    const toSend = { ...rec };
+    delete toSend._lastError;
     try {
-      const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
+      const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
       if (res.ok) { synced++; delete rec._lastError; }
       else {
         let bodyText = '';
