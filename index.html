@@ -251,6 +251,13 @@ tbody tr:hover { background: #F7FAFC; }
   body.printing-lines #linesInfoView > div:first-child { display: block !important; border-bottom: 2px solid #1a2e4a; padding-bottom: 8px; margin-bottom: 14px; }
   body.printing-lines #linesInfoView > div:first-child > div:last-child { display: none !important; }
   body.printing-lines .page-title { font-size: 20px; }
+  /* طباعة كادر قسم الخطوط: نخفي تبويب الإحصائيات وشريط التبويبات وفلتر الموقع،
+     ونعتمد العنوان المُولَّد داخل جدول الطباعة بدل عنوان الصفحة العام */
+  body.printing-staffRoster .page:not(#page-staffStats) { display: none !important; }
+  body.printing-staffRoster #staffStatsStatsView,
+  body.printing-staffRoster .dep-tabs,
+  body.printing-staffRoster #staffRosterLocationFilter,
+  body.printing-staffRoster #page-staffStats > .page-title { display: none !important; }
 }
 
 /* INCOMPLETE INSPECTION BANNER */
@@ -1601,6 +1608,12 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page" id="page-staffStats">
   <div class="page-title"><img src="icon-stats.png" style="width:28px;height:28px;vertical-align:middle;margin-left:6px"> إحصائيات الموظفين</div>
 
+  <div class="dep-tabs" style="margin-bottom:14px">
+    <button class="dep-tab active" id="staffStatsTabStatsBtn" onclick="switchStaffStatsTab('stats',this)">📊 إحصائيات الكشوفات</button>
+    <button class="dep-tab" id="staffStatsTabRosterBtn" onclick="switchStaffStatsTab('roster',this)">👥 كادر القسم</button>
+  </div>
+
+  <div id="staffStatsStatsView">
   <div class="form-card">
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <div class="field" style="flex:1;min-width:130px">
@@ -1620,6 +1633,27 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="staffStatsList">
     <div class="empty-state">⏳ جاري التحميل...</div>
   </div>
+  </div>
+
+  <!-- كادر القسم (جدول ديناميكي: أعضاء + أعمدة قابلة للتعديل الكامل) -->
+  <div id="staffRosterView" style="display:none">
+    <div class="records-toolbar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn btn-primary btn-sm" id="btnAddStaffMember" style="display:none" onclick="openStaffMemberModal()">➕ إضافة عضو</button>
+      <button class="btn btn-secondary btn-sm" id="btnAddStaffColumn" style="display:none" onclick="openAddStaffColumnModal()">➕ إضافة عمود</button>
+      <button class="btn btn-secondary btn-sm" onclick="openPrintStaffRosterModal()">🖨️ طباعة</button>
+    </div>
+    <div style="margin-bottom:10px">
+      <select id="staffRosterLocationFilter" onchange="renderStaffRoster()" style="padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;font-size:14px">
+        <option value="all">جميع المواقع</option>
+      </select>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="records-table" id="staffRosterTable" style="width:100%;background:white;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.05)">
+        <thead id="staffRosterThead"></thead>
+        <tbody id="staffRosterBody"><tr><td class="empty-state">⏳ جاري التحميل...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <!-- STAFF STATS DETAIL MODAL -->
@@ -1635,6 +1669,53 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="ssEmpDetailedActivity" style="margin-top:10px"></div>
     <div class="modal-actions" style="margin-top:16px">
       <button class="btn btn-secondary" onclick="document.getElementById('staffStatsDetailModal').classList.remove('show')">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: إضافة/تعديل عضو كادر القسم (حقول ديناميكية حسب الأعمدة الحالية) -->
+<div class="modal-bg" id="staffMemberModal">
+  <div class="modal-box" style="max-width:420px;text-align:right">
+    <h3 id="staffMemberModalTitle" style="text-align:center">➕ إضافة عضو</h3>
+    <div id="staffMemberFormFields" style="margin-top:10px"></div>
+    <div class="modal-actions" style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-primary" style="flex:1" onclick="saveStaffMemberForm()">💾 حفظ</button>
+      <button class="btn btn-secondary" style="flex:1" onclick="closeStaffMemberModal()">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: إضافة عمود جديد لجدول الكادر -->
+<div class="modal-bg" id="addStaffColumnModal">
+  <div class="modal-box" style="max-width:380px;text-align:right">
+    <h3 style="text-align:center">➕ إضافة عمود جديد</h3>
+    <div class="field" style="margin-top:10px">
+      <label>اسم العمود</label>
+      <input type="text" id="newStaffColumnLabel" placeholder="مثال: رقم الهاتف" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.9rem;width:100%">
+    </div>
+    <div class="modal-actions" style="margin-top:16px;display:flex;gap:8px">
+      <button class="btn btn-primary" style="flex:1" onclick="confirmAddStaffColumn()">➕ إضافة</button>
+      <button class="btn btn-secondary" style="flex:1" onclick="document.getElementById('addStaffColumnModal').classList.remove('show')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: طباعة كادر القسم — اختيار الأعمدة المطلوب طباعتها -->
+<div class="treat-modal-bg" id="printStaffRosterModalBg">
+  <div class="treat-modal" style="max-height:90vh;overflow-y:auto">
+    <h3>🖨️ طباعة كادر القسم</h3>
+    <p style="color:#718096;font-size:0.82rem;margin-top:-6px">عمود "الاسم الثلاثي" يُطبع دائماً. اختر بقية الأعمدة:</p>
+    <div style="margin-top:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label style="font-weight:700;font-size:0.88rem">الأعمدة</label>
+        <button class="btn btn-secondary btn-sm" onclick="togglePrintStaffColumnsSelectAll()" id="printStaffColumnsSelectAllBtn">إلغاء التحديد</button>
+      </div>
+      <div id="printStaffColumnsWrap" style="max-height:220px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px"></div>
+    </div>
+    <p style="margin-top:10px;color:#718096;font-size:0.82rem;text-align:center" id="printStaffRosterNote"></p>
+    <div class="form-actions" style="margin-top:14px;flex-direction:column;gap:8px">
+      <button class="btn btn-primary" style="width:100%" onclick="confirmPrintStaffRoster()">🖨️ طباعة</button>
+      <button class="btn btn-secondary" style="width:100%" onclick="closePrintStaffRosterModal()">إغلاق</button>
     </div>
   </div>
 </div>
@@ -1815,6 +1896,9 @@ const LINE_VOLTAGE = {"واسط الحرارية - الامين رقم 1 400 ك.
 // الخطوط المزدوجة (دائرتين فعليتين على نفس هيكل البرج) — عوازل وأسلاك مكرّرة لكل دائرة
 const DOUBLE_CIRCUIT_LINES = ["دبوني - جصان (1+2) 132 ك.ف","شمال الكوت - جنوب الكوت (1+2) 132 ك.ف","شمال غرب الكوت - الحي (1+2) 132 ك.ف","واسط - شمال الكوت (1+2) 132 ك.ف","واسط - شمال غرب الكوت (1+2) 132 ك.ف","واسط - نعمانية (1+2) 132 ك.ف","واسط الحرارية - عزيزية (1+2) 132 ك.ف"];
 function isDoubleCircuitLine(lineName) { return DOUBLE_CIRCUIT_LINES.includes(lineName); }
+// ==================== كادر قسم الخطوط (جدول ديناميكي: أعضاء + أعمدة قابلة للتعديل الكامل) ====================
+const STAFF_ROSTER_COLUMNS_DEFAULT = [{"key": "title", "label": "العنوان الوظيفي"}, {"key": "birth_year", "label": "تاريخ التولد"}, {"key": "certificate", "label": "الشهادة الحالية"}, {"key": "specialty", "label": "التخصص"}, {"key": "location", "label": "الموقع"}];
+
 const LINES_INFO = [{"idx":1,"voltage":400,"name":"واسط - واسط الحرارية رقم 1","length":74.9,"towers":164,"tension_towers":13,"phase_swap":2,"capacity":970,"wire_type":"T.A.A.A.C = 61.15 KM   T.A.C.S.R = 14.2 KM","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2013,"status":"بالعمل","notes":""},{"idx":2,"voltage":400,"name":"واسط - واسط الحرارية رقم 2","length":75.4,"towers":195,"tension_towers":16,"phase_swap":2,"capacity":970,"wire_type":"T.A.C.S.R","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2014,"status":"بالعمل","notes":""},{"idx":3,"voltage":400,"name":"واسط الحرارية - جنوب بغداد","length":70.2,"towers":182,"tension_towers":29,"phase_swap":null,"capacity":970,"wire_type":"T.A.C.S.R","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2014,"status":"بالعمل","notes":""},{"idx":4,"voltage":400,"name":"واسط الحرارية - الامين رقم 1","length":65.9,"towers":142,"tension_towers":13,"phase_swap":2,"capacity":970,"wire_type":"T.A.C.S.R = 14.2 KM  T.A.A.A.C = 51.6 KM","ground_wire":"Dorking","responsibility":"خط مشترك","year":2013,"status":"بالعمل","notes":"طول الخط الكلي ( 118 ) وعدد الابراج ( 259 ) مشترك مع الشبكة الاولى"},{"idx":5,"voltage":400,"name":"واسط الحرارية - الامين رقم 2","length":67.7,"towers":173,"tension_towers":26,"phase_swap":null,"capacity":970,"wire_type":"T.A.C.S.R","ground_wire":"OPGW","responsibility":"خط مشترك","year":2022,"status":"بالعمل","notes":"طول الخط الكلي ( 109 ) وعدد الابراج ( 320 ) مشترك مع الشبكة الاولى"},{"idx":6,"voltage":400,"name":"واسط - ميسان","length":87.3,"towers":178,"tension_towers":7,"phase_swap":null,"capacity":970,"wire_type":"T.A.A.A.C    T.A.C.S.R","ground_wire":"OPGW","responsibility":"خط مشترك","year":1983,"status":"بالعمل","notes":"طول الخط الكلي (185.7 ) وعدد الابراج ( 377 ) مشترك مع شبكات نقل الجنوبية"},{"idx":7,"voltage":400,"name":"واسط - شطرة","length":83,"towers":176,"tension_towers":7,"phase_swap":null,"capacity":970,"wire_type":"T.A.A.A.C","ground_wire":"OPGW","responsibility":"خط مشترك","year":1983,"status":"بالعمل","notes":"طول الخط الكلي (145.7 ) وعدد الابراج (  301 ) مشترك مع شبكات نقل الجنوبية"},{"idx":8,"voltage":132,"name":"واسط - مركز الكوت","length":13.3,"towers":50,"tension_towers":13,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2022,"status":"بالعمل","notes":""},{"idx":10,"voltage":132,"name":"واسط - الكوت القديمة","length":13.1,"towers":48,"tension_towers":11,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2021,"status":"بالعمل","notes":""},{"idx":11,"voltage":132,"name":"الكوت القديمة - مركز الكوت","length":0.21,"towers":3,"tension_towers":3,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2023,"status":"بالعمل","notes":""},{"idx":12,"voltage":132,"name":"الكوت القديمة - شيخ سعد","length":50.4,"towers":161,"tension_towers":23,"phase_swap":null,"capacity":85,"wire_type":"ORIAL","ground_wire":"Dorking","responsibility":"الخط بالكامل","year":1963,"status":"بالعمل","notes":""},{"idx":13,"voltage":132,"name":"الكوت القديمة - جنوب الكوت","length":9.6,"towers":31,"tension_towers":8,"phase_swap":null,"capacity":85,"wire_type":"ORIAL","ground_wire":"Dorking","responsibility":"الخط بالكامل","year":1978,"status":"بالعمل","notes":""},{"idx":14,"voltage":132,"name":"جنوب الكوت - الدجيلي","length":39.3,"towers":129,"tension_towers":16,"phase_swap":null,"capacity":85,"wire_type":"ORIAL : 4.2\nLARK : 35","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":1980,"status":"بالعمل","notes":""},{"idx":15,"voltage":132,"name":"الدجيلي - الحي","length":75.1,"towers":240,"tension_towers":23,"phase_swap":null,"capacity":85,"wire_type":"ORIAL : 39.9\nLARK : 35","ground_wire":"pertal","responsibility":"الخط بالكامل","year":1980,"status":"بالعمل","notes":""},{"idx":16,"voltage":132,"name":"واسط - شمال الكوت (1+2)","length":10.5,"towers":33,"tension_towers":6,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2013,"status":"بالعمل","notes":""},{"idx":17,"voltage":132,"name":"شمال الكوت - جنوب الكوت (1+2)","length":17.9,"towers":58,"tension_towers":12,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2013,"status":"بالعمل","notes":""},{"idx":18,"voltage":132,"name":"شمال الكوت - شيخ سعد","length":51,"towers":172,"tension_towers":25,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2024,"status":"بالعمل","notes":"قطع خط واسط - شيخ سعد (1+2) وادخالة الى محطة شمال الكوت"},{"idx":19,"voltage":132,"name":"واسط - شمال الكوت رقم 3","length":10.7,"towers":39,"tension_towers":7,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2024,"status":"بالعمل","notes":"قطع خط واسط - شيخ سعد (1+2) وادخالة الى محطة شمال الكوت"},{"idx":20,"voltage":132,"name":"واسط - شيخ سعد","length":58.1,"towers":194,"tension_towers":29,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2019,"status":"بالعمل","notes":""},{"idx":21,"voltage":132,"name":"واسط - شمال غرب الكوت (1+2)","length":32.84,"towers":106,"tension_towers":20,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2022,"status":"بالعمل","notes":""},{"idx":22,"voltage":132,"name":"شمال غرب الكوت - الحي (1+2)","length":56,"towers":178,"tension_towers":35,"phase_swap":null,"capacity":330,"wire_type":"A.C.S.R","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2023,"status":"بالعمل","notes":""},{"idx":23,"voltage":132,"name":"عزيزية - صويرة","length":29.8,"towers":98,"tension_towers":15,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2013,"status":"بالعمل","notes":""},{"idx":24,"voltage":132,"name":"عزيزية - شمال الصويرة","length":28.5,"towers":96,"tension_towers":17,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2024,"status":"بالعمل","notes":"قطع خط عزيزية - صويرة وادخالة الى محطة شمال الصويرة"},{"idx":25,"voltage":132,"name":"شمال الصويرة - الصويرة","length":19.8,"towers":63,"tension_towers":13,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2024,"status":"بالعمل","notes":"قطع خط عزيزية - صويرة وادخالة الى محطة شمال الصويرة"},{"idx":26,"voltage":132,"name":"واسط الحرارية - عزيزية (1+2)","length":20.9,"towers":70,"tension_towers":19,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2013,"status":"بالعمل","notes":""},{"idx":27,"voltage":132,"name":"واسط - نعمانية (1+2)","length":41.3,"towers":135,"tension_towers":30,"phase_swap":null,"capacity":120,"wire_type":"Teal","ground_wire":"pertal","responsibility":"الخط بالكامل","year":1983,"status":"بالعمل","notes":"مفتوح من الجهتين , خط واسط نعمانية رقم 1 تاب مع خط واسط نعمانية رقم 3"},{"idx":28,"voltage":132,"name":"واسط - نعمانية رقم 3","length":42.8,"towers":130,"tension_towers":25,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2022,"status":"بالعمل","notes":"تاب على خط واسط نعمانية 3"},{"idx":29,"voltage":132,"name":"واسط - حقل الاحدب","length":26,"towers":86,"tension_towers":16,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2017,"status":"بالعمل","notes":"تاب على خط واسط نعمانية ( 1 )"},{"idx":30,"voltage":132,"name":"واسط الحرارية - نعمانية","length":58.2,"towers":176,"tension_towers":31,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2022,"status":"بالعمل","notes":""},{"idx":31,"voltage":132,"name":"دبوني - جصان (1+2)","length":66,"towers":208,"tension_towers":17,"phase_swap":null,"capacity":96,"wire_type":"Lark","ground_wire":"Dorking","responsibility":"الخط بالكامل","year":1980,"status":"بالعمل","notes":""},{"idx":32,"voltage":132,"name":"واسط الحرارية - الدبوني","length":27.4,"towers":87,"tension_towers":18,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2013,"status":"بالعمل","notes":""},{"idx":33,"voltage":132,"name":"واسط - دبوني","length":45.5,"towers":139,"tension_towers":22,"phase_swap":null,"capacity":240,"wire_type":"T.Teal","ground_wire":"OPGW","responsibility":"الخط بالكامل","year":2009,"status":"بالعمل","notes":""},{"idx":34,"voltage":132,"name":"الحي - رفاعي","length":19.6,"towers":63,"tension_towers":9,"phase_swap":null,"capacity":85,"wire_type":"ORIAL+LARK","ground_wire":"OPGW","responsibility":"خط مشترك","year":1980,"status":"بالعمل","notes":"طول الخط الكلي ( 53 ) وعدد الابراج (  165) مشترك مع شبكات نقل الجنوبيه"}];
 
 
@@ -2168,7 +2252,7 @@ function updateStatus(online) {
 }
 
 function getTotalPendingCount() {
-  return getQueue().length + getThermalQueue().length + getTreatmentQueue().length + getLineEntryQueue().length + getInspectionPatchQueue().length;
+  return getQueue().length + getThermalQueue().length + getTreatmentQueue().length + getLineEntryQueue().length + getInspectionPatchQueue().length + getStaffRosterQueue().length;
 }
 
 function updatePendingBadge() {
@@ -2198,6 +2282,7 @@ async function syncAllQueues() {
     await syncTreatmentQueue();
     await syncLineEntryQueue();
     await syncInspectionPatchQueue();
+    await syncStaffRosterQueue();
   } finally {
     syncInProgress = false;
   }
@@ -6714,6 +6799,375 @@ async function loadStaffEmployeeDetailedActivity() {
   } catch { container.innerHTML = '<div class="empty-state">❌ تعذر تحميل التفاصيل</div>'; }
 }
 
+// ==================== كادر قسم الخطوط: get/save + عرض + إدارة أعضاء وأعمدة + طباعة ====================
+// ==================== كادر قسم الخطوط: متزامن مع سوبابيس (staff_roster_members / staff_roster_columns) ====================
+// كاش محلي للعرض السريع + العمل بدون إنترنت، وطابور معلّقة يرفع العمليات تلقائياً عند رجوع الاتصال
+const STAFF_ROSTER_COLUMNS_CACHE_KEY = 'staff_roster_columns_cache';
+const STAFF_ROSTER_MEMBERS_CACHE_KEY = 'staff_roster_members_cache';
+const STAFF_ROSTER_QUEUE_KEY = 'staff_roster_queue';
+
+let staffRosterColumnsCache = [];
+let staffRosterMembersCache = [];
+let staffRosterLoaded = false;
+
+function getStaffRosterQueue() { try { return JSON.parse(localStorage.getItem(STAFF_ROSTER_QUEUE_KEY) || '[]'); } catch(e) { return []; } }
+function saveStaffRosterQueueRaw(q) { localStorage.setItem(STAFF_ROSTER_QUEUE_KEY, JSON.stringify(q)); updatePendingBadge(); }
+function addToStaffRosterQueue(op, payload) {
+  const q = getStaffRosterQueue();
+  q.push({ op, payload, ts: Date.now() });
+  saveStaffRosterQueueRaw(q);
+}
+
+function loadStaffRosterCacheFromLocal() {
+  try { staffRosterColumnsCache = JSON.parse(localStorage.getItem(STAFF_ROSTER_COLUMNS_CACHE_KEY) || 'null') || JSON.parse(JSON.stringify(STAFF_ROSTER_COLUMNS_DEFAULT)); } catch(e) { staffRosterColumnsCache = JSON.parse(JSON.stringify(STAFF_ROSTER_COLUMNS_DEFAULT)); }
+  try { staffRosterMembersCache = JSON.parse(localStorage.getItem(STAFF_ROSTER_MEMBERS_CACHE_KEY) || '[]'); } catch(e) { staffRosterMembersCache = []; }
+}
+function saveStaffRosterColumnsCache(cols) { staffRosterColumnsCache = cols; localStorage.setItem(STAFF_ROSTER_COLUMNS_CACHE_KEY, JSON.stringify(cols)); }
+function saveStaffRosterMembersCache(members) { staffRosterMembersCache = members; localStorage.setItem(STAFF_ROSTER_MEMBERS_CACHE_KEY, JSON.stringify(members)); }
+
+// يجلب أحدث نسخة من سوبابيس (لو متصل) ويحدّث الكاش المحلي، وإلا يستخدم الكاش المحفوظ
+async function fetchStaffRosterFromServer() {
+  try {
+    const [colsRes, membersRes] = await Promise.all([
+      sbFetch('staff_roster_columns?select=key,label&order=sort_order.asc'),
+      sbFetch('staff_roster_members?select=id,name,values&order=id.asc')
+    ]);
+    if (colsRes.ok && membersRes.ok) {
+      const cols = await colsRes.json();
+      const members = await membersRes.json();
+      saveStaffRosterColumnsCache(cols);
+      saveStaffRosterMembersCache(members);
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+function switchStaffStatsTab(tab, btn) {
+  const isRoster = tab === 'roster';
+  document.getElementById('staffStatsStatsView').style.display = isRoster ? 'none' : '';
+  document.getElementById('staffRosterView').style.display = isRoster ? '' : 'none';
+  document.getElementById('staffStatsTabStatsBtn').classList.toggle('active', !isRoster);
+  document.getElementById('staffStatsTabRosterBtn').classList.toggle('active', isRoster);
+  if (isRoster) {
+    const isAdmin = currentUser && currentUser.role === 'admin';
+    document.getElementById('btnAddStaffMember').style.display = isAdmin ? '' : 'none';
+    document.getElementById('btnAddStaffColumn').style.display = isAdmin ? '' : 'none';
+    openStaffRosterView();
+  }
+}
+
+async function openStaffRosterView() {
+  loadStaffRosterCacheFromLocal();
+  renderStaffRoster(); // نعرض الكاش المحلي فوراً (سريع، ويشتغل بدون إنترنت)
+  const ok = await fetchStaffRosterFromServer();
+  if (ok) renderStaffRoster(); // نحدّث بأحدث نسخة من السيرفر لو نجح الاتصال
+  if (!staffRosterLoaded && getStaffRosterQueue().length) syncStaffRosterQueue();
+  staffRosterLoaded = true;
+}
+
+function renderStaffRoster() {
+  const cols = staffRosterColumnsCache;
+  const data = staffRosterMembersCache;
+  const isAdmin = currentUser && currentUser.role === 'admin';
+
+  // فلتر الموقع يظهر فقط طالما عمود "الموقع" (location) موجود بالأعمدة الحالية
+  const filterSel = document.getElementById('staffRosterLocationFilter');
+  const hasLocationCol = cols.some(c => c.key === 'location');
+  if (hasLocationCol) {
+    const currentVal = filterSel.dataset.wasBuilt ? filterSel.value : 'all';
+    const locations = [...new Set(data.map(r => (r.values && r.values.location) || '').filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
+    filterSel.innerHTML = '<option value="all">جميع المواقع</option>' + locations.map(l => `<option value="${l.replace(/"/g,'&quot;')}">${l}</option>`).join('');
+    filterSel.value = locations.includes(currentVal) ? currentVal : 'all';
+    filterSel.dataset.wasBuilt = '1';
+    filterSel.style.display = '';
+  } else {
+    filterSel.style.display = 'none';
+  }
+  const filterVal = hasLocationCol ? filterSel.value : 'all';
+  const filtered = (!hasLocationCol || filterVal === 'all') ? data : data.filter(r => (r.values && r.values.location) === filterVal);
+
+  // رأس الجدول (ديناميكي حسب الأعمدة الحالية)
+  const thead = document.getElementById('staffRosterThead');
+  let headHTML = '<tr style="text-align:right"><th style="padding:10px">ت</th><th style="padding:10px">الاسم الثلاثي</th>';
+  cols.forEach(c => {
+    headHTML += `<th style="padding:10px">${c.label}${isAdmin ? ` <span onclick="deleteStaffColumn('${c.key}')" style="cursor:pointer;color:#c0392b;font-weight:700;margin-right:6px" title="حذف العمود">✕</span>` : ''}</th>`;
+  });
+  if (isAdmin) headHTML += '<th style="padding:10px">إجراء</th>';
+  headHTML += '</tr>';
+  thead.innerHTML = headHTML;
+
+  // جسم الجدول
+  const body = document.getElementById('staffRosterBody');
+  const colCount = 2 + cols.length + (isAdmin ? 1 : 0);
+  if (!filtered.length) {
+    body.innerHTML = `<tr><td colspan="${colCount}" class="empty-state">لا توجد بيانات</td></tr>`;
+    return;
+  }
+  body.innerHTML = filtered.map((row, i) => {
+    let tds = `<td style="padding:10px">${i+1}</td><td style="padding:10px;font-weight:700">${row.name || '-'}</td>`;
+    cols.forEach(c => { tds += `<td style="padding:10px">${(row.values && row.values[c.key]) || '-'}</td>`; });
+    if (isAdmin) {
+      tds += `<td style="padding:10px"><div style="display:flex;gap:6px"><button class="btn btn-secondary btn-sm" onclick="openStaffMemberModal(${row.id})">✏️</button><button class="btn btn-secondary btn-sm" onclick="deleteStaffMember(${row.id})">🗑️</button></div></td>`;
+    }
+    return `<tr>${tds}</tr>`;
+  }).join('');
+}
+
+// ---- إضافة/تعديل عضو ----
+let _editingStaffMemberId = null;
+
+function openStaffMemberModal(id) {
+  if (currentUser.role !== 'admin') { showToast('⛔ الإضافة والتعديل من صلاحيات المدير فقط', 'error'); return; }
+  _editingStaffMemberId = id || null;
+  const cols = staffRosterColumnsCache;
+  const row = id ? staffRosterMembersCache.find(r => r.id === id) : null;
+  document.getElementById('staffMemberModalTitle').textContent = id ? '✏️ تعديل عضو' : '➕ إضافة عضو';
+  let fieldsHTML = `<div class="field"><label>الاسم الثلاثي</label><input type="text" id="staffMember_name" value="${row ? String(row.name||'').replace(/"/g,'&quot;') : ''}" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.9rem;width:100%"></div>`;
+  cols.forEach(c => {
+    const val = row && row.values ? (row.values[c.key] || '') : '';
+    fieldsHTML += `<div class="field" style="margin-top:8px"><label>${c.label}</label><input type="text" class="staffMemberColField" data-key="${c.key}" value="${String(val).replace(/"/g,'&quot;')}" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.9rem;width:100%"></div>`;
+  });
+  document.getElementById('staffMemberFormFields').innerHTML = fieldsHTML;
+  document.getElementById('staffMemberModal').classList.add('show');
+}
+
+function closeStaffMemberModal() {
+  document.getElementById('staffMemberModal').classList.remove('show');
+}
+
+async function saveStaffMemberForm() {
+  const name = document.getElementById('staffMember_name').value.trim();
+  if (!name) { showToast('⚠️ اكتب الاسم الثلاثي', 'error'); return; }
+  const values = {};
+  document.querySelectorAll('.staffMemberColField').forEach(inp => { values[inp.dataset.key] = inp.value.trim(); });
+
+  if (_editingStaffMemberId) {
+    // تعديل عضو موجود — نحاول أونلاين أولاً
+    const id = _editingStaffMemberId;
+    const idx = staffRosterMembersCache.findIndex(r => r.id === id);
+    if (idx > -1) { staffRosterMembersCache[idx] = { ...staffRosterMembersCache[idx], name, values }; saveStaffRosterMembersCache(staffRosterMembersCache); }
+    closeStaffMemberModal();
+    renderStaffRoster();
+    try {
+      const res = await sbFetch(`staff_roster_members?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ name, values }) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      showToast('✅ تم الحفظ');
+    } catch(e) {
+      addToStaffRosterQueue('edit_member', { id, name, values });
+      showToast('📦 تعذّر الاتصال، حُفظ محلياً وسيُرسل عند رجوع الإنترنت');
+    }
+  } else {
+    // عضو جديد — نضيفه محلياً فوراً (بمعرّف مؤقت) ثم نحاول أونلاين
+    const tempId = 'local_' + Date.now();
+    const optimisticRow = { id: tempId, name, values, _pending: true };
+    staffRosterMembersCache.push(optimisticRow);
+    saveStaffRosterMembersCache(staffRosterMembersCache);
+    closeStaffMemberModal();
+    renderStaffRoster();
+    try {
+      const res = await sbFetch('staff_roster_members', { method: 'POST', headers: { 'Prefer': 'return=representation' }, body: JSON.stringify({ name, values }) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const inserted = await res.json();
+      const realRow = Array.isArray(inserted) ? inserted[0] : inserted;
+      const i2 = staffRosterMembersCache.findIndex(r => r.id === tempId);
+      if (i2 > -1 && realRow) { staffRosterMembersCache[i2] = realRow; saveStaffRosterMembersCache(staffRosterMembersCache); renderStaffRoster(); }
+      showToast('✅ تم الحفظ');
+    } catch(e) {
+      addToStaffRosterQueue('add_member', { tempId, name, values });
+      showToast('📦 تعذّر الاتصال، حُفظ محلياً وسيُرسل عند رجوع الإنترنت');
+    }
+  }
+}
+
+async function deleteStaffMember(id) {
+  if (currentUser.role !== 'admin') { showToast('⛔ الحذف من صلاحيات المدير فقط', 'error'); return; }
+  if (!confirm('هل تريد حذف هذا العضو؟')) return;
+
+  const isLocalOnly = typeof id === 'string' && id.startsWith('local_');
+  staffRosterMembersCache = staffRosterMembersCache.filter(r => r.id !== id);
+  saveStaffRosterMembersCache(staffRosterMembersCache);
+  renderStaffRoster();
+
+  if (isLocalOnly) {
+    // العضو أصلاً ما انرفع للسيرفر — نلغي عملية الإضافة المعلّقة نفسها من الطابور بدل ما نرسل حذف
+    const q = getStaffRosterQueue().filter(item => !(item.op === 'add_member' && item.payload && item.payload.tempId === id));
+    saveStaffRosterQueueRaw(q);
+    showToast('🗑️ تم الحذف');
+    return;
+  }
+  try {
+    const res = await sbFetch(`staff_roster_members?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast('🗑️ تم الحذف');
+  } catch(e) {
+    addToStaffRosterQueue('delete_member', { id });
+    showToast('📦 تعذّر الاتصال، سيُحذف من السيرفر عند رجوع الإنترنت');
+  }
+}
+
+// ---- إضافة/حذف عمود ----
+function openAddStaffColumnModal() {
+  if (currentUser.role !== 'admin') { showToast('⛔ إدارة الأعمدة من صلاحيات المدير فقط', 'error'); return; }
+  document.getElementById('newStaffColumnLabel').value = '';
+  document.getElementById('addStaffColumnModal').classList.add('show');
+}
+
+async function confirmAddStaffColumn() {
+  const label = document.getElementById('newStaffColumnLabel').value.trim();
+  if (!label) { showToast('⚠️ اكتب اسم العمود', 'error'); return; }
+  const key = 'col_' + Date.now();
+  const sortOrder = staffRosterColumnsCache.length;
+
+  staffRosterColumnsCache.push({ key, label });
+  saveStaffRosterColumnsCache(staffRosterColumnsCache);
+  document.getElementById('addStaffColumnModal').classList.remove('show');
+  renderStaffRoster();
+
+  try {
+    const res = await sbFetch('staff_roster_columns', { method: 'POST', body: JSON.stringify({ key, label, sort_order: sortOrder }) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast('✅ تمت إضافة العمود');
+  } catch(e) {
+    addToStaffRosterQueue('add_column', { key, label, sort_order: sortOrder });
+    showToast('📦 تعذّر الاتصال، حُفظ محلياً وسيُرسل عند رجوع الإنترنت');
+  }
+}
+
+async function deleteStaffColumn(key) {
+  if (currentUser.role !== 'admin') { showToast('⛔ إدارة الأعمدة من صلاحيات المدير فقط', 'error'); return; }
+  const col = staffRosterColumnsCache.find(c => c.key === key);
+  if (!col) return;
+  if (!confirm(`هل تريد حذف عمود "${col.label}"؟ سيُحذف محتواه من كل الأعضاء ولا يمكن التراجع.`)) return;
+
+  staffRosterColumnsCache = staffRosterColumnsCache.filter(c => c.key !== key);
+  saveStaffRosterColumnsCache(staffRosterColumnsCache);
+  staffRosterMembersCache.forEach(r => { if (r.values) delete r.values[key]; });
+  saveStaffRosterMembersCache(staffRosterMembersCache);
+  renderStaffRoster();
+
+  try {
+    const res = await sbFetch(`staff_roster_columns?key=eq.${key}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast('🗑️ تم حذف العمود');
+  } catch(e) {
+    addToStaffRosterQueue('delete_column', { key });
+    showToast('📦 تعذّر الاتصال، سيُحذف من السيرفر عند رجوع الإنترنت');
+  }
+}
+
+// ---- رفع طابور كادر القسم المعلّق ----
+function getStaffRosterPendingCount() { return getStaffRosterQueue().length; }
+
+async function syncStaffRosterQueue() {
+  const q = getStaffRosterQueue();
+  if (!q.length) return;
+  const remaining = [];
+  for (const item of q) {
+    try {
+      if (item.op === 'add_member') {
+        const res = await sbFetch('staff_roster_members', { method: 'POST', headers: { 'Prefer': 'return=representation' }, body: JSON.stringify({ name: item.payload.name, values: item.payload.values }) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const inserted = await res.json();
+        const realRow = Array.isArray(inserted) ? inserted[0] : inserted;
+        const i2 = staffRosterMembersCache.findIndex(r => r.id === item.payload.tempId);
+        if (i2 > -1 && realRow) { staffRosterMembersCache[i2] = realRow; saveStaffRosterMembersCache(staffRosterMembersCache); }
+      } else if (item.op === 'edit_member') {
+        const res = await sbFetch(`staff_roster_members?id=eq.${item.payload.id}`, { method: 'PATCH', body: JSON.stringify({ name: item.payload.name, values: item.payload.values }) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } else if (item.op === 'delete_member') {
+        const res = await sbFetch(`staff_roster_members?id=eq.${item.payload.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } else if (item.op === 'add_column') {
+        const res = await sbFetch('staff_roster_columns', { method: 'POST', body: JSON.stringify({ key: item.payload.key, label: item.payload.label, sort_order: item.payload.sort_order }) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } else if (item.op === 'delete_column') {
+        const res = await sbFetch(`staff_roster_columns?key=eq.${item.payload.key}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      }
+    } catch(e) {
+      remaining.push({ ...item, _lastError: e && e.message ? e.message : String(e) });
+    }
+  }
+  saveStaffRosterQueueRaw(remaining);
+  renderStaffRoster();
+}
+
+// ---- طباعة كادر القسم (اختيار الأعمدة) ----
+function openPrintStaffRosterModal() {
+  const cols = staffRosterColumnsCache;
+  const wrap = document.getElementById('printStaffColumnsWrap');
+  wrap.innerHTML = cols.map((c, i) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
+      <input type="checkbox" class="printStaffColChk" data-idx="${i}" checked>
+      <span>${c.label}</span>
+    </label>`).join('') || '<div class="empty-state">لا توجد أعمدة إضافية</div>';
+  document.getElementById('printStaffColumnsSelectAllBtn').textContent = 'إلغاء التحديد';
+  const filterSel = document.getElementById('staffRosterLocationFilter');
+  const noteTxt = (filterSel.style.display !== 'none' && filterSel.value !== 'all')
+    ? `سيُطبع فقط الموقع المحدد حالياً: ${filterSel.value}`
+    : 'سيُطبع كل الأعضاء المعروضين حالياً بالجدول';
+  document.getElementById('printStaffRosterNote').textContent = noteTxt;
+  document.getElementById('printStaffRosterModalBg').classList.add('show');
+}
+
+function closePrintStaffRosterModal() {
+  document.getElementById('printStaffRosterModalBg').classList.remove('show');
+}
+
+function togglePrintStaffColumnsSelectAll() {
+  const boxes = document.querySelectorAll('.printStaffColChk');
+  const btn = document.getElementById('printStaffColumnsSelectAllBtn');
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  btn.textContent = allChecked ? 'تحديد الكل' : 'إلغاء التحديد';
+}
+
+let _printStaffRosterSavedHTML = null;
+
+function confirmPrintStaffRoster() {
+  const allCols = staffRosterColumnsCache;
+  const selectedCols = Array.from(document.querySelectorAll('.printStaffColChk:checked')).map(cb => allCols[Number(cb.dataset.idx)]).filter(Boolean);
+  closePrintStaffRosterModal();
+
+  const data = staffRosterMembersCache;
+  const filterSel = document.getElementById('staffRosterLocationFilter');
+  const hasLocationCol = allCols.some(c => c.key === 'location');
+  const filterVal = (hasLocationCol && filterSel.style.display !== 'none') ? filterSel.value : 'all';
+  const rows = (!hasLocationCol || filterVal === 'all') ? data : data.filter(r => (r.values && r.values.location) === filterVal);
+
+  let html = '<div style="font-weight:700;font-size:18px;color:#1a2e4a;border-bottom:2px solid #1a2e4a;padding-bottom:8px;margin-bottom:14px">👥 كادر قسم الخطوط' + (filterVal !== 'all' ? ' — ' + filterVal : '') + '</div>';
+  html += '<div style="overflow-x:auto"><table class="records-table" style="width:100%;background:white"><thead><tr style="text-align:right"><th style="padding:8px">ت</th><th style="padding:8px">الاسم الثلاثي</th>';
+  selectedCols.forEach(c => { html += `<th style="padding:8px">${c.label}</th>`; });
+  html += '</tr></thead><tbody>';
+  rows.forEach((row, i) => {
+    html += `<tr><td style="padding:8px">${i+1}</td><td style="padding:8px;font-weight:700">${row.name||'-'}</td>`;
+    selectedCols.forEach(c => { html += `<td style="padding:8px">${(row.values && row.values[c.key]) || '-'}</td>`; });
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+
+  const tableWrap = document.getElementById('staffRosterTable').parentElement;
+  _printStaffRosterSavedHTML = tableWrap.outerHTML;
+  const printHost = document.createElement('div');
+  printHost.id = 'staffRosterPrintHost';
+  printHost.innerHTML = html;
+  tableWrap.replaceWith(printHost);
+
+  document.body.classList.add('printing-staffRoster');
+  window.print();
+  setTimeout(() => {
+    document.body.classList.remove('printing-staffRoster');
+    const host = document.getElementById('staffRosterPrintHost');
+    if (host && _printStaffRosterSavedHTML !== null) {
+      const temp = document.createElement('div');
+      temp.innerHTML = _printStaffRosterSavedHTML;
+      host.replaceWith(temp.firstElementChild);
+      _printStaffRosterSavedHTML = null;
+    }
+  }, 500);
+}
+
 async function loadStaffStats() {
   const wrap = document.getElementById('staffStatsList');
   wrap.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
@@ -7283,7 +7737,8 @@ function renderPendingSyncPage() {
   const thermQ = getThermalQueue();
   const treatQ = getTreatmentQueue();
   const lineEntryQ = getLineEntryQueue();
-  const total = inspQ.length + thermQ.length + treatQ.length + lineEntryQ.length;
+  const staffRosterQ = getStaffRosterQueue();
+  const total = inspQ.length + thermQ.length + treatQ.length + lineEntryQ.length + staffRosterQ.length;
 
   if (!total) { body.innerHTML = '<div class="empty-state">لا توجد عناصر معلقة ✅</div>'; return; }
 
@@ -7353,7 +7808,32 @@ function renderPendingSyncPage() {
     });
   }
 
+  if (staffRosterQ.length) {
+    const opLabel = { add_member: '➕ إضافة عضو', edit_member: '✏️ تعديل عضو', delete_member: '🗑️ حذف عضو', add_column: '➕ إضافة عمود', delete_column: '🗑️ حذف عمود' };
+    html += `<h3 style="color:#2E4057;margin:14px 0 8px">👥 كادر القسم (${staffRosterQ.length})</h3>`;
+    staffRosterQ.forEach((item, i) => {
+      const label = opLabel[item.op] || item.op;
+      const desc = item.payload && (item.payload.name || item.payload.label || '');
+      html += `<div class="dep-card" style="border-right-color:#F6C23E">
+        <div class="dep-card-header">
+          <div class="dep-card-title">${label}${desc ? ' — ' + desc : ''}</div>
+        </div>
+        ${item._lastError ? `<div style="font-size:0.72rem;color:#c0392b;background:#fdecea;border-radius:6px;padding:6px 8px;margin-top:6px;direction:ltr;text-align:left;word-break:break-all">⚠️ ${item._lastError}</div>` : ''}
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="deletePendingStaffRosterItem(${i})">🗑️ حذف</button>
+        </div>
+      </div>`;
+    });
+  }
+
   body.innerHTML = html;
+}
+
+function deletePendingStaffRosterItem(i) {
+  const q = getStaffRosterQueue();
+  q.splice(i, 1);
+  saveStaffRosterQueueRaw(q);
+  renderPendingSyncPage();
 }
 
 function deletePendingInspection(i) {
