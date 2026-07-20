@@ -4009,151 +4009,82 @@ function confirmExportExcel() {
   closeExportModal();
 }
 
-// يبني SVG element حقيقي (مو نص) لتوليد صورة منه — يعتمد على نفس دوال الرسم بالتطبيق
-function buildInsulatorSVGElementForExport(insulatorStateJSON, voltage, towerType, lineName, inspectionId, insulatorCycleJSON) {
-  if (!insulatorStateJSON) return null;
-  let state;
-  state = safeParseJSON(insulatorStateJSON); if (!state) return null;
-  const hasDamage = ['R','S','T'].some(p => (state[p]||[]).some(Boolean));
-  if (!hasDamage) return null; // سليمة، ما نحتاج صورة
-  const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
-  const [stA, stB] = lineName ? lineEndpoints(lineName) : ['',''];
-  let insCycle = {R:[],S:[],T:[]};
-  if (insulatorCycleJSON) { insCycle = safeParseJSON(insulatorCycleJSON) || {R:[],S:[],T:[]}; }
-  const insTreated = getInsulatorTreatedIdx(state, insCycle);
-
-  // طبقة خارجية مخفية (تحمل position:fixed للإخفاء فقط) — لا تُمرَّر هذي مباشرة للترسيم،
-  // بل العنصر الداخلي (container) العادي بدون أي تموضع خاص، لتجنّب نفس خلل "الصورة الفاضية"
-  const outer = document.createElement('div');
-  outer.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
-  const container = document.createElement('div');
-  container.style.cssText = 'display:flex;gap:10px;background:white;padding:8px;';
-  ['R','S','T'].forEach(phase => {
-    const phaseState = state[phase] || [];
-    const phaseTreated = insTreated[phase] || [];
-    const phaseCycle = insCycle[phase] || [];
-    const wrap = document.createElement('div');
-    let el;
-    if (mode === 'v') el = renderReadonlyV(phaseState, phaseTreated, phaseCycle);
-    else if (mode === 'straight4') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 32, stA, stB, phaseCycle);
-    else if (mode === 'chain4_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 4, 12, stA, stB, phaseCycle);
-    else if (mode === 'chain2_12') el = renderReadonlyGrouped(phaseState, phaseTreated, 2, 12, stA, stB, phaseCycle);
-    else if (mode === 'chain1_10') el = renderReadonlySingle(phaseState, phaseTreated, 10, phaseCycle);
-    else el = renderReadonlyChain(phaseState, phaseTreated, 2, mode==='chain2_10'?10:12, phaseCycle);
-    wrap.appendChild(el);
-    container.appendChild(wrap);
-  });
-  outer.appendChild(container);
-  document.body.appendChild(outer);
-  return container;
-}
-
-// يحوّل عنصر HTML (فيه divs ملوّنة أو svg) إلى صورة PNG base64 عبر html2canvas-lite يدوي بسيط
-async function elementToPNGDataURL(el) {
-  // نستخدم svg foreignObject trick لتحويل HTML إلى صورة بدون مكتبات خارجية إضافية
-  return new Promise((resolve) => {
-    const rect = el.getBoundingClientRect();
-    const w = Math.max(rect.width, el.scrollWidth, 100);
-    const h = Math.max(rect.height, el.scrollHeight, 100);
-    const clone = el.cloneNode(true);
-    const svgWrap = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">
-      <foreignObject width="100%" height="100%">
-        <div xmlns="http://www.w3.org/1999/xhtml" style="background:white">${clone.outerHTML}</div>
-      </foreignObject>
-    </svg>`;
-    const img = new Image();
-    const svgBlob = new Blob([svgWrap], {type:'image/svg+xml;charset=utf-8'});
-    const url = URL.createObjectURL(svgBlob);
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = w * 2; canvas.height = h * 2; // دقة أعلى
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = 'white'; ctx.fillRect(0,0,canvas.width,canvas.height);
-        ctx.scale(2,2);
-        ctx.drawImage(img, 0, 0, w, h);
-        URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL('image/jpeg', 0.9));
-      } catch (e) {
-        URL.revokeObjectURL(url);
-        resolve(null);
-      }
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-    img.src = url;
-  });
-}
-
 async function confirmExportPDF() {
   const rows = getExportFilteredRecords();
   if (!rows.length) { showToast('لا توجد بيانات مطابقة للتصدير', 'error'); return; }
   showToast('⏳ جاري تحضير PDF...');
   closeExportModal();
 
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
-  doc.setFont('helvetica');
-  const pageW = doc.internal.pageSize.getWidth();
-  let y = 40;
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 30;
+    const usableW = pageW - margin * 2;
+    let y = margin;
 
-  doc.setFontSize(16);
-  doc.text('Tower Inspection Report', pageW/2, y, { align: 'center' });
-  y += 25;
-  doc.setFontSize(10);
-  doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, y, { align: 'center' });
-  y += 20;
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if (y > 480) { doc.addPage(); y = 40; }
-
-    doc.setFontSize(11);
-    doc.setTextColor(20,40,70);
-    doc.text(`Line: ${r.line_name||'-'}  |  Tower: ${r.tower_number||'-'}  |  Date: ${r.inspection_date||'-'}  |  Type: ${r.tower_type||'-'}`, 40, y);
-    y += 16;
-
-    doc.setFontSize(9);
-    doc.setTextColor(60,60,60);
-    const infoLines = [
-      `Iron intersections: ${r.iron_intersections || 'None'}`,
-      `Foundations: ${r.tower_foundations || 'None'}`,
-      `Attachments: ${r.tower_attachments || 'None'}`,
-      `Wires R/S/T: ${r.wires_r1||'-'} / ${r.wires_s1||'-'} / ${r.wires_t1||'-'}`,
-      `Ground: ${r.ground_1||'-'} ${r.ground_2?(' / '+r.ground_2):''}`,
-      `Fire causes: ${r.fire_causes || 'None'}`
-    ];
-    infoLines.forEach(line => { doc.text(line, 40, y); y += 13; });
-
-    // صورة العوازل (فقط لو متضررة)
-    const container = buildInsulatorSVGElementForExport(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.id, r.insulator_cycle);
-    if (container) {
-      try {
-        const dataUrl = await elementToPNGDataURL(container);
-        if (dataUrl) {
-          const imgProps = doc.getImageProperties(dataUrl);
-          const maxW = 220, maxH = 120;
-          let imgW = imgProps.width, imgH = imgProps.height;
-          const scale = Math.min(maxW/imgW, maxH/imgH, 1);
-          imgW *= scale; imgH *= scale;
-          doc.text('Insulators (damaged):', 320, y - infoLines.length*13 + 13);
-          doc.addImage(dataUrl, 'JPEG', 320, y - infoLines.length*13 + 18, imgW, imgH);
-        }
-      } catch(e) {}
-      if (container.parentNode) container.parentNode.remove();
-    } else {
-      doc.setTextColor(30,140,70);
-      doc.text('Insulators: Healthy ✓', 320, y - infoLines.length*13 + 20);
-      doc.setTextColor(60,60,60);
+    // العنوان — مرسوم بالكانفاس ليدعم العربية (خطوط jsPDF المدمجة لا تحوي حروفاً عربية إطلاقاً)
+    const titleImg = drawArabicTextPNG([
+      { text: '📋 تقرير كشف الأبراج', fontSize: 17, fontWeight: 'bold', color: '#1a2e4a', padY: 4 },
+      { text: `عدد السجلات: ${rows.length}  —  تاريخ التصدير: ${new Date().toLocaleDateString('en-GB')}`, fontSize: 11, color: '#555', padY: 3 }
+    ], 700, {});
+    if (titleImg) {
+      const h = usableW * (titleImg.h / titleImg.w);
+      doc.addImage(titleImg.dataUrl, 'JPEG', margin, y, usableW, h);
+      y += h + 10;
     }
 
-    y += 10;
-    doc.setDrawColor(220,220,220);
-    doc.line(40, y, pageW-40, y);
-    y += 18;
-  }
+    let exported = 0;
+    for (const r of rows) {
+      const dmgText = insulatorStateToText(r.insulator_state);
+      const items = [
+        { text: `🗼 ${r.line_name || '-'} — برج ${r.tower_number || '-'} — ${r.tower_type || '-'} — ${r.voltage || ''} ك.ف`, fontSize: 13, fontWeight: 'bold', color: '#1a2e4a', bg: '#eef2f7', padY: 4 },
+        { text: `📅 تاريخ الكشف: ${r.inspection_date || '-'}   |   👤 ${r.created_by_name || '-'}`, fontSize: 10, color: '#666', padY: 3 }
+      ];
+      const addLine = (label, val, color) => {
+        if (val && String(val).trim() && String(val).trim() !== 'سليم') {
+          items.push({ text: `🔴 ${label}: ${val}`, fontSize: 10.5, color: color || '#922b21', padY: 3 });
+        }
+      };
+      addLine('تقاطعات الحديد', r.iron_intersections);
+      addLine('قواعد البرج', r.tower_foundations);
+      addLine('ملحقات البرج', r.tower_attachments);
+      addLine('أسلاك R', r.wires_r1); addLine('أسلاك S', r.wires_s1); addLine('أسلاك T', r.wires_t1);
+      addLine('الأرضي 1', r.ground_1); addLine('الأرضي 2', r.ground_2);
+      addLine('مسببات الحرائق', r.fire_causes);
+      if (r.fire_causes_notes && r.fire_causes_notes.trim()) items.push({ text: `🔥 ${r.fire_causes_notes.trim()}`, fontSize: 10, color: '#922b21', padY: 3 });
+      if (r.road_access) {
+        const roadColor = r.road_access === 'متاح' ? '#1e8449' : '#922b21';
+        let t = `🛣️ الطريق: ${r.road_access}`;
+        if (r.road_access_notes && r.road_access_notes.trim()) t += ` — ${r.road_access_notes.trim()}`;
+        items.push({ text: t, fontSize: 10, color: roadColor, padY: 3 });
+      }
+      items.push({ text: `🔘 العوازل: ${dmgText}`, fontSize: 10, color: dmgText.includes('متضرر') ? '#922b21' : '#1e8449', padY: 3 });
+      if (r.notes && r.notes.trim()) items.push({ text: `📝 ملاحظات: ${r.notes.trim()}`, fontSize: 10, color: '#555', padY: 3 });
 
-  doc.save('Tower_Report_' + new Date().toISOString().split('T')[0] + '.pdf');
-  showToast('✅ تم تصدير PDF (' + rows.length + ' سجل)');
+      const infoImg = drawArabicTextPNG(items, 760, { border: true });
+      // رسم العوازل بالطريقة المثبتة (Canvas 2D مباشرة) — بديل foreignObject الذي يُنتج صوراً فارغة على iOS Safari
+      const insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2);
+
+      const infoH = infoImg ? usableW * (infoImg.h / infoImg.w) : 0;
+      const insH = insImg ? usableW * (insImg.h / insImg.w) : 0;
+      const blockH = infoH + (infoImg ? 6 : 0) + insH + 14;
+
+      if (y > margin && y + blockH > pageH - margin) { doc.addPage(); y = margin; }
+
+      if (infoImg) { doc.addImage(infoImg.dataUrl, 'JPEG', margin, y, usableW, infoH); y += infoH + 6; }
+      if (insImg)  { doc.addImage(insImg.dataUrl, 'PNG', margin, y, usableW, insH); y += insH + 6; }
+      y += 8;
+      exported++;
+    }
+
+    doc.save('كشف_الأبراج_' + new Date().toISOString().split('T')[0] + '.pdf');
+    showToast('✅ تم تصدير PDF (' + exported + ' سجل)');
+  } catch (e) {
+    console.error('PDF export error:', e);
+    showToast('❌ تعذر تصدير PDF: ' + (e && e.message ? e.message : e), 'error');
+  }
 }
 
 // ========================
