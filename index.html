@@ -233,12 +233,19 @@ tbody tr:hover { background: #F7FAFC; }
 @media print {
   @page { size: A4 landscape; margin: 10mm; }
   nav, .btn, button, #linesHomeView, #thermalHomeView, .filters-bar, .records-toolbar { display: none !important; }
+  /* شريط التطبيق العلوي (الشعار/اسم المستخدم/زر رجوع) هو واجهة تصفّح لا جزء من التقرير —
+     كان يظهر كخط أزرق غامق فارغ أعلى كل صفحة مطبوعة لأن الزر بداخله فقط كان يُخفى */
+  #appHeader, #linesInfoFilter, #linesStatusFilter { display: none !important; }
   .page { display: block !important; }
   body.printing-lines .page:not(#page-lines) { display: none !important; }
   body.printing-thermal .page:not(#page-thermal) { display: none !important; }
   body.printing-thermal #thermalNewView { display: none !important; }
   body { background: white; }
   .form-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+  /* عنوان مطبوع نظيف بدل السطر التفاعلي (فيه زر طباعة/إضافة/رجوع بجانب العنوان) */
+  body.printing-lines #linesInfoView > div:first-child { display: block !important; border-bottom: 2px solid #1a2e4a; padding-bottom: 8px; margin-bottom: 14px; }
+  body.printing-lines #linesInfoView > div:first-child > div:last-child { display: none !important; }
+  body.printing-lines .page-title { font-size: 20px; }
 }
 
 /* INCOMPLETE INSPECTION BANNER */
@@ -838,6 +845,29 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
+<!-- نافذة اختيار الخطوط المطلوب طباعتها (بيانات الخطوط) -->
+<div class="treat-modal-bg" id="printLinesModalBg">
+  <div class="treat-modal" style="max-height:90vh;overflow-y:auto">
+    <h3>🖨️ طباعة بيانات الخطوط</h3>
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm" onclick="quickSelectPrintLines(400)">400 ك.ف فقط</button>
+      <button class="btn btn-secondary btn-sm" onclick="quickSelectPrintLines(132)">132 ك.ف فقط</button>
+    </div>
+    <div style="margin-top:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label style="font-weight:700;font-size:0.88rem">الخطوط</label>
+        <button class="btn btn-secondary btn-sm" onclick="togglePrintLinesSelectAll()" id="printLinesSelectAllBtn">إلغاء التحديد</button>
+      </div>
+      <div id="printLinesWrap" style="max-height:260px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px"></div>
+    </div>
+    <p id="printLinesResultCount" style="margin-top:10px;color:#718096;font-size:0.82rem;text-align:center"></p>
+    <div class="form-actions" style="margin-top:14px;flex-direction:column;gap:8px">
+      <button class="btn btn-primary" style="width:100%" onclick="confirmPrintLinesSelection()">🖨️ طباعة المحدد</button>
+      <button class="btn btn-secondary" onclick="closePrintLinesModal()" style="width:100%">إغلاق</button>
+    </div>
+  </div>
+</div>
+
 <!-- DEPARTURES PAGE -->
 <div class="page" id="page-departures">
   <div class="page-title">🚨 المغادرات</div>
@@ -1307,7 +1337,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="page-title" style="margin:0">📋 بيانات الخطوط</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-secondary btn-sm" onclick="printLinesInfo()">🖨️ طباعة</button>
+        <button class="btn btn-secondary btn-sm" onclick="openPrintLinesModal()">🖨️ طباعة</button>
         <button id="btnAddLine" class="btn btn-primary btn-sm" onclick="openAddLineModal()" style="display:none">➕ إضافة خط</button>
         <button class="btn btn-secondary btn-sm" onclick="showLinesHome()">⬅ رجوع</button>
       </div>
@@ -7138,6 +7168,100 @@ function printLinesInfo() {
   setTimeout(() => document.body.classList.remove('printing-lines'), 500);
 }
 
+// ========================
+// طباعة بيانات الخطوط — اختيار خطوط محددة بالاسم قبل الطباعة
+// ========================
+let _printLinesSavedBodyHTML = null;
+let _printLinesDataSnapshot = [];
+
+function openPrintLinesModal() {
+  const data = getLinesInfoData();
+  _printLinesDataSnapshot = data; // لقطة ثابتة تضمن تطابق data-idx حتى لو تغيّرت البيانات أثناء فتح النافذة
+  const wrap = document.getElementById('printLinesWrap');
+  if (!data.length) {
+    wrap.innerHTML = '<div class="empty-state">لا توجد بيانات</div>';
+  } else {
+    wrap.innerHTML = data.map((l, i) => `
+      <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
+        <input type="checkbox" class="printLineChk" data-idx="${i}" data-voltage="${l.voltage}" checked onchange="updatePrintLinesCount()">
+        <span style="flex:1">${l.name}</span>
+        <span style="background:${l.voltage===400?'#c0392b':'#1a5276'};color:#fff;padding:2px 8px;border-radius:12px;font-size:11px">${l.voltage} ك.ف</span>
+      </label>`).join('');
+  }
+  document.getElementById('printLinesSelectAllBtn').textContent = 'إلغاء التحديد';
+  updatePrintLinesCount();
+  document.getElementById('printLinesModalBg').classList.add('show');
+}
+
+function closePrintLinesModal() {
+  document.getElementById('printLinesModalBg').classList.remove('show');
+}
+
+function updatePrintLinesCount() {
+  const total = document.querySelectorAll('.printLineChk').length;
+  const checked = document.querySelectorAll('.printLineChk:checked').length;
+  document.getElementById('printLinesResultCount').textContent = `تم تحديد ${checked} من أصل ${total} خط`;
+}
+
+function togglePrintLinesSelectAll() {
+  const boxes = document.querySelectorAll('.printLineChk');
+  const btn = document.getElementById('printLinesSelectAllBtn');
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  btn.textContent = allChecked ? 'تحديد الكل' : 'إلغاء التحديد';
+  updatePrintLinesCount();
+}
+
+function quickSelectPrintLines(voltage) {
+  document.querySelectorAll('.printLineChk').forEach(cb => {
+    cb.checked = Number(cb.dataset.voltage) === voltage;
+  });
+  document.getElementById('printLinesSelectAllBtn').textContent = 'تحديد الكل';
+  updatePrintLinesCount();
+}
+
+// بطاقة طباعة نظيفة لخط واحد — بدون أزرار تعديل/حذف (تلك خاصة بالشاشة فقط)
+function buildLinePrintCardHTML(l) {
+  const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
+  const notes = l.notes && l.notes !== 'None' ? l.notes : '';
+  return '<div class="form-card" style="margin-bottom:12px;padding:14px">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">' +
+    '<div style="font-weight:700;font-size:15px;color:#1a2e4a">' + l.name + '</div>' +
+    '<span style="background:' + vc + ';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">' + l.voltage + ' ك.ف</span></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">' +
+    '<div><span style="color:#777">الطول:</span> <strong>' + (l.length||'-') + ' كم</strong></div>' +
+    '<div><span style="color:#777">عدد الأبراج:</span> <strong>' + (l.towers||'-') + '</strong></div>' +
+    '<div><span style="color:#777">أبراج الشد:</span> <strong>' + (l.tension_towers||'-') + '</strong></div>' +
+    '<div><span style="color:#777">السعة:</span> <strong>' + (l.capacity||'-') + ' MVA</strong></div>' +
+    '<div><span style="color:#777">نوع السلك:</span> <strong>' + (l.wire_type||'-') + '</strong></div>' +
+    '<div><span style="color:#777">السلك الأرضي:</span> <strong>' + (l.ground_wire||'-') + '</strong></div>' +
+    '<div><span style="color:#777">حدود المسؤولية:</span> <strong>' + (l.responsibility||'-') + '</strong></div>' +
+    '<div><span style="color:#777">سنة الدخول:</span> <strong>' + (l.year||'-') + '</strong></div>' +
+    '<div><span style="color:#777">الحالة:</span> <strong style="color:' + (l.status==='بالعمل'?'#1e8449':'#c0392b') + '">' + (l.status||'-') + '</strong></div>' +
+    '</div>' +
+    (notes ? '<div style="margin-top:8px;padding:8px;background:#fef9e7;border-radius:6px;font-size:12px;color:#7d6608"><strong>ملاحظة:</strong> ' + notes + '</div>' : '') +
+    '</div>';
+}
+
+function confirmPrintLinesSelection() {
+  const selected = Array.from(document.querySelectorAll('.printLineChk:checked'))
+    .map(cb => _printLinesDataSnapshot[Number(cb.dataset.idx)])
+    .filter(Boolean);
+  if (!selected.length) { showToast('⚠️ اختر خطاً واحداً على الأقل', 'error'); return; }
+  closePrintLinesModal();
+
+  const body = document.getElementById('linesInfoBody');
+  _printLinesSavedBodyHTML = body.innerHTML; // نحفظ عرض الشاشة الحالي لاسترجاعه بعد الطباعة فقط
+  body.innerHTML = selected.map(buildLinePrintCardHTML).join('');
+
+  document.body.classList.add('printing-lines');
+  window.print();
+  setTimeout(() => {
+    document.body.classList.remove('printing-lines');
+    if (_printLinesSavedBodyHTML !== null) { body.innerHTML = _printLinesSavedBodyHTML; _printLinesSavedBodyHTML = null; }
+  }, 500);
+}
+
 function printThermalArchive() {
   if (!filteredThermal || !filteredThermal.length) { showToast('⚠️ لا توجد بيانات لطباعتها بالفلتر الحالي', 'error'); return; }
   document.body.classList.add('printing-thermal');
@@ -7991,15 +8115,17 @@ function toggleDepExportTowerSelectAll() {
 }
 
 function getDepExportSelectedLines() {
-  const checked = Array.from(document.querySelectorAll('.depExportLineChk:checked')).map(b => b.value);
-  if (checked.length) return checked;
-  return Array.from(document.querySelectorAll('.depExportLineChk')).map(b => b.value);
+  // لا نرجّع كل الخطوط تلقائياً — لو ما محدد المستخدم أي خط، تبقى القائمة فاضية حتى يختار بنفسه
+  return Array.from(document.querySelectorAll('.depExportLineChk:checked')).map(b => b.value);
 }
 
 function updateDepExportTowerList() {
   const lines = getDepExportSelectedLines();
-  const from = parseInt(document.getElementById('depExportTowerFrom').value) || 0;
-  const to = parseInt(document.getElementById('depExportTowerTo').value) || Infinity;
+  const fromRaw = document.getElementById('depExportTowerFrom').value;
+  const toRaw = document.getElementById('depExportTowerTo').value;
+  const hasRange = fromRaw !== '' || toRaw !== ''; // لا نعتبر أي نطاق تلقائياً إلا لو المستخدم كتب رقماً فعلياً
+  const from = parseInt(fromRaw) || 0;
+  const to = parseInt(toRaw) || Infinity;
   const towersWrap = document.getElementById('depExportTowersWrap');
 
   // جمع كل الأبراج من الخطوط المحددة
@@ -8019,7 +8145,8 @@ function updateDepExportTowerList() {
   }
 
   towersWrap.innerHTML = allTowers.map(t => {
-    const inRange = (!from || t.num >= from) && (!isFinite(to) || t.num <= to);
+    // بدون نطاق مكتوب: لا شيء محدد تلقائياً — المستخدم يحدد يدوياً أو يكتب نطاقاً
+    const inRange = hasRange && (!fromRaw || t.num >= from) && (!toRaw || t.num <= to);
     return `<label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:3px 0">
       <input type="checkbox" class="depExportTowerChk" value="${t.lineName}||${t.towerNum}" ${inRange ? 'checked' : ''}>
       <span>برج ${t.towerNum}</span>
