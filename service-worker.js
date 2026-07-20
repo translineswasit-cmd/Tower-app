@@ -1,38 +1,51 @@
-const CACHE_NAME = 'tower-app-v185';
-const CORE_ASSETS = [
+const CACHE_NAME = 'tower-app-v186';
+
+// الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
+const CRITICAL_ASSETS = [
   './',
-  './index.html',
+  './index.html'
+];
+
+// أصول مساندة: مرغوبة لكن فشلها يجب ألا يُسقط التثبيت بالكامل
+const OPTIONAL_ASSETS = [
   './manifest.json',
   './icon-thermal.png',
   './icon-stats.png',
-  './icon-lines.png'
+  './icon-lines.png',
+  './icon192.png',
+  './icon512.png'
 ];
+
 const EXTRA_ASSETS = [
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js',
   'https://unpkg.com/docx@8.5.0/build/index.js'
 ];
 
-// Install: cache the app shell — الأساسيات يجب أن تنجح، والمكتبات الخارجية اختيارية
-// (لو فشلت مكتبة خارجية بالتحميل، ما نوقف حفظ باقي التطبيق بسببها)
+// Install: الأساسيات يجب أن تنجح، وكل ما عداها اختياري
+// (سابقاً كان فشل أي أيقونة أو manifest يُفشل التثبيت كله ويعطّل العمل بدون إنترنت)
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
-      // مهم: نفرض تجاوز ذاكرة التخزين المؤقت للمتصفح (cache:'reload') حتى نضمن جلب أحدث نسخة فعلية
-      // من الشبكة، وليس نسخة قديمة محفوظة بذاكرة المتصفح رغم تغيّر اسم الكاش
-      await Promise.all(CORE_ASSETS.map(url =>
+      // cache:'reload' يفرض الجلب من الشبكة وتجاوز ذاكرة المتصفح
+      await Promise.all(CRITICAL_ASSETS.map(url =>
         cache.add(new Request(url, { cache: 'reload' }))
-      )); // يجب أن تنجح هذي، وإلا التثبيت يفشل بالكامل (أمان)
+      ));
+      await Promise.all(OPTIONAL_ASSETS.map(url =>
+        cache.add(new Request(url, { cache: 'reload' }))
+          .catch(err => console.log('Optional asset missing (non-critical):', url, err))
+      ));
       await Promise.all(EXTRA_ASSETS.map(url =>
-        cache.add(new Request(url, { cache: 'reload' })).catch(err => console.log('Optional asset failed (non-critical):', url, err))
+        cache.add(new Request(url, { cache: 'reload' }))
+          .catch(err => console.log('CDN asset failed (non-critical):', url, err))
       ));
     })
   );
   self.skipWaiting();
 });
 
-// Activate: clean up old caches — لكن فقط بعد التأكد إن النسخة الجديدة فيها صفحة رئيسية صالحة
-// (لو فشل تحميل النسخة الجديدة بسبب انقطاع الإنترنت، نحتفظ بالنسخة القديمة الشغالة كخطة بديلة)
+// Activate: لا نحذف الكاش القديم إلا بعد التأكد أن النسخة الجديدة تحتوي صفحة رئيسية صالحة
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (newCache) => {
@@ -49,26 +62,23 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch strategy:
-// - For Supabase API calls: always go to network (never cache data)
-// - For app shell (HTML/JS/CSS): cache-first, so it works offline
+// Fetch:
+// - طلبات Supabase: دائماً من الشبكة (لا تُخزَّن أبداً)
+// - هيكل التطبيق: cache-first ليعمل بدون إنترنت
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
 
-  // Never cache Supabase API requests - these need fresh data or should fail naturally for offline queueing
   if (url.includes('supabase.co')) {
     event.respondWith(fetch(event.request));
     return;
   }
 
-  // App shell: cache-first strategy
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
         return cachedResponse;
       }
       return fetch(event.request).then((networkResponse) => {
-        // Cache new requests to CDN scripts etc.
         if (event.request.method === 'GET' && networkResponse.ok) {
           const responseClone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -77,7 +87,6 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       }).catch(() => {
-        // If both cache and network fail, return the cached index.html as fallback
         return caches.match('./index.html');
       });
     })

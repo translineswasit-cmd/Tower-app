@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="كشف الأبراج">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon192.png">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #1a202c; direction: rtl; min-height: 100vh; }
@@ -3799,7 +3799,7 @@ async function elementToPNGDataURL(el) {
         ctx.scale(2,2);
         ctx.drawImage(img, 0, 0, w, h);
         URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL('image/png'));
+        resolve(canvas.toDataURL('image/jpeg', 0.9));
       } catch (e) {
         URL.revokeObjectURL(url);
         resolve(null);
@@ -3817,7 +3817,7 @@ async function confirmExportPDF() {
   closeExportModal();
 
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
   doc.setFont('helvetica');
   const pageW = doc.internal.pageSize.getWidth();
   let y = 40;
@@ -3862,7 +3862,7 @@ async function confirmExportPDF() {
           const scale = Math.min(maxW/imgW, maxH/imgH, 1);
           imgW *= scale; imgH *= scale;
           doc.text('Insulators (damaged):', 320, y - infoLines.length*13 + 13);
-          doc.addImage(dataUrl, 'PNG', 320, y - infoLines.length*13 + 18, imgW, imgH);
+          doc.addImage(dataUrl, 'JPEG', 320, y - infoLines.length*13 + 18, imgW, imgH);
         }
       } catch(e) {}
       if (container.parentNode) container.parentNode.remove();
@@ -3943,7 +3943,7 @@ async function shareOrDownloadFile(blob, filename, mimeType) {
 
 // يحول نص SVG (فيه width/height) مباشرة إلى صورة PNG base64 — أوثق من تحويل عناصر HTML عامة
 function svgStringToPNGDataURL(svgString, scale) {
-  scale = scale || 3;
+  scale = scale || 2;
   return new Promise((resolve) => {
     try {
       const wMatch = svgString.match(/width="([\d.]+)"/);
@@ -3978,9 +3978,10 @@ async function exportDepLogPDF() {
   if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
   showToast('⏳ جاري تحضير PDF...');
 
+  let __pdfImgFails = 0;
   try {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
     let y = 40;
 
@@ -4019,7 +4020,7 @@ async function exportDepLogPDF() {
           if (result) {
             const ratio = result.w && result.h ? (result.w / result.h) : 1;
             const imgW = Math.min(imgH * ratio, 150) || 100;
-            try { doc.addImage(result.dataUrl, 'JPEG', x, y, imgW, imgH); } catch(e) {}
+            try { doc.addImage(result.dataUrl, 'JPEG', x, y, imgW, imgH); } catch(e) { __pdfImgFails++; }
             doc.setFontSize(8);
             doc.text(label, x + 4, y + imgH + 10);
             x += 160;
@@ -4036,7 +4037,7 @@ async function exportDepLogPDF() {
     const blob = doc.output('blob');
     const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.pdf';
     await shareOrDownloadFile(blob, filename, 'application/pdf');
-    showToast('✅ تم تجهيز PDF (' + rows.length + ' معالجة)');
+    showToast(__pdfImgFails ? ('⚠️ تم تجهيز PDF لكن تعذّر إدراج ' + __pdfImgFails + ' صورة') : ('✅ تم تجهيز PDF (' + rows.length + ' معالجة)'), __pdfImgFails ? 'error' : undefined);
     closeDepLogExportModal();
   } catch (err) {
     showToast('❌ تعذر تجهيز PDF', 'error');
@@ -4675,7 +4676,7 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
       ctx.fillText(op.text, op.x, op.y);
     }
   });
-  return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.9), w: widthCss, h: totalHeight };
 }
 
 // يبني صفحة واحدة أو أكثر (23 برج كحد أقصى بكل صفحة) — يرجع مصفوفة صور PNG
@@ -4694,7 +4695,7 @@ async function exportOfficialFormPDF() {
     if (!stampImgReady) await stampImgLoadPromise;
     const pages = buildOfficialFormCanvasPNG(760);
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     pages.forEach((png, i) => {
@@ -4702,7 +4703,7 @@ async function exportOfficialFormPDF() {
       const ratio = png.w / png.h;
       let w = pageW - 40, h = w / ratio;
       if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
-      doc.addImage(png.dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
+      doc.addImage(png.dataUrl, 'JPEG', (pageW - w) / 2, 20, w, h);
     });
     const blob = doc.output('blob');
     const filename = 'استمارة_كشف_حراري_' + (document.getElementById('tf_h_date').value || '') + '.pdf';
@@ -5840,7 +5841,7 @@ function buildMemoCanvasPNG(widthCss) {
       ctx.direction = 'rtl';
     }
   });
-  return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.9), w: widthCss, h: totalHeight };
 }
 
 async function exportMemoPDF() {
@@ -5848,13 +5849,13 @@ async function exportMemoPDF() {
   try {
     const png = buildMemoCanvasPNG(700);
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     const ratio = png.w / png.h;
     let w = pageW - 40, h = w / ratio;
     if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
-    doc.addImage(png.dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
+    doc.addImage(png.dataUrl, 'JPEG', (pageW - w) / 2, 20, w, h);
     const blob = doc.output('blob');
     const filename = 'مذكرة_' + (document.getElementById('memo_date').value || '') + '.pdf';
     await shareOrDownloadFile(blob, filename, 'application/pdf');
@@ -8056,7 +8057,7 @@ async function exportOpenDeparturesPDF() {
 
   try {
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
     const margin = 30;
@@ -8229,7 +8230,7 @@ function drawArabicTextPNG(items, widthCss, opts) {
     ctx.strokeRect(0.75, 0.75, widthCss - 1.5, totalHeight - 1.5);
   }
 
-  return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.9), w: widthCss, h: totalHeight };
 }
 
 
