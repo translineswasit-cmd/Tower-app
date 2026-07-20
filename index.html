@@ -12,7 +12,8 @@
 <link rel="apple-touch-icon" href="icon192.png">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #1a202c; direction: rtl; min-height: 100vh; }
+html { overscroll-behavior-y: contain; }
+body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #1a202c; direction: rtl; min-height: 100vh; overscroll-behavior-y: contain; }
 
 /* LOGIN SCREEN */
 #loginScreen {
@@ -169,7 +170,7 @@ tbody tr:hover { background: #F7FAFC; }
 .empty-state { text-align: center; padding: 40px; color: #A0AEC0; }
 .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500; align-items: center; justify-content: center; padding: 16px; }
 .modal-bg.show { display: flex; }
-.modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 380px; width: 100%; text-align: center; max-height: 90vh; overflow-y: auto; }
+.modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 380px; width: 100%; text-align: center; max-height: 90vh; overflow-y: auto; overscroll-behavior: contain; }
 .manage-acc-btn { background:#eef1f6; color:#4a5568; border:none; width:38px; height:38px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s; }
 .manage-acc-btn:hover { background:#dde3ec; }
 .acc-actions-grid { display:flex; justify-content:center; gap:18px; margin-top:18px; flex-wrap:wrap; }
@@ -312,7 +313,7 @@ tbody tr:hover { background: #F7FAFC; }
 .dep-filters select, .dep-filters input { padding: 8px 12px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.85rem; }
 .treat-modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 600; align-items: center; justify-content: center; padding: 16px; }
 .treat-modal-bg.show { display: flex; }
-.treat-modal { background: white; border-radius: 16px; padding: 24px; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; }
+.treat-modal { background: white; border-radius: 16px; padding: 24px; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; overscroll-behavior: contain; }
 .treat-modal h3 { color: #2E4057; margin-bottom: 16px; }
 .treat-items-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
 .treat-item-btn { padding: 8px 16px; border-radius: 20px; font-family: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer; border: 2px solid; transition: all 0.2s; }
