@@ -9170,7 +9170,7 @@ async function exportOpenDeparturesPDF() {
           if (!openDeps.length) continue;
           totalTowersExported++;
 
-          const otherDeps = openDeps.filter(d => d.type !== 'insulator');
+          const otherDeps = openDeps.filter(d => d.type !== 'insulator' && d.type !== 'insulator2');
           const items = [
             { text: `🗼 برج ${r.tower_number} — ${TOWER_TYPES[r.tower_type]||r.tower_type||''} — ${r.voltage||LINE_VOLTAGE[lineName]||''} ك.ف`, fontSize: 14, fontWeight: 'bold', color: '#1a2e4a', padY: 6 },
             { text: `📅 آخر كشف: ${r.inspection_date||'—'}  |  👤 ${r.created_by_name||'—'}`, fontSize: 11, color: '#718096', padY: 2 }
@@ -9193,7 +9193,7 @@ async function exportOpenDeparturesPDF() {
           }
           const towerImg = drawArabicTextPNG(items, pageW - margin*2, { border: true });
 
-          const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator');
+          const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator' || d.type === 'insulator2');
           let insImg = null;
           if (hasOpenInsulatorDep && r.insulator_state) {
             insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2);
@@ -9494,14 +9494,15 @@ function renderDepTowerDetail(lineName, towerNum) {
     </div>
   </div>`;
 
-  // العوازل (إن وجدت مغادرات عليها)
+  // العوازل (إن وجدت مغادرات عليها) — الدائرة الأولى
+  const isDoubleDetail = isDoubleCircuitLine(lineName);
   const hasInsulatorDeps = deps.some(d => d.type === 'insulator');
   if (hasInsulatorDeps && r.insulator_state) {
     let state;
     state = safeParseJSON(r.insulator_state);
     if (state) {
       html += `<div class="form-card" style="margin-bottom:14px">
-        <h3>🔘 العوازل</h3>
+        <h3>🔘 ${isDoubleDetail ? 'عوازل الدائرة الأولى' : 'العوازل'}</h3>
         <div class="insulator-legend" style="margin-bottom:10px">
           <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
           <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
@@ -9516,8 +9517,29 @@ function renderDepTowerDetail(lineName, towerNum) {
     }
   }
 
-  // باقي المغادرات (العوازل مستثناة لأنها معروضة أعلاه كشكل مرسوم مباشرة، مو نص)
-  const otherDeps = deps.filter(d => d.type !== 'insulator');
+  // العوازل — الدائرة الثانية (كانت غير موجودة إطلاقاً بهذي الشاشة، فتضررها يظهر نصاً فقط بدون شكل مرسوم)
+  const hasInsulatorDeps2 = deps.some(d => d.type === 'insulator2');
+  if (hasInsulatorDeps2 && r.insulator_state_2) {
+    const state2 = safeParseJSON(r.insulator_state_2);
+    if (state2) {
+      html += `<div class="form-card" style="margin-bottom:14px">
+        <h3>🔘 عوازل الدائرة الثانية</h3>
+        <div class="insulator-legend" style="margin-bottom:10px">
+          <div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div>
+          <div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div>
+          <div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">تمت معالجته</span></div>
+        </div>
+        <div id="depTowerInsulators2" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>
+      </div>`;
+      let insCycleDep2 = {R:[],S:[],T:[]};
+      if (r.insulator_cycle_2) { insCycleDep2 = safeParseJSON(r.insulator_cycle_2) || {R:[],S:[],T:[]}; }
+      const treatedIdxDep2 = getInsulatorTreatedIdx(state2, insCycleDep2);
+      setTimeout(() => renderTowerDetailInsulators(state2, treatedIdxDep2, mode, stA, stB, 'depTowerInsulators2', insCycleDep2), 10);
+    }
+  }
+
+  // باقي المغادرات (نوعا العازل insulator/insulator2 مستثنيان لأنهما معروضان أعلاه كشكل مرسوم مباشرة، مو نص)
+  const otherDeps = deps.filter(d => d.type !== 'insulator' && d.type !== 'insulator2');
   html += `<div class="form-card" style="margin-bottom:14px"><h3>🚨 المغادرات المسجلة</h3><div class="dep-items">`;
   if (otherDeps.length) {
     otherDeps.forEach(d => {
