@@ -236,7 +236,12 @@ tbody tr:hover { background: #F7FAFC; }
   /* شريط التطبيق العلوي (الشعار/اسم المستخدم/زر رجوع) هو واجهة تصفّح لا جزء من التقرير —
      كان يظهر كخط أزرق غامق فارغ أعلى كل صفحة مطبوعة لأن الزر بداخله فقط كان يُخفى */
   #appHeader, #linesInfoFilter, #linesStatusFilter { display: none !important; }
-  .page { display: block !important; }
+  /* الإصلاح الجذري: قبل كانت "block !important" تفرض ظهور كل صفحات التطبيق معاً بأي عملية طباعة
+     (حتى لو صارت الطباعة من قائمة مشاركة آيفون مباشرة، بدون المرور بزر الطباعة الداخلي الذي يُفعّل
+     كلاس مؤقت على body) — فتنطبع كل الصفحات مجمّعة بملف واحد ضخم. الآن الافتراضي دائماً هو:
+     تظهر فقط الصفحة النشطة حالياً على الشاشة (.page.active)، بغض النظر عن طريقة تفعيل الطباعة */
+  .page { display: none !important; }
+  .page.active { display: block !important; }
   body.printing-lines .page:not(#page-lines) { display: none !important; }
   body.printing-thermal .page:not(#page-thermal) { display: none !important; }
   body.printing-thermal #thermalNewView { display: none !important; }
