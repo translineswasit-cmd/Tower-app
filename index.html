@@ -9516,12 +9516,16 @@ function renderDepTowerDetail(lineName, towerNum) {
     }
   }
 
-  // باقي المغادرات
+  // باقي المغادرات (العوازل مستثناة لأنها معروضة أعلاه كشكل مرسوم مباشرة، مو نص)
   const otherDeps = deps.filter(d => d.type !== 'insulator');
   html += `<div class="form-card" style="margin-bottom:14px"><h3>🚨 المغادرات المسجلة</h3><div class="dep-items">`;
-  deps.forEach(d => {
-    html += `<span class="dep-item damaged">🔴 ${d.label}</span>`;
-  });
+  if (otherDeps.length) {
+    otherDeps.forEach(d => {
+      html += `<span class="dep-item damaged">🔴 ${d.label}</span>`;
+    });
+  } else {
+    html += `<span class="dep-item" style="color:#1e8449">✅ لا توجد مغادرات نصية أخرى</span>`;
+  }
   html += `</div>`;
   // تنبيه الطريق — منفصل عن المغادرات، يظهر فقط إذا غير متاح
   if (r && r.road_access && r.road_access !== 'متاح' && r.road_access !== '') {
@@ -9684,8 +9688,11 @@ function extractDepsFromRecord(r) {
   }
   if (r.ground_1&&r.ground_1.trim()&&r.ground_1.trim()!=='سليم') deps.push({type:'ground',label:'الأرضي 1: '+r.ground_1,key:'ground_1'});
   if (r.ground_2&&r.ground_2.trim()&&r.ground_2.trim()!=='سليم') deps.push({type:'ground',label:'الأرضي 2: '+r.ground_2,key:'ground_2'});
-  if (r.fire_causes&&r.fire_causes!=='لا يوجد'&&r.fire_causes!=='') deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes,key:'fire'});
-  else if (r.fire_causes_notes&&r.fire_causes_notes.trim()) deps.push({type:'fire',label:'مسببات حرائق: '+r.fire_causes_notes.trim(),key:'fire'});
+  if (r.sev_fire && r.sev_fire !== 'ok') {
+    const fireSevLabels = { simple:'مغادرة بسيطة', moderate:'مغادرة متوسطة', below_critical:'مغادرة دون الحرجة', critical:'مغادرة حرجة' };
+    const detail = (r.fire_causes_notes && r.fire_causes_notes.trim()) ? r.fire_causes_notes.trim() : (fireSevLabels[r.sev_fire] || r.sev_fire);
+    deps.push({type:'fire',label:'مسببات حرائق: '+detail,key:'fire'});
+  }
   if (r.insulator_washing === 'needs_washing') deps.push({type:'washing',label:'💧 العوازل تحتاج غسل',key:'washing'});
   else if (r.insulator_washing === 'very_dirty') deps.push({type:'washing',label:'💧 العوازل ملوثة جداً (منطقة معامل)',key:'washing'});
 
