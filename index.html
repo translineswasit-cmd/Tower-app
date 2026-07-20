@@ -5841,7 +5841,7 @@ function buildMemoCanvasPNG(widthCss) {
       ctx.direction = 'rtl';
     }
   });
-  return { dataUrl: canvas.toDataURL('image/jpeg', 0.9), w: widthCss, h: totalHeight };
+  return { dataUrl: canvas.toDataURL('image/png'), w: widthCss, h: totalHeight };
 }
 
 async function exportMemoPDF() {
@@ -5855,7 +5855,7 @@ async function exportMemoPDF() {
     const ratio = png.w / png.h;
     let w = pageW - 40, h = w / ratio;
     if (h > pageH - 40) { h = pageH - 40; w = h * ratio; }
-    doc.addImage(png.dataUrl, 'JPEG', (pageW - w) / 2, 20, w, h);
+    doc.addImage(png.dataUrl, 'PNG', (pageW - w) / 2, 20, w, h);
     const blob = doc.output('blob');
     const filename = 'مذكرة_' + (document.getElementById('memo_date').value || '') + '.pdf';
     await shareOrDownloadFile(blob, filename, 'application/pdf');
