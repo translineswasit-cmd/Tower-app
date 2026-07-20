@@ -2779,43 +2779,61 @@ function getChainsPerPhase(mode) {
 }
 
 // يبني سلسلة بلاستيك (لولب SVG) قابلة للضغط
-function buildPlasticChain(phase, chainIdx, stateObj, damaged, onToggle) {
-  const w = 28, h = 90, zigH = 10, pts = 8;
+// يبني سلسلة بلاستيك (عازل مركّب واقعي: قضيب + مظلات متعاقبة كبيرة/صغيرة + كبّات معدنية طرفية)
+// الطول = بالضبط نفس طول سلسلة الزجاج المقابلة (rows قرص × 14px + مسافات 2px)، بدل نصف الطول سابقاً
+function buildPlasticChain(phase, chainIdx, stateObj, damaged, onToggle, rows) {
+  rows = rows || 12;
+  const w = 28;
+  const h = rows * 14 + (rows - 1) * 2; // نفس معادلة طول سلسلة الزجاج بالضبط
   const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('width', w); svg.setAttribute('height', h);
   svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   svg.style.cursor = 'pointer'; svg.style.display = 'block';
 
+  const ns = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
   function paint(isDamaged) {
     svg.innerHTML = '';
-    const color = isDamaged ? '#C53030' : '#2B6CB0';
-    const fill  = isDamaged ? '#FED7D7' : '#EBF8FF';
-    // رسم اللولب (زيكزاك)
-    let points = `${w/2},2`;
-    for (let i=0; i<pts; i++) {
-      const y = 2 + (i+1)*((h-4)/pts);
-      const x = (i%2===0) ? w-4 : 4;
-      points += ` ${x},${y}`;
+    const metal = '#5A5F63';
+    const rodColor = isDamaged ? '#C53030' : '#8A949C';
+    const shedColor = isDamaged ? '#E57373' : '#9AA4AC';
+    const cx = w / 2;
+    const capH = Math.max(6, h * 0.08);
+
+    // كبّة معدنية علوية (كروية + طوق)
+    svg.appendChild(el('circle', { cx, cy: capH * 0.4, r: 3.2, fill: metal }));
+    svg.appendChild(el('rect', { x: cx - 3, y: 0, width: 6, height: capH, fill: metal }));
+
+    const bodyTop = capH, bodyBottom = h - capH, bodyH = bodyBottom - bodyTop;
+
+    // القضيب المركزي
+    svg.appendChild(el('rect', { x: cx - 2, y: bodyTop, width: 4, height: bodyH, fill: rodColor }));
+
+    // المظلات: كبيرة/صغيرة بالتناوب (نفس شكل عازل RUILY)
+    const nPairs = Math.max(2, Math.round(rows / 2));
+    const step = bodyH / (nPairs * 2);
+    const bigW = 15, smallW = 10;
+    for (let i = 0; i < nPairs * 2; i++) {
+      const y = bodyTop + step * (i + 0.5);
+      const sw = (i % 2 === 0) ? bigW : smallW;
+      const path = `M ${cx-1.5} ${y-2.5}
+        C ${cx-sw/2} ${y-1.5}, ${cx-sw/2} ${y+1.5}, ${cx-1.8} ${y+3.2}
+        L ${cx+1.8} ${y+3.2}
+        C ${cx+sw/2} ${y+1.5}, ${cx+sw/2} ${y-1.5}, ${cx+1.5} ${y-2.5} Z`;
+      svg.appendChild(el('path', { d: path, fill: shedColor }));
     }
-    const polyline = document.createElementNS('http://www.w3.org/2000/svg','polyline');
-    polyline.setAttribute('points', points);
-    polyline.setAttribute('stroke', color);
-    polyline.setAttribute('stroke-width', '3.5');
-    polyline.setAttribute('fill', 'none');
-    polyline.setAttribute('stroke-linecap', 'round');
-    polyline.setAttribute('stroke-linejoin', 'round');
-    svg.appendChild(polyline);
-    // دائرة في الأطراف
-    [[w/2,2],[w/2,h-2]].forEach(([cx,cy]) => {
-      const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
-      c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r','3');
-      c.setAttribute('fill',color); svg.appendChild(c);
-    });
-    // خلفية شفافة للضغط
-    const bg = document.createElementNS('http://www.w3.org/2000/svg','rect');
-    bg.setAttribute('x','0'); bg.setAttribute('y','0');
-    bg.setAttribute('width',w); bg.setAttribute('height',h);
-    bg.setAttribute('fill','transparent'); svg.appendChild(bg);
+
+    // كبّة معدنية سفلية
+    svg.appendChild(el('circle', { cx, cy: h - capH * 0.4, r: 3.2, fill: metal }));
+    svg.appendChild(el('rect', { x: cx - 3, y: bodyBottom, width: 6, height: capH, fill: metal }));
+
+    // خلفية شفافة للضغط (تغطي كامل المساحة)
+    svg.appendChild(el('rect', { x: 0, y: 0, width: w, height: h, fill: 'transparent' }));
   }
 
   let isDmg = !!damaged;
@@ -2928,7 +2946,7 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
             const dmg = !!(stateObj[phase] && stateObj[phase][ci*rowsPerChain]);
             const pEl = buildPlasticChain(phase, ci, stateObj, dmg, (isDmg) => {
               for (let r=0; r<rowsPerChain; r++) stateObj[phase][ci*rowsPerChain+r] = isDmg;
-            });
+            }, rowsPerChain);
             chainWrap.appendChild(pEl);
           } else {
             const singleColDiv = document.createElement('div'); singleColDiv.className = 'chain-col';
@@ -2953,7 +2971,7 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
           const dmg = !!(stateObj[phase] && stateObj[phase][0]);
           const pEl = buildPlasticChain(phase, 0, stateObj, dmg, (isDmg) => {
             for (let r=0; r<rowsPerChain; r++) stateObj[phase][r] = isDmg;
-          });
+          }, rowsPerChain);
           chainWrap.appendChild(pEl);
         } else {
           const el = buildSingleChain(phase, rowsPerChain, stateObj, cycleObj);
