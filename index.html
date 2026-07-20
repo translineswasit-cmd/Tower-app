@@ -5793,7 +5793,7 @@ function buildMemoWordHTML() {
   const senderTitle = document.getElementById('memo_sender_title').value || '';
   const senderName = document.getElementById('memo_sender_name').value || '';
   return `
-    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
+    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:16px;line-height:1.9">
       <table width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
           <td style="font-weight:700" align="right">${to}</td>
@@ -5822,7 +5822,7 @@ function buildMemoTableHTML() {
   const rowsHTML = memoTableData.map(row =>
     `<tr>${row.map(cell => `<td style="border:1px solid #000;padding:6px 14px;text-align:center;max-width:200px;white-space:normal;word-wrap:break-word">${cell || ''}</td>`).join('')}</tr>`
   ).join('');
-  return `<table style="border-collapse:collapse;margin-top:18px;font-size:14px;width:auto">${rowsHTML}</table>`;
+  return `<table style="border-collapse:collapse;margin:18px auto 0;font-size:15px;width:auto">${rowsHTML}</table>`;
 }
 
 // قسم المرفقات (اختياري) — عنوان "المرفقات :" مخطوط + قائمة مرقّمة، محاذاة يمين، بدون إطار
@@ -5846,7 +5846,7 @@ function buildMemoBodyHTML() {
   const senderTitle = document.getElementById('memo_sender_title').value || '';
   const senderName = document.getElementById('memo_sender_name').value || '';
   return `
-    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:15px;line-height:1.9">
+    <div style="font-family:Arial,sans-serif;direction:rtl;font-size:16px;line-height:1.9">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div style="font-weight:700">${to}</div>
         <div>
@@ -5881,9 +5881,9 @@ function buildMemoCanvasPNG(widthCss) {
   const sidePad = 30, scale = 2;
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
-  const fontNormal = '15px Tahoma, Arial';
-  const fontBold = 'bold 15px Tahoma, Arial';
-  const lh = 15 * 1.9; // ارتفاع السطر
+  const fontNormal = '16px Tahoma, Arial';
+  const fontBold = 'bold 16px Tahoma, Arial';
+  const lh = 16 * 1.9; // ارتفاع السطر
 
   function wrapText(ctx, text, maxWidth) {
     const words = String(text).split(' ').filter(w => w !== '');
@@ -5969,7 +5969,7 @@ function buildMemoCanvasPNG(widthCss) {
     hasTable = true;
     const cols = memoTableData[0].length;
     const cellPad = 16, minColW = 50, maxColW = 200, cellLineH = 18;
-    mctx.font = '14px Tahoma, Arial';
+    mctx.font = '15px Tahoma, Arial';
     const colWidths = [];
     for (let c = 0; c < cols; c++) {
       let maxW = minColW;
@@ -5977,17 +5977,19 @@ function buildMemoCanvasPNG(widthCss) {
       colWidths.push(Math.min(maxW, maxColW));
     }
     const wrappedRows = memoTableData.map(row => row.map((cell, ci) => wrapText(mctx, cell || '', colWidths[ci] - cellPad)));
+    const totalTableWidth = colWidths.reduce((s,w) => s+w, 0);
+    const tableRightEdge = widthCss/2 + totalTableWidth/2; // الجدول يتوسط الورقة أفقياً
     wrappedRows.forEach(wrappedRow => {
       const rowLines = Math.max(1, ...wrappedRow.map(lines => lines.length));
       const rowH = rowLines * cellLineH + 12;
-      let cx = widthCss - sidePad; // نبدأ من اليمين (العمود الأول أقصى اليمين) — الجدول ياخذ حجمه الطبيعي فقط
+      let cx = tableRightEdge; // نبدأ من حافة الجدول اليمنى (بعد التوسيط) — العمود الأول أقصى يمين الجدول
       wrappedRow.forEach((lines, ci) => {
         const w = colWidths[ci];
         cx -= w;
         ops.push({ type:'rect', x: cx, y: y, w: w, h: rowH });
         const startTextY = y + (rowH - lines.length*cellLineH)/2 + cellLineH*0.7;
         lines.forEach((ln, li) => {
-          ops.push({ type:'text', text: ln, x: cx + w/2, y: startTextY + li*cellLineH, font:'14px Tahoma, Arial', align:'center' });
+          ops.push({ type:'text', text: ln, x: cx + w/2, y: startTextY + li*cellLineH, font:'15px Tahoma, Arial', align:'center' });
         });
       });
       y += rowH;
@@ -6148,7 +6150,7 @@ async function buildMemoDocxBlob() {
         children: [rtlP([rtlRun(cell || '')], { alignment: AlignmentType.CENTER })]
       }))
     }));
-    children.push(new Table({ width: { size: 0, type: WidthType.AUTO }, rows: tblRows }));
+    children.push(new Table({ width: { size: 0, type: WidthType.AUTO }, alignment: AlignmentType.CENTER, rows: tblRows }));
   }
 
   children.push(new Paragraph({ text: '' }));
