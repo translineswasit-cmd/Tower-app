@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v197';
+const CACHE_NAME = 'tower-app-v198';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -68,10 +68,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
 
-  if (url.includes('supabase.co')) {
-    event.respondWith(fetch(event.request));
-    return;
-  }
+  // طلبات Supabase: لا تُعترض إطلاقاً — تذهب للشبكة مباشرة ليصل فشلها للتطبيق فيحفظ أوف لاين
+  if (url.includes('supabase.co')) return;
+
+  // أي طلب غير GET (POST/PATCH/DELETE): لا يُعترض ولا يُخزَّن — التخزين المؤقت للقراءة فقط
+  if (event.request.method !== 'GET') return;
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
@@ -79,15 +80,21 @@ self.addEventListener('fetch', (event) => {
         return cachedResponse;
       }
       return fetch(event.request).then((networkResponse) => {
-        if (event.request.method === 'GET' && networkResponse.ok) {
+        if (networkResponse.ok) {
           const responseClone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseClone);
           });
         }
         return networkResponse;
-      }).catch(() => {
-        return caches.match('./index.html');
+      }).catch(async () => {
+        // صفحة الاحتياط تُقدَّم فقط لطلبات فتح صفحة (تنقّل)، لا لصورة أو سكربت
+        // (سابقاً كانت تُرجَع index.html مكان أي ملف فاشل، فتظهر أخطاء غريبة بدل فشل نظيف)
+        if (event.request.mode === 'navigate') {
+          const fallback = await caches.match('./index.html');
+          if (fallback) return fallback;
+        }
+        return new Response('', { status: 504, statusText: 'Offline' });
       });
     })
   );

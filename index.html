@@ -1094,6 +1094,7 @@ tbody tr:hover { background: #F7FAFC; }
   <p style="color:#718096;font-size:0.85rem;margin-bottom:14px">هذي الكشوفات والمعالجات محفوظة على جهازك فقط، وستُرفع تلقائياً عند توفر الإنترنت (يتحقق التطبيق دورياً). تقدر تضغط الزر لرفعها فوراً، أو تعدلها أو تحذفها قبل الرفع.</p>
   <button class="btn btn-primary" id="manualSyncBtn" onclick="manualSyncAll()" style="margin-bottom:8px;width:100%">🔄 رفع الآن</button>
   <button class="btn btn-secondary" onclick="cleanAndSync()" style="margin-bottom:16px;width:100%;font-size:0.85rem">🧹 تنظيف وإعادة رفع (عند وجود خطأ)</button>
+  <div id="storageHealthBox" style="margin-bottom:16px"></div>
   <div id="pendingSyncBody"><div class="empty-state">لا توجد عناصر معلقة ✅</div></div>
 </div>
 
@@ -2036,6 +2037,25 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => { if (navigator.onLine) syncAllQueues(); }, 25000);
   // محاولة فورية عند فتح التطبيق أيضاً
   if (navigator.onLine) setTimeout(() => syncAllQueues(), 2000);
+
+  // تخزين دائم: يمنع نظام التشغيل من مسح بيانات التطبيق تلقائياً عند ضيق المساحة.
+  // مهم جداً على iOS (يمسح تخزين المواقع بعد ~7 أيام بلا استخدام) وعلى أندرويد عند امتلاء الجهاز
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persisted().then(already => { if (!already) navigator.storage.persist().catch(() => {}); }).catch(() => {});
+  }
+
+  // العودة للتطبيق بعد تصغيره: نحاول الرفع فوراً.
+  // على iOS يُجمَّد المؤقّت (setInterval) عند تصغير التطبيق، فحدث visibilitychange هو الضمانة الحقيقية
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { updateStatus(navigator.onLine); updatePendingBadge(); syncAllQueues(); }
+  });
+
+  // تحذير قبل إغلاق التطبيق وفيه بيانات لم تُرفع بعد (حماية أخيرة من فقدانها)
+  window.addEventListener('beforeunload', (e) => {
+    try {
+      if (getTotalPendingCount() > 0) { e.preventDefault(); e.returnValue = ''; return ''; }
+    } catch (err) {}
+  });
   // تحميل الكاش المحلي للسجلات فوراً (يفيد أوف لاين قبل زيارة صفحة السجلات)
   try { records = JSON.parse(localStorage.getItem(DB_KEY) || '[]'); } catch(e) { records = []; }
 
@@ -2577,7 +2597,7 @@ async function renderTowersGrid(lineName) {
   renderActiveLinesTabs();
 }
 
-function persistActiveLines() { localStorage.setItem('active_inspection_lines', JSON.stringify(activeInspectionLines)); }
+function persistActiveLines() { safeSetItem('active_inspection_lines', JSON.stringify(activeInspectionLines)); }
 
 function addActiveLineTab(lineName) {
   if (!lineName) return;
@@ -3516,15 +3536,62 @@ function afterGridSaveSuccess(d) {
   if (currentGridLine) renderTowersGrid(currentGridLine);
 }
 
+// ==================== حماية بيانات الأوف لاين (كتابة آمنة + منع سباق المزامنة) ====================
+// كاشات يجوز التضحية بها عند امتلاء الذاكرة (تُعاد تحميلها من السيرفر) — الطوابير لا تُمس أبداً
+const _SACRIFICIAL_CACHE_KEYS = ['tower_inspections_cache', 'thermal_inspections_cache', 'staff_roster_members_cache', 'staff_roster_columns_cache'];
+
+// كتابة آمنة: لو امتلأت مساحة التخزين نحرّر الكاشات القابلة للاستغناء ثم نعيد المحاولة،
+// وإذا فشلت ثانيةً نُعلم المستخدم صراحةً بدل الفشل الصامت الذي يضيّع الكشف
+function safeSetItem(key, value) {
+  try { localStorage.setItem(key, value); return true; }
+  catch (e) {
+    try {
+      _SACRIFICIAL_CACHE_KEYS.forEach(k => { if (k !== key) localStorage.removeItem(k); });
+      localStorage.setItem(key, value);
+      showToast('⚠️ ذاكرة الجهاز كانت ممتلئة — حُرّرت مساحة وحُفظت بياناتك', 'error');
+      return true;
+    } catch (e2) {
+      showToast('❌ تعذّر الحفظ: ذاكرة الجهاز ممتلئة! ارفع العناصر المعلّقة فوراً قبل إغلاق التطبيق', 'error');
+      return false;
+    }
+  }
+}
+
+// مُعرّف ثابت لكل عنصر بالطابور (لمقارنة اللقطة بالمحتوى الحالي بدون التأثر بحقول مؤقتة مثل _lastError)
+function _queueItemKey(item) {
+  if (!item || typeof item !== 'object') return 'v:' + JSON.stringify(item);
+  if (item.client_uuid) return 'cu:' + item.client_uuid;
+  if (item.id && item.patch) return 'patch:' + item.id;
+  if (item.op && item.ts) return 'op:' + item.op + ':' + item.ts;
+  return 'j:' + JSON.stringify(item);
+}
+
+// يلتقط بصمات الطابور قبل بدء المزامنة
+function snapshotQueueKeys(arr) { return (arr || []).map(_queueItemKey); }
+
+// يكتب المتبقّي بعد المزامنة مع الحفاظ على أي عنصر أُضيف أثناء الرفع
+// (سابقاً كانت الكتابة تمحو كل شيء أُضيف خلال دورة الرفع — سبب فقدان كشوفات فعلي)
+function saveQueueAfterSync(key, snapKeys, remaining) {
+  let current = [];
+  try { current = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { current = []; }
+  if (!Array.isArray(current)) current = [];
+  const seen = new Set(snapKeys || []);
+  const addedDuringSync = current.filter(item => !seen.has(_queueItemKey(item)));
+  return safeSetItem(key, JSON.stringify((remaining || []).concat(addedDuringSync)));
+}
+
 function addToQueue(rec) {
-  const q = getQueue(); q.push(rec); localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+  const q = getQueue(); q.push(rec);
+  const ok = safeSetItem(QUEUE_KEY, JSON.stringify(q));
   updatePendingBadge();
+  return ok;
 }
 function getQueue() { try { return JSON.parse(localStorage.getItem(QUEUE_KEY)||'[]'); } catch { return []; } }
 
 async function syncQueue() {
   const q = getQueue();
   if (!q.length) return;
+  const _snapKeys = snapshotQueueKeys(q);
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
@@ -3549,7 +3616,7 @@ async function syncQueue() {
       remaining.push(rec);
     }
   }
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
+  saveQueueAfterSync(QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
   if (synced > 0) showToast(`✅ تم إرسال ${synced} كشف محفوظ أوف لاين`);
 }
@@ -3589,7 +3656,8 @@ async function loadRecords() {
     const res = await sbFetch(`inspections?select=*&inspection_date=gte.${cutoffDate}&order=created_at.desc`);
     const data = await res.json();
     records = data;
-    localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 200))); // cache only most recent 200 to avoid storage bloat
+    // كاش عرض فقط: نقلّله إلى 120 سجل ونتجاهل فشله بصمت — الأولوية المطلقة لمساحة الطوابير الميدانية
+    try { localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 120))); } catch(e) { try { localStorage.removeItem(DB_KEY); } catch(e2) {} }
   } catch {
     records = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
     showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
@@ -5018,7 +5086,7 @@ function buildThermalPointOptions(lineName) {
   return opts;
 }
 
-function persistThermalSessions() { localStorage.setItem('active_thermal_sessions', JSON.stringify(activeThermalSessions)); }
+function persistThermalSessions() { safeSetItem('active_thermal_sessions', JSON.stringify(activeThermalSessions)); }
 
 function startThermalSession() {
   const line = document.getElementById('th_line_name').value;
@@ -5239,7 +5307,7 @@ async function saveLineEntryPoint() {
 
 const LINE_ENTRY_QUEUE_KEY = 'line_entry_queue';
 function addToLineEntryQueue(rec) {
-  const q = getLineEntryQueue(); q.push(rec); localStorage.setItem(LINE_ENTRY_QUEUE_KEY, JSON.stringify(q));
+  const q = getLineEntryQueue(); q.push(rec); safeSetItem(LINE_ENTRY_QUEUE_KEY, JSON.stringify(q));
   updatePendingBadge();
 }
 function getLineEntryQueue() { try { return JSON.parse(localStorage.getItem(LINE_ENTRY_QUEUE_KEY) || '[]'); } catch { return []; } }
@@ -5247,6 +5315,7 @@ function getLineEntryQueue() { try { return JSON.parse(localStorage.getItem(LINE
 async function syncLineEntryQueue() {
   const q = getLineEntryQueue();
   if (!q.length) return;
+  const _snapKeys = snapshotQueueKeys(q);
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
@@ -5267,7 +5336,7 @@ async function syncLineEntryQueue() {
       remaining.push(rec);
     }
   }
-  localStorage.setItem(LINE_ENTRY_QUEUE_KEY, JSON.stringify(remaining));
+  saveQueueAfterSync(LINE_ENTRY_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
   if (synced > 0) showToast(`✅ تم إرسال ${synced} قياس مدخل خط محفوظ أوف لاين`);
 }
@@ -5278,7 +5347,7 @@ function finishThermalSession() {
 }
 
 function addToThermalQueue(rec) {
-  const q = getThermalQueue(); q.push(rec); localStorage.setItem(THERMAL_QUEUE_KEY, JSON.stringify(q));
+  const q = getThermalQueue(); q.push(rec); safeSetItem(THERMAL_QUEUE_KEY, JSON.stringify(q));
   updatePendingBadge();
 }
 function getThermalQueue() { try { return JSON.parse(localStorage.getItem(THERMAL_QUEUE_KEY) || '[]'); } catch { return []; } }
@@ -5286,6 +5355,7 @@ function getThermalQueue() { try { return JSON.parse(localStorage.getItem(THERMA
 async function syncThermalQueue() {
   const q = getThermalQueue();
   if (!q.length) return;
+  const _snapKeys = snapshotQueueKeys(q);
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
@@ -5306,7 +5376,7 @@ async function syncThermalQueue() {
       remaining.push(rec);
     }
   }
-  localStorage.setItem(THERMAL_QUEUE_KEY, JSON.stringify(remaining));
+  saveQueueAfterSync(THERMAL_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
   if (synced > 0) showToast(`✅ تم إرسال ${synced} قياس حراري محفوظ أوف لاين`);
 }
@@ -5378,7 +5448,8 @@ async function loadThermalArchive() {
   try {
     const res = await sbFetch('thermal_inspections?select=*&order=inspection_date.desc,line_name.asc');
     thermalRecords = await res.json();
-    localStorage.setItem(THERMAL_DB_KEY, JSON.stringify(thermalRecords.slice(0, 500)));
+    // كاش عرض فقط: 500←200 لتقليل استهلاك المساحة، وفشله لا يجوز أن يعطّل شيئاً
+    try { localStorage.setItem(THERMAL_DB_KEY, JSON.stringify(thermalRecords.slice(0, 200))); } catch(e) { try { localStorage.removeItem(THERMAL_DB_KEY); } catch(e2) {} }
   } catch {
     thermalRecords = JSON.parse(localStorage.getItem(THERMAL_DB_KEY) || '[]');
     showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
@@ -6940,7 +7011,7 @@ let staffRosterMembersCache = [];
 let staffRosterLoaded = false;
 
 function getStaffRosterQueue() { try { return JSON.parse(localStorage.getItem(STAFF_ROSTER_QUEUE_KEY) || '[]'); } catch(e) { return []; } }
-function saveStaffRosterQueueRaw(q) { localStorage.setItem(STAFF_ROSTER_QUEUE_KEY, JSON.stringify(q)); updatePendingBadge(); }
+function saveStaffRosterQueueRaw(q) { safeSetItem(STAFF_ROSTER_QUEUE_KEY, JSON.stringify(q)); updatePendingBadge(); }
 function addToStaffRosterQueue(op, payload) {
   const q = getStaffRosterQueue();
   q.push({ op, payload, ts: Date.now() });
@@ -7191,6 +7262,7 @@ function getStaffRosterPendingCount() { return getStaffRosterQueue().length; }
 async function syncStaffRosterQueue() {
   const q = getStaffRosterQueue();
   if (!q.length) return;
+  const _snapKeys = snapshotQueueKeys(q);
   const remaining = [];
   for (const item of q) {
     try {
@@ -7218,7 +7290,8 @@ async function syncStaffRosterQueue() {
       remaining.push({ ...item, _lastError: e && e.message ? e.message : String(e) });
     }
   }
-  saveStaffRosterQueueRaw(remaining);
+  saveQueueAfterSync(STAFF_ROSTER_QUEUE_KEY, _snapKeys, remaining);
+  updatePendingBadge();
   renderStaffRoster();
 }
 
@@ -8089,7 +8162,37 @@ function printThermalArchive() {
 // ========================
 // PENDING SYNC PAGE (عرض/تعديل/حذف العناصر المعلقة قبل الرفع)
 // ========================
+// يقيس المساحة المستهلكة فعلياً من localStorage ويحذّر قبل الامتلاء (سبب فقدان بيانات صامت)
+function renderStorageHealth() {
+  const box = document.getElementById('storageHealthBox');
+  if (!box) return;
+  let used = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      used += (k.length + (localStorage.getItem(k) || '').length) * 2; // UTF-16 ≈ بايتان لكل حرف
+    }
+  } catch (e) { box.innerHTML = ''; return; }
+  const LIMIT = 5 * 1024 * 1024; // حد متحفّظ (متصفحات الجوال عادة 5 ميغا)
+  const pct = Math.min(100, Math.round((used / LIMIT) * 100));
+  const mb = (used / 1024 / 1024).toFixed(2);
+  let color = '#1e8449', note = 'المساحة كافية';
+  if (pct >= 85) { color = '#c0392b'; note = '⚠️ خطر: المساحة شبه ممتلئة — ارفع العناصر المعلّقة فوراً'; }
+  else if (pct >= 60) { color = '#d68910'; note = 'المساحة تقترب من الامتلاء — يُفضّل الرفع قريباً'; }
+  box.innerHTML = `<div style="border:1px solid #E2E8F0;border-radius:10px;padding:10px 12px;background:#fff">
+    <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:6px">
+      <span style="font-weight:700">💾 مساحة التخزين على الجهاز</span>
+      <span style="color:${color};font-weight:700">${mb} ميغا (${pct}%)</span>
+    </div>
+    <div style="height:8px;background:#EDF2F7;border-radius:6px;overflow:hidden">
+      <div style="height:100%;width:${pct}%;background:${color}"></div>
+    </div>
+    <div style="font-size:0.75rem;color:${color};margin-top:6px">${note}</div>
+  </div>`;
+}
+
 function renderPendingSyncPage() {
+  renderStorageHealth();
   const body = document.getElementById('pendingSyncBody');
   const inspQ = getQueue();
   const thermQ = getThermalQueue();
@@ -8242,7 +8345,7 @@ function saveEditedPendingInspection() {
   if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
   const q = getQueue();
   q[editingPendingInspectionIndex] = d;
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+  if (!safeSetItem(QUEUE_KEY, JSON.stringify(q))) return;
   editingPendingInspectionIndex = null;
   showToast('✅ تم تحديث الكشف المعلق');
   document.getElementById('towerInspectionModal').classList.remove('show');
@@ -10092,7 +10195,7 @@ const INSPECTION_PATCH_QUEUE_KEY = 'inspection_patch_queue';
 function addToInspectionPatchQueue(id, patch) {
   const q = getInspectionPatchQueue();
   q.push({ id, patch, ts: Date.now() });
-  localStorage.setItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(q));
+  safeSetItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(q));
   updatePendingBadge();
 }
 function getInspectionPatchQueue() { try { return JSON.parse(localStorage.getItem(INSPECTION_PATCH_QUEUE_KEY)||'[]'); } catch { return []; } }
@@ -10100,6 +10203,7 @@ function getInspectionPatchQueue() { try { return JSON.parse(localStorage.getIte
 async function syncInspectionPatchQueue() {
   const q = getInspectionPatchQueue();
   if (!q.length) return;
+  const _snapKeys = snapshotQueueKeys(q);
   let synced = 0;
   const remaining = [];
   for (const item of q) {
@@ -10117,13 +10221,13 @@ async function syncInspectionPatchQueue() {
       remaining.push({ ...item, _lastError: `خطأ شبكة: ${e && e.message ? e.message : e}` });
     }
   }
-  localStorage.setItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(remaining));
+  saveQueueAfterSync(INSPECTION_PATCH_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
 }
 
 const TREATMENT_QUEUE_KEY = 'treatment_queue';
 function addToTreatmentQueue(rec) {
-  const q = getTreatmentQueue(); q.push(rec); localStorage.setItem(TREATMENT_QUEUE_KEY, JSON.stringify(q));
+  const q = getTreatmentQueue(); q.push(rec); safeSetItem(TREATMENT_QUEUE_KEY, JSON.stringify(q));
   updatePendingBadge();
 }
 function getTreatmentQueue() { try { return JSON.parse(localStorage.getItem(TREATMENT_QUEUE_KEY)||'[]'); } catch { return []; } }
@@ -10131,6 +10235,7 @@ function getTreatmentQueue() { try { return JSON.parse(localStorage.getItem(TREA
 async function syncTreatmentQueue() {
   const q = getTreatmentQueue();
   if (!q.length) return;
+  const _snapKeys = snapshotQueueKeys(q);
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
@@ -10151,7 +10256,7 @@ async function syncTreatmentQueue() {
       remaining.push(rec);
     }
   }
-  localStorage.setItem(TREATMENT_QUEUE_KEY, JSON.stringify(remaining));
+  saveQueueAfterSync(TREATMENT_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
   if (synced > 0) { showToast(`✅ تم إرسال ${synced} معالجة محفوظة أوف لاين`); await loadTreatments(); }
 }
