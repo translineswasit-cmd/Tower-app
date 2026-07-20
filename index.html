@@ -508,13 +508,12 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="page-title">🧰 الخدمات</div>
   <div class="cards-grid cards-grid-3col">
     <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
-    <div class="card" id="svcRecordsCard" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات</span></div>
+    <div class="card" id="svcRecordsCard" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات والتقارير</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
     <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">إحصائيات الموظفين</span></div>
-    <div class="card" id="svcExportCard" onclick="showPage('records');loadRecords();openExportModal();"><span class="icon">📊</span><span class="label">تصدير التقرير</span></div>
     <div class="card" id="svcFormsCard" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
@@ -766,6 +765,14 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
     </div>
     <p id="exportResultCount" style="margin-top:12px;color:#718096;font-size:0.82rem"></p>
+    <div style="margin-top:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label style="font-weight:700;font-size:0.85rem">أعمدة ملف Excel</label>
+        <button class="btn btn-secondary btn-sm" onclick="toggleExportColumnsSelectAll()" id="exportColumnsSelectAllBtn">إلغاء التحديد</button>
+      </div>
+      <div id="exportColumnsWrap" style="max-height:170px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px"></div>
+      <p style="margin-top:5px;color:#a0aec0;font-size:0.74rem">ينطبق على Excel فقط — تصدير PDF يعرض بطاقة كاملة لكل برج</p>
+    </div>
     <div class="form-actions" style="margin-top:18px;flex-direction:column;gap:10px">
       <button class="btn btn-primary" onclick="confirmExportExcel()" style="width:100%">📊 تصدير Excel</button>
       <button class="btn btn-primary" onclick="confirmExportPDF()" style="width:100%;background:#922b21">📄 تصدير PDF (بصور العوازل)</button>
@@ -2196,8 +2203,6 @@ function applyRolePermissions() {
   if (recordsExportBtn) recordsExportBtn.style.display = isAdminOrSupervisor ? '' : 'none';
   const recordsBulkDeleteBtn = document.getElementById('recordsBulkDeleteBtn');
   if (recordsBulkDeleteBtn) recordsBulkDeleteBtn.style.display = (currentUser.role === 'admin') ? '' : 'none';
-  const exportCard = document.getElementById('svcExportCard');
-  if (exportCard) exportCard.style.display = isAdminOrSupervisor ? '' : 'none';
 
   // حساب الفني: واجهة الرئيسية تختصر لثلاث بطاقات فقط (الكشف، الكشف الحراري، المغادرات)
   // والباقي (الخطوط، المخزن، المعلّقة) يبقى موجود بتبويب "الخدمات" فقط، يختفي من "الرئيسية"
@@ -3888,8 +3893,17 @@ function openExportModal() {
   const uniqueLines = [...new Set(records.map(r => r.line_name).filter(Boolean))].sort();
   sel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
     uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
-  document.getElementById('exportFilterFrom').value = '';
-  document.getElementById('exportFilterTo').value = '';
+
+  // ترث النافذة فلاتر شاشة السجلات المطبّقة حالياً بدل ما تبدأ فاضية
+  // (سابقاً كانت تُفرَّغ، فيصدّر المستخدم كل السجلات وهو يظن أنه يصدّر المعروض أمامه فقط)
+  const curLine = (document.getElementById('filterLine') || {}).value || '';
+  const curFrom = (document.getElementById('filterDateFrom') || {}).value || '';
+  const curTo = (document.getElementById('filterDateTo') || {}).value || '';
+  sel.value = uniqueLines.includes(curLine) ? curLine : '';
+  document.getElementById('exportFilterFrom').value = curFrom;
+  document.getElementById('exportFilterTo').value = curTo;
+
+  renderExportColumnPicker();
   updateExportResultCount();
   document.getElementById('exportModalBg').classList.add('show');
 }
@@ -3932,25 +3946,66 @@ function insulatorStateToText(insulatorStateJSON) {
   return parts.join(' | ');
 }
 
+// تعريف موحّد لأعمدة تصدير Excel — المصدر الوحيد لبناء القائمة وبناء الملف معاً
+const EXPORT_COLUMNS = [
+  { label: 'اسم الخط',                get: r => r.line_name },
+  { label: 'تاريخ الكشف',             get: r => r.inspection_date },
+  { label: 'رقم البرج',               get: r => r.tower_number },
+  { label: 'نوع البرج',               get: r => r.tower_type },
+  { label: 'الجهد',                   get: r => (r.voltage || '') + 'kV' },
+  { label: 'الموظف',                  get: r => r.created_by_name || '' },
+  { label: 'العوازل',                 get: r => insulatorStateToText(r.insulator_state) },
+  { label: 'تقاطعات الحديد',          get: r => r.iron_intersections },
+  { label: 'قواعد البرج',             get: r => r.tower_foundations },
+  { label: 'ملحقات البرج',            get: r => r.tower_attachments },
+  { label: 'أسلاك R',                 get: r => r.wires_r1 },
+  { label: 'أسلاك S',                 get: r => r.wires_s1 },
+  { label: 'أسلاك T',                 get: r => r.wires_t1 },
+  { label: 'الأرضي 1',                get: r => r.ground_1 },
+  { label: 'الأرضي 2',                get: r => r.ground_2 },
+  { label: 'مسببات الحرائق',          get: r => r.fire_causes },
+  { label: 'ملاحظات مسببات الحرائق',  get: r => r.fire_causes_notes },
+  { label: 'وجود طريق',               get: r => r.road_access },
+  { label: 'ملاحظات الطريق',          get: r => r.road_access_notes },
+  { label: 'ملاحظات',                 get: r => r.notes }
+];
+
+function renderExportColumnPicker() {
+  const wrap = document.getElementById('exportColumnsWrap');
+  if (!wrap) return;
+  wrap.innerHTML = EXPORT_COLUMNS.map((c, i) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
+      <input type="checkbox" class="exportColChk" data-idx="${i}" checked>
+      <span>${c.label}</span>
+    </label>`).join('');
+  const btn = document.getElementById('exportColumnsSelectAllBtn');
+  if (btn) btn.textContent = 'إلغاء التحديد';
+}
+
+function toggleExportColumnsSelectAll() {
+  const boxes = document.querySelectorAll('.exportColChk');
+  const btn = document.getElementById('exportColumnsSelectAllBtn');
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  btn.textContent = allChecked ? 'تحديد الكل' : 'إلغاء التحديد';
+}
+
 function confirmExportExcel() {
   const rows = getExportFilteredRecords();
   if (!rows.length) { showToast('لا توجد بيانات مطابقة للتصدير', 'error'); return; }
-  const data = rows.map(r => ({
-    'اسم الخط': r.line_name, 'تاريخ الكشف': r.inspection_date, 'رقم البرج': r.tower_number,
-    'نوع البرج': r.tower_type, 'الجهد': r.voltage+'kV', 'الموظف': r.created_by_name||'',
-    'العوازل': insulatorStateToText(r.insulator_state),
-    'تقاطعات الحديد': r.iron_intersections, 'قواعد البرج': r.tower_foundations,
-    'ملحقات البرج': r.tower_attachments,
-    'أسلاك R': r.wires_r1, 'أسلاك S': r.wires_s1, 'أسلاك T': r.wires_t1,
-    'الأرضي 1': r.ground_1, 'الأرضي 2': r.ground_2,
-    'مسببات الحرائق': r.fire_causes, 'ملاحظات مسببات الحرائق': r.fire_causes_notes,
-    'وجود طريق': r.road_access, 'ملاحظات الطريق': r.road_access_notes, 'ملاحظات': r.notes
-  }));
+  const cols = Array.from(document.querySelectorAll('.exportColChk:checked'))
+    .map(cb => EXPORT_COLUMNS[Number(cb.dataset.idx)]).filter(Boolean);
+  if (!cols.length) { showToast('⚠️ اختر عموداً واحداً على الأقل', 'error'); return; }
+  const data = rows.map(r => {
+    const o = {};
+    cols.forEach(c => { o[c.label] = c.get(r); });
+    return o;
+  });
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'كشف الأبراج');
   XLSX.writeFile(wb, 'كشف_الأبراج_' + new Date().toLocaleDateString('ar-IQ') + '.xlsx');
-  showToast('✅ تم تصدير Excel (' + rows.length + ' سجل)');
+  showToast('✅ تم تصدير Excel (' + rows.length + ' سجل · ' + cols.length + ' عمود)');
   closeExportModal();
 }
 
