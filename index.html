@@ -1712,6 +1712,14 @@ tbody tr:hover { background: #F7FAFC; }
       </div>
       <div id="printStaffColumnsWrap" style="max-height:220px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px"></div>
     </div>
+    <div style="margin-top:14px">
+      <div id="printStaffLocationQuickBtns" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label style="font-weight:700;font-size:0.88rem">الأعضاء</label>
+        <button class="btn btn-secondary btn-sm" onclick="togglePrintStaffMembersSelectAll()" id="printStaffMembersSelectAllBtn">إلغاء التحديد</button>
+      </div>
+      <div id="printStaffMembersWrap" style="max-height:220px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px"></div>
+    </div>
     <p style="margin-top:10px;color:#718096;font-size:0.82rem;text-align:center" id="printStaffRosterNote"></p>
     <div class="form-actions" style="margin-top:14px;flex-direction:column;gap:8px">
       <button class="btn btn-primary" style="width:100%" onclick="confirmPrintStaffRoster()">🖨️ طباعة</button>
@@ -7204,6 +7212,8 @@ async function syncStaffRosterQueue() {
 }
 
 // ---- طباعة كادر القسم (اختيار الأعمدة) ----
+let _printStaffMembersSnapshot = []; // لقطة ثابتة تضمن تطابق data-idx حتى لو تغيّرت البيانات أثناء فتح النافذة
+
 function openPrintStaffRosterModal() {
   const cols = staffRosterColumnsCache;
   const wrap = document.getElementById('printStaffColumnsWrap');
@@ -7213,12 +7223,53 @@ function openPrintStaffRosterModal() {
       <span>${c.label}</span>
     </label>`).join('') || '<div class="empty-state">لا توجد أعمدة إضافية</div>';
   document.getElementById('printStaffColumnsSelectAllBtn').textContent = 'إلغاء التحديد';
+
+  // قائمة الأعضاء (لقطة ثابتة) — نُحدد افتراضياً حسب فلتر الموقع المفعّل حالياً بالشاشة، وتقدر تعدّل الاختيار بحرية
+  _printStaffMembersSnapshot = staffRosterMembersCache;
   const filterSel = document.getElementById('staffRosterLocationFilter');
-  const noteTxt = (filterSel.style.display !== 'none' && filterSel.value !== 'all')
-    ? `سيُطبع فقط الموقع المحدد حالياً: ${filterSel.value}`
-    : 'سيُطبع كل الأعضاء المعروضين حالياً بالجدول';
-  document.getElementById('printStaffRosterNote').textContent = noteTxt;
+  const activeLocation = (filterSel.style.display !== 'none' && filterSel.value !== 'all') ? filterSel.value : null;
+  const membersWrap = document.getElementById('printStaffMembersWrap');
+  membersWrap.innerHTML = _printStaffMembersSnapshot.map((m, i) => {
+    const loc = (m.values && m.values.location) || '';
+    const preChecked = activeLocation ? (loc === activeLocation) : true;
+    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
+      <input type="checkbox" class="printStaffMemberChk" data-idx="${i}" data-location="${loc.replace(/"/g,'&quot;')}" ${preChecked ? 'checked' : ''} onchange="updatePrintStaffRosterNote()">
+      <span style="flex:1">${m.name}</span>
+      ${loc ? `<span style="color:#718096;font-size:0.75rem">${loc}</span>` : ''}
+    </label>`;
+  }).join('') || '<div class="empty-state">لا يوجد أعضاء</div>';
+  document.getElementById('printStaffMembersSelectAllBtn').textContent = 'إلغاء التحديد';
+
+  // أزرار اختيار سريع حسب المواقع الفعلية الموجودة بالبيانات
+  const locations = [...new Set(_printStaffMembersSnapshot.map(m => (m.values && m.values.location) || '').filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
+  const quickBtnsWrap = document.getElementById('printStaffLocationQuickBtns');
+  quickBtnsWrap.innerHTML = locations.map(loc =>
+    `<button class="btn btn-secondary btn-sm" onclick="quickSelectPrintStaffLocation('${loc.replace(/'/g,"\\'")}')">${loc} فقط</button>`
+  ).join('');
+
+  updatePrintStaffRosterNote();
   document.getElementById('printStaffRosterModalBg').classList.add('show');
+}
+
+function updatePrintStaffRosterNote() {
+  const total = document.querySelectorAll('.printStaffMemberChk').length;
+  const checked = document.querySelectorAll('.printStaffMemberChk:checked').length;
+  document.getElementById('printStaffRosterNote').textContent = `تم تحديد ${checked} من أصل ${total} عضو`;
+}
+
+function togglePrintStaffMembersSelectAll() {
+  const boxes = document.querySelectorAll('.printStaffMemberChk');
+  const btn = document.getElementById('printStaffMembersSelectAllBtn');
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  btn.textContent = allChecked ? 'تحديد الكل' : 'إلغاء التحديد';
+  updatePrintStaffRosterNote();
+}
+
+function quickSelectPrintStaffLocation(loc) {
+  document.querySelectorAll('.printStaffMemberChk').forEach(cb => { cb.checked = (cb.dataset.location === loc); });
+  document.getElementById('printStaffMembersSelectAllBtn').textContent = 'تحديد الكل';
+  updatePrintStaffRosterNote();
 }
 
 function closePrintStaffRosterModal() {
@@ -7238,24 +7289,30 @@ let _printStaffRosterSavedHTML = null;
 function confirmPrintStaffRoster() {
   const allCols = staffRosterColumnsCache;
   const selectedCols = Array.from(document.querySelectorAll('.printStaffColChk:checked')).map(cb => allCols[Number(cb.dataset.idx)]).filter(Boolean);
+  const rows = Array.from(document.querySelectorAll('.printStaffMemberChk:checked')).map(cb => _printStaffMembersSnapshot[Number(cb.dataset.idx)]).filter(Boolean);
+  if (!rows.length) { showToast('⚠️ اختر عضواً واحداً على الأقل', 'error'); return; }
   closePrintStaffRosterModal();
 
-  const data = staffRosterMembersCache;
-  const filterSel = document.getElementById('staffRosterLocationFilter');
-  const hasLocationCol = allCols.some(c => c.key === 'location');
-  const filterVal = (hasLocationCol && filterSel.style.display !== 'none') ? filterSel.value : 'all';
-  const rows = (!hasLocationCol || filterVal === 'all') ? data : data.filter(r => (r.values && r.values.location) === filterVal);
+  // توزيع عرض متناسق يملأ عرض ورقة A4: عمود الترقيم صغير ثابت، الاسم أعرض شوي، والباقي يتقاسم المتبقي بالتساوي
+  const idxColPct = 4, nameColPct = 22;
+  const otherColPct = selectedCols.length ? (100 - idxColPct - nameColPct) / selectedCols.length : 0;
 
-  let html = '<div style="font-weight:700;font-size:18px;color:#1a2e4a;border-bottom:2px solid #1a2e4a;padding-bottom:8px;margin-bottom:14px">👥 كادر قسم الخطوط' + (filterVal !== 'all' ? ' — ' + filterVal : '') + '</div>';
-  html += '<div style="overflow-x:auto"><table class="records-table" style="width:100%;background:white"><thead><tr style="text-align:right"><th style="padding:8px">ت</th><th style="padding:8px">الاسم الثلاثي</th>';
-  selectedCols.forEach(c => { html += `<th style="padding:8px">${c.label}</th>`; });
+  let html = '<div style="font-weight:700;font-size:18px;color:#1a2e4a;border-bottom:2px solid #1a2e4a;padding-bottom:8px;margin-bottom:14px">👥 كادر قسم الخطوط</div>';
+  html += `<table style="width:100%;table-layout:fixed;border-collapse:collapse;background:white;font-size:13px">
+    <colgroup><col style="width:${idxColPct}%"><col style="width:${nameColPct}%">${selectedCols.map(()=>`<col style="width:${otherColPct}%">`).join('')}</colgroup>
+    <thead><tr>
+      <th style="border:1px solid #333;background:#f0f2f5;padding:8px;text-align:center">ت</th>
+      <th style="border:1px solid #333;background:#f0f2f5;padding:8px;text-align:center">الاسم الثلاثي</th>`;
+  selectedCols.forEach(c => { html += `<th style="border:1px solid #333;background:#f0f2f5;padding:8px;text-align:center">${c.label}</th>`; });
   html += '</tr></thead><tbody>';
   rows.forEach((row, i) => {
-    html += `<tr><td style="padding:8px">${i+1}</td><td style="padding:8px;font-weight:700">${row.name||'-'}</td>`;
-    selectedCols.forEach(c => { html += `<td style="padding:8px">${(row.values && row.values[c.key]) || '-'}</td>`; });
+    html += `<tr>
+      <td style="border:1px solid #333;padding:6px 8px;text-align:center;word-wrap:break-word">${i+1}</td>
+      <td style="border:1px solid #333;padding:6px 8px;text-align:center;font-weight:700;word-wrap:break-word">${row.name||'-'}</td>`;
+    selectedCols.forEach(c => { html += `<td style="border:1px solid #333;padding:6px 8px;text-align:center;word-wrap:break-word">${(row.values && row.values[c.key]) || '-'}</td>`; });
     html += '</tr>';
   });
-  html += '</tbody></table></div>';
+  html += '</tbody></table>';
 
   const tableWrap = document.getElementById('staffRosterTable').parentElement;
   _printStaffRosterSavedHTML = tableWrap.outerHTML;
