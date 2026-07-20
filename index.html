@@ -9180,6 +9180,17 @@ async function exportOpenDeparturesPDF() {
           } else {
             items.push({ text: '✅ لا توجد مغادرات نصية أخرى', fontSize: 12, color: '#1e8449', padY: 3 });
           }
+          // حالة الطريق (منفصلة عن المغادرات بالتصميم، لكن تظهر هنا كمعلومة مهمة دائماً إن وُجدت)
+          if (r.road_access) {
+            const roadColor = r.road_access === 'متاح' ? '#1e8449' : '#922b21';
+            let roadText = `🛣️ الطريق: ${r.road_access}`;
+            if (r.road_access_notes && r.road_access_notes.trim()) roadText += ` — ${r.road_access_notes.trim()}`;
+            items.push({ text: roadText, fontSize: 11, color: roadColor, padY: 3 });
+          }
+          // الملاحظات العامة المسجّلة بآخر الكشف
+          if (r.notes && r.notes.trim()) {
+            items.push({ text: `📝 ملاحظات: ${r.notes.trim()}`, fontSize: 11, color: '#555', padY: 3 });
+          }
           const towerImg = drawArabicTextPNG(items, pageW - margin*2, { border: true });
 
           const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator');
@@ -9190,21 +9201,32 @@ async function exportOpenDeparturesPDF() {
 
           // حساب الارتفاع الكلي للكتلة (تفاصيل المغادرات + صورة العوازل معاً)
           const usableW = pageW - margin*2;
-          let blockH = 0;
+          const maxContentH = pageH - margin*2; // أقصى ارتفاع ممكن أصلاً بصفحة فاضية تماماً
           let towerH = 0, insH = 0;
-          if (towerImg) { towerH = usableW * (towerImg.h / towerImg.w); blockH += towerH + 8; }
-          if (insImg) { insH = usableW * (insImg.h / insImg.w); blockH += insH + 6; }
-          blockH += 10;
+          if (towerImg) towerH = usableW * (towerImg.h / towerImg.w);
+          if (insImg) insH = usableW * (insImg.h / insImg.w);
+          let blockH = towerH + (towerImg ? 8 : 0) + insH + (insImg ? 6 : 0) + 10;
+          let drawW = usableW;
 
-          // إذا الكتلة الكاملة ما تسع بالصفحة الحالية، ننتقل لصفحة جديدة قبل رسم أي شيء
-          if (y + blockH > pageH - margin) { doc.addPage(); y = margin; }
+          // لو الكتلة كاملة أطول من صفحة فاضية بالكامل (يصير مع الأبراج مزدوجة الدائرة الملأى بمغادرات)،
+          // نصغّرها تناسبياً بالعرض والارتفاع معاً لضمان ظهورها كاملة بصفحة واحدة بدل ما تُقطع فعلياً بحافة الورقة
+          if (blockH > maxContentH) {
+            const shrink = maxContentH / blockH;
+            towerH *= shrink; insH *= shrink; drawW *= shrink; blockH = maxContentH;
+          }
+
+          // ننتقل لصفحة جديدة فقط لو فيه محتوى مرسوم أصلاً بالصفحة الحالية (y > margin)
+          // — سابقاً كان يقسم صفحة جديدة حتى لو الصفحة فاضية تماماً (غير الترويسة)، فتطلع صفحة أولى فارغة بالكامل
+          if (y > margin && y + blockH > pageH - margin) { doc.addPage(); y = margin; }
+
+          const drawX = margin + (usableW - drawW) / 2; // توسيط أفقي لو انصغرت الكتلة
 
           if (towerImg) {
-            doc.addImage(towerImg.dataUrl, 'JPEG', margin, y, usableW, towerH);
+            doc.addImage(towerImg.dataUrl, 'JPEG', drawX, y, drawW, towerH);
             y += towerH + 8;
           }
           if (insImg) {
-            doc.addImage(insImg.dataUrl, 'PNG', margin, y, usableW, insH);
+            doc.addImage(insImg.dataUrl, 'PNG', drawX, y, drawW, insH);
             y += insH + 6;
           }
           y += 10;
