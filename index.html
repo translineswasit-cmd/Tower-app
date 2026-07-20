@@ -1805,6 +1805,17 @@ tbody tr:hover { background: #F7FAFC; }
           </div>
         </div>
       </div>
+      <div id="memoAttachmentsSection" style="margin-top:14px">
+        <button class="btn-sm btn-secondary" id="memoAddAttachmentsBtn" onclick="addMemoAttachments()">➕ إضافة مرفقات</button>
+        <div id="memoAttachmentsWrap" style="display:none;margin-top:10px">
+          <label style="font-weight:700;font-size:0.85rem">المرفقات (كل مرفق بسطر لحاله، تترقم تلقائياً)</label>
+          <div id="memoAttachmentsListWrap" style="margin-top:6px"></div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm btn-secondary" onclick="addMemoAttachmentLine()">➕ سطر مرفق</button>
+            <button class="btn-sm btn-del" onclick="removeMemoAttachments()">🗑️ حذف قسم المرفقات</button>
+          </div>
+        </div>
+      </div>
       <div class="grid-2" style="margin-top:10px">
         <div class="field"><label>عنوان مقدم الطلب (اختياري)</label><input type="text" id="memo_sender_title"></div>
         <div class="field"><label>اسم مقدم الطلب (اختياري)</label><input type="text" id="memo_sender_name"></div>
@@ -5569,6 +5580,50 @@ function renderMemoTableEditor() {
   ).join('');
 }
 
+// ---- قسم المرفقات (اختياري) — قائمة أسطر تترقم تلقائياً عند العرض/التصدير ----
+let memoAttachments = null; // مصفوفة نصوص اختيارية، null = لا يوجد قسم مرفقات
+
+function addMemoAttachments() {
+  memoAttachments = [''];
+  renderMemoAttachmentsEditor();
+}
+function removeMemoAttachments() {
+  memoAttachments = null;
+  renderMemoAttachmentsEditor();
+}
+function addMemoAttachmentLine() {
+  if (!memoAttachments) return;
+  memoAttachments.push('');
+  renderMemoAttachmentsEditor();
+}
+function removeMemoAttachmentLine(i) {
+  if (!memoAttachments) return;
+  memoAttachments.splice(i, 1);
+  if (!memoAttachments.length) memoAttachments.push('');
+  renderMemoAttachmentsEditor();
+}
+function updateMemoAttachmentLine(i, val) {
+  if (memoAttachments) memoAttachments[i] = val;
+}
+function renderMemoAttachmentsEditor() {
+  const wrap = document.getElementById('memoAttachmentsWrap');
+  const addBtn = document.getElementById('memoAddAttachmentsBtn');
+  if (!memoAttachments) {
+    wrap.style.display = 'none';
+    addBtn.style.display = '';
+    return;
+  }
+  addBtn.style.display = 'none';
+  wrap.style.display = 'block';
+  const listWrap = document.getElementById('memoAttachmentsListWrap');
+  listWrap.innerHTML = memoAttachments.map((line, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <span style="font-weight:700;min-width:18px">${i+1}.</span>
+      <input type="text" value="${(line||'').replace(/"/g,'&quot;')}" oninput="updateMemoAttachmentLine(${i},this.value)" style="flex:1;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.9rem">
+      <button class="btn-sm btn-del" onclick="removeMemoAttachmentLine(${i})">✕</button>
+    </div>`).join('');
+}
+
 function showMemoHome() {
   document.getElementById('memoHomeView').style.display = 'block';
   document.getElementById('memoNewView').style.display = 'none';
@@ -5589,6 +5644,8 @@ async function showMemoNew() {
     document.getElementById('memo_sender_name').value = '';
     memoTableData = null;
     renderMemoTableEditor();
+    memoAttachments = null;
+    renderMemoAttachmentsEditor();
   }
 }
 
@@ -5620,7 +5677,7 @@ async function saveMemo() {
   const senderTitle = document.getElementById('memo_sender_title').value;
   const senderName = document.getElementById('memo_sender_name').value;
   if (!date || !body.trim()) { showToast('⚠️ اكمل التاريخ ومحتوى المذكرة', 'error'); return; }
-  const payload = { memo_number: number, memo_date: date, memo_to: to, subject: subject, content: body, sender_title: senderTitle, sender_name: senderName, table_data: memoTableData, created_by: currentUser.full_name };
+  const payload = { memo_number: number, memo_date: date, memo_to: to, subject: subject, content: body, sender_title: senderTitle, sender_name: senderName, table_data: memoTableData, attachments: memoAttachments, created_by: currentUser.full_name };
   try {
     if (editingMemoId) {
       const res = await sbFetch(`memos?id=eq.${editingMemoId}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -5712,6 +5769,8 @@ async function openMemoFromArchive(id) {
     document.getElementById('memo_sender_name').value = m.sender_name || '';
     memoTableData = m.table_data || null;
     renderMemoTableEditor();
+    memoAttachments = m.attachments || null;
+    renderMemoAttachmentsEditor();
     showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
   } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
 }
@@ -5749,6 +5808,7 @@ function buildMemoWordHTML() {
       <div style="margin-top:18px;text-align:justify">${buildMemoFormattedParagraphsHTML(content.split('\n'))}</div>
       ${buildMemoTableHTML()}
       <p align="center" style="margin-top:18px">مع التقدير …</p>
+      ${buildMemoAttachmentsHTML()}
       <div style="margin-top:60px;margin-right:40%;text-align:center">
         ${senderTitle ? `<p>${senderTitle}</p>` : ''}
         ${senderName ? `<p>${senderName}</p>` : ''}
@@ -5760,9 +5820,21 @@ function buildMemoWordHTML() {
 function buildMemoTableHTML() {
   if (!memoTableData || !memoTableData.length) return '';
   const rowsHTML = memoTableData.map(row =>
-    `<tr>${row.map(cell => `<td style="border:1px solid #000;padding:6px 14px;text-align:center;white-space:nowrap">${cell || ''}</td>`).join('')}</tr>`
+    `<tr>${row.map(cell => `<td style="border:1px solid #000;padding:6px 14px;text-align:center;max-width:200px;white-space:normal;word-wrap:break-word">${cell || ''}</td>`).join('')}</tr>`
   ).join('');
   return `<table style="border-collapse:collapse;margin-top:18px;font-size:14px;width:auto">${rowsHTML}</table>`;
+}
+
+// قسم المرفقات (اختياري) — عنوان "المرفقات :" مخطوط + قائمة مرقّمة، محاذاة يمين، بدون إطار
+function buildMemoAttachmentsHTML() {
+  if (!memoAttachments) return '';
+  const validAttachments = memoAttachments.filter(a => a && a.trim());
+  if (!validAttachments.length) return '';
+  const itemsHTML = validAttachments.map((att, i) => `<div>${i+1}. ${att.trim()}</div>`).join('');
+  return `<div style="margin-top:18px;text-align:right">
+    <div style="display:inline-block;font-weight:700;text-decoration:underline">المرفقات :</div>
+    <div style="margin-top:4px">${itemsHTML}</div>
+  </div>`;
 }
 
 function buildMemoBodyHTML() {
@@ -5786,6 +5858,7 @@ function buildMemoBodyHTML() {
       <div style="margin-top:18px;text-align:justify">${buildMemoFormattedParagraphsHTML(content.split('\n'))}</div>
       ${buildMemoTableHTML()}
       <p align="center" style="margin-top:18px">مع التقدير …</p>
+      ${buildMemoAttachmentsHTML()}
       <div style="margin-top:60px;margin-right:40%;text-align:center">
         ${senderTitle ? `<p>${senderTitle}</p>` : ''}
         ${senderName ? `<p>${senderName}</p>` : ''}
@@ -5805,7 +5878,7 @@ function buildMemoCanvasPNG(widthCss) {
   const senderTitle = document.getElementById('memo_sender_title').value || '';
   const senderName = document.getElementById('memo_sender_name').value || '';
 
-  const sidePad = 30, scale = 1.2;
+  const sidePad = 30, scale = 2;
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
   const fontNormal = '15px Tahoma, Arial';
@@ -5889,31 +5962,33 @@ function buildMemoCanvasPNG(widthCss) {
   });
   y += lh * 0.6;
 
-  // الجدول (لو موجود) — كل عمود بعرض يطابق أطول محتوى بداخله، ومرتّب من اليمين لليسار (الترتيب العربي الصحيح)
+  // الجدول (لو موجود) — كل عمود ياخذ عرض محتواه طبيعياً (بدون تمديد قسري لملء عرض الورقة)،
+  // وسقف أقصى 200px لأي عمود؛ أي محتوى أطول من السقف ينكسر لأكثر من سطر داخل نفس الخلية
   let hasTable = false;
   if (typeof memoTableData !== 'undefined' && memoTableData && memoTableData.length) {
     hasTable = true;
     const cols = memoTableData[0].length;
-    const cellPad = 16, rowH = 30, minColW = 50;
+    const cellPad = 16, minColW = 50, maxColW = 200, cellLineH = 18;
     mctx.font = '14px Tahoma, Arial';
     const colWidths = [];
     for (let c = 0; c < cols; c++) {
       let maxW = minColW;
       memoTableData.forEach(row => { maxW = Math.max(maxW, mctx.measureText(row[c] || '').width + cellPad); });
-      colWidths.push(maxW);
+      colWidths.push(Math.min(maxW, maxColW));
     }
-    // تكبير نسبي لو إجمالي العرض أقل من عرض المذكرة، حتى يملأ الجدول العرض المتاح
-    const totalColsWidth = colWidths.reduce((s,w)=>s+w, 0);
-    const availTableWidth = widthCss - sidePad*2;
-    const scaleFactor = totalColsWidth < availTableWidth ? availTableWidth / totalColsWidth : 1;
-    const finalWidths = colWidths.map(w => w * scaleFactor);
-    memoTableData.forEach(row => {
-      let cx = widthCss - sidePad; // نبدأ من اليمين (العمود الأول بالترتيب يكون أقصى اليمين)
-      row.forEach((cell, ci) => {
-        const w = finalWidths[ci];
+    const wrappedRows = memoTableData.map(row => row.map((cell, ci) => wrapText(mctx, cell || '', colWidths[ci] - cellPad)));
+    wrappedRows.forEach(wrappedRow => {
+      const rowLines = Math.max(1, ...wrappedRow.map(lines => lines.length));
+      const rowH = rowLines * cellLineH + 12;
+      let cx = widthCss - sidePad; // نبدأ من اليمين (العمود الأول أقصى اليمين) — الجدول ياخذ حجمه الطبيعي فقط
+      wrappedRow.forEach((lines, ci) => {
+        const w = colWidths[ci];
         cx -= w;
         ops.push({ type:'rect', x: cx, y: y, w: w, h: rowH });
-        ops.push({ type:'text', text: cell || '', x: cx + w/2, y: y + rowH/2 + 5, font:'14px Tahoma, Arial', align:'center' });
+        const startTextY = y + (rowH - lines.length*cellLineH)/2 + cellLineH*0.7;
+        lines.forEach((ln, li) => {
+          ops.push({ type:'text', text: ln, x: cx + w/2, y: startTextY + li*cellLineH, font:'14px Tahoma, Arial', align:'center' });
+        });
       });
       y += rowH;
     });
@@ -5925,6 +6000,24 @@ function buildMemoCanvasPNG(widthCss) {
   ops.push({ type:'text', text: 'مع التقدير …', x: widthCss/2, y: y + lh*0.7, font: fontNormal, align:'center' });
   const afterTeqdeerY = y;
   y += lh * 1.6;
+
+  // قسم المرفقات (اختياري) — تحت "مع التقدير" وفوق التوقيع، محاذاة يمين، عنوان مخطوط + قائمة مرقّمة
+  if (typeof memoAttachments !== 'undefined' && memoAttachments && memoAttachments.some(a => a && a.trim())) {
+    const validAttachments = memoAttachments.filter(a => a && a.trim());
+    mctx.font = fontBold;
+    const titleText = 'المرفقات :';
+    const titleWidth = mctx.measureText(titleText).width;
+    const titleRightX = widthCss - sidePad;
+    ops.push({ type:'text', text: titleText, x: titleRightX, y: y + lh*0.7, font: fontBold, align:'right' });
+    ops.push({ type:'line', x1: titleRightX - titleWidth, y1: y + lh*0.7 + 3, x2: titleRightX, y2: y + lh*0.7 + 3 });
+    y += lh;
+    mctx.font = fontNormal;
+    validAttachments.forEach((att, i) => {
+      const lines = wrapText(mctx, `${i+1}. ${att.trim()}`, contentMaxWidth);
+      lines.forEach(ln => { ops.push({ type:'text', text: ln, x: widthCss - sidePad, y: y + lh*0.7, font: fontNormal, align:'right' }); y += lh; });
+    });
+    y += lh * 0.5;
+  }
 
   // عنوان واسم مقدم الطلب — بالنص (محاذاة وسط)، مسحوبين نحو الوسط أفقياً (لا أقصى اليسار)
   // مذكرة طويلة (تقترب من ملء صفحة A4) → سطر واحد بعد مع التقدير | مذكرة قصيرة → 7 أسطر بعد (تنسحب للأسفل)
@@ -5952,6 +6045,9 @@ function buildMemoCanvasPNG(widthCss) {
   ops.forEach(op => {
     if (op.type === 'rect') {
       ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(op.x, op.y, op.w, op.h);
+    } else if (op.type === 'line') {
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(op.x1, op.y1); ctx.lineTo(op.x2, op.y2); ctx.stroke();
     } else {
       ctx.direction = op.dir === 'ltr' ? 'ltr' : 'rtl';
       ctx.font = op.font;
@@ -6057,6 +6153,18 @@ async function buildMemoDocxBlob() {
 
   children.push(new Paragraph({ text: '' }));
   children.push(rtlP([rtlRun('مع التقدير …')], { alignment: AlignmentType.CENTER }));
+
+  // قسم المرفقات (اختياري) — عنوان مخطوط + قائمة مرقّمة، محاذاة يمين، بدون إطار
+  if (memoAttachments) {
+    const validAttachments = memoAttachments.filter(a => a && a.trim());
+    if (validAttachments.length) {
+      children.push(new Paragraph({ text: '' }));
+      children.push(rtlP([rtlRun('المرفقات :', { bold: true, underline: {} })], { alignment: AlignmentType.RIGHT }));
+      validAttachments.forEach((att, i) => {
+        children.push(rtlP([rtlRun(`${i+1}. ${att.trim()}`)], { alignment: AlignmentType.RIGHT }));
+      });
+    }
+  }
 
   // عنوان واسم مقدم الطلب — بالنص، مسحوبين نحو الوسط (مذكرة طويلة: سطر بعد، قصيرة: 7 أسطر بعد)
   if (senderTitle || senderName) {
