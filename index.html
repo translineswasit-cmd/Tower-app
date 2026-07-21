@@ -8916,9 +8916,17 @@ async function loadLineTowersCache() {
 }
 
 // المصدر الموحّد لأبراج أي خط بكل أنحاء التطبيق — يستبدل الوصول المباشر لـ LINES_DATA[lineName]
+// يدعم أيضاً حالة أن الاسم المخزَّن بـ"بيانات الخطوط" بدون لاحقة الفولتية بينما LINES_DATA يستخدمها
+// (مثال: "الكوت القديمة - شيخ سعد" مقابل "الكوت القديمة - شيخ سعد 132 ك.ف") — هذا كان يسبب رجوع قائمة فاضية
 function getLineTowers(lineName) {
   if (lineTowersCache[lineName] && lineTowersCache[lineName].length) return lineTowersCache[lineName];
-  return LINES_DATA[lineName] || [];
+  if (LINES_DATA[lineName]) return LINES_DATA[lineName];
+  const n400 = lineName + ' 400 ك.ف', n132 = lineName + ' 132 ك.ف';
+  if (lineTowersCache[n400] && lineTowersCache[n400].length) return lineTowersCache[n400];
+  if (LINES_DATA[n400]) return LINES_DATA[n400];
+  if (lineTowersCache[n132] && lineTowersCache[n132].length) return lineTowersCache[n132];
+  if (LINES_DATA[n132]) return LINES_DATA[n132];
+  return [];
 }
 
 let _editingLineTowersList = [];
