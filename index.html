@@ -244,8 +244,6 @@ tbody tr:hover { background: #F7FAFC; }
   .page { display: none !important; }
   .page.active { display: block !important; }
   body.printing-lines .page:not(#page-lines) { display: none !important; }
-  body.printing-thermal .page:not(#page-thermal) { display: none !important; }
-  body.printing-thermal #thermalNewView { display: none !important; }
   body { background: white; }
   .form-card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
   /* عنوان مطبوع نظيف بدل السطر التفاعلي (فيه زر طباعة/إضافة/رجوع بجانب العنوان) */
@@ -4750,7 +4748,7 @@ function printOfficialForm() {
 // تصدير PDF مباشر برسم النص بـ Canvas 2D — بدون أي نص زائد يضيفه نظام iOS تلقائياً عند الطباعة المباشرة
 function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
   const v = id => (document.getElementById(id).value || '');
-  const sidePad = 26, scale = 1.2;
+  const sidePad = 26, scale = 3;
   const mctx = document.createElement('canvas').getContext('2d');
   function wrapText(ctx, text, maxWidth) {
     const words = String(text).split(' ').filter(w => w !== '');
@@ -5974,7 +5972,7 @@ function buildMemoCanvasPNG(widthCss) {
   const senderTitle = document.getElementById('memo_sender_title').value || '';
   const senderName = document.getElementById('memo_sender_name').value || '';
 
-  const sidePad = 30, scale = 2;
+  const sidePad = 30, scale = 3;
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
   const fontNormal = '16px Tahoma, Arial';
@@ -8159,11 +8157,51 @@ async function confirmPrintLinesSelection() {
   }
 }
 
-function printThermalArchive() {
+async function printThermalArchive() {
   if (!filteredThermal || !filteredThermal.length) { showToast('⚠️ لا توجد بيانات لطباعتها بالفلتر الحالي', 'error'); return; }
-  document.body.classList.add('printing-thermal');
-  window.print();
-  setTimeout(() => document.body.classList.remove('printing-thermal'), 500);
+  showToast('⏳ جاري تحضير ملف PDF...');
+
+  try {
+    const byDate = {};
+    filteredThermal.forEach(r => {
+      byDate[r.inspection_date] = byDate[r.inspection_date] || {};
+      byDate[r.inspection_date][r.line_name] = byDate[r.inspection_date][r.line_name] || [];
+      byDate[r.inspection_date][r.line_name].push(r);
+    });
+    const dates = Object.keys(byDate).sort((a,b) => b.localeCompare(a));
+
+    const columns = [
+      { label: 'النقطة', pct: 22 },
+      { label: 'R1', pct: 11 }, { label: 'R2', pct: 11 },
+      { label: 'S1', pct: 11 }, { label: 'S2', pct: 11 },
+      { label: 'T1', pct: 11 }, { label: 'T2', pct: 11 },
+      { label: 'الموظف', pct: 12 }
+    ];
+
+    let allPages = [];
+    dates.forEach(date => {
+      const lines = Object.keys(byDate[date]).sort((a,b) => a.localeCompare(b,'ar'));
+      lines.forEach(line => {
+        const rows = byDate[date][line].slice().sort((a,b) => (a.tower_number||0) - (b.tower_number||0));
+        const ambient = rows[0].ambient_temp ?? '—';
+        const title = `🌡️ ${line} — ${date} (حرارة الجو: ${ambient}°C)`;
+        const tableRows = rows.map(r => [
+          (isHotRecord(r) ? '🔴 ' : '') + (r.point_label || ''),
+          fmtTemp(r, r.r1), fmtTemp(r, r.r2),
+          fmtTemp(r, r.s1), fmtTemp(r, r.s2),
+          fmtTemp(r, r.t1), fmtTemp(r, r.t2),
+          r.created_by_name || '—'
+        ]);
+        allPages = allPages.concat(buildTableReportPages(title, columns, tableRows));
+      });
+    });
+
+    await exportCanvasReportPDF(allPages, 'الكشف_الحراري_' + new Date().toISOString().split('T')[0] + '.pdf', 'landscape');
+    showToast('✅ تم تجهيز ملف PDF');
+  } catch (e) {
+    console.error('Thermal PDF export error:', e);
+    showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : e), 'error');
+  }
 }
 
 // ========================
