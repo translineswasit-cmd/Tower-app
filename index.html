@@ -2803,7 +2803,7 @@ function updateWiresGroundUI() {
 const TYPE_TEXT_TO_CODE_400 = { 'برج تعليق':'XA','برج عبور':'XB','برج شد':'XC','برج نهائي':'XD','برج تبادل أطوار':'XE' };
 const TYPE_TEXT_TO_CODE_132 = { 'برج تعليق':'S','برج شد':'T','برج خاص':'SP','برج عبور':'R','برج نهائي':'E','برج عبور اسفل الخطوط':'K','برج عبور اسفل الخط':'K' };
 
-function getInsulatorMode(voltage, towerType, lineName) {
+function getInsulatorMode(voltage, towerType, lineName, towerNumber) {
   if (voltage === 400) {
     const code400 = TOWER_CATEGORY_400[towerType] ? towerType : TYPE_TEXT_TO_CODE_400[towerType];
     return TOWER_CATEGORY_400[code400] === 'شد' ? 'straight4' : 'v';
@@ -2811,9 +2811,15 @@ function getInsulatorMode(voltage, towerType, lineName) {
   // 132kV
   const code132 = TOWER_CATEGORY_132[towerType] ? towerType : TYPE_TEXT_TO_CODE_132[towerType];
   const isShad = TOWER_CATEGORY_132[code132] === 'شد';
-  const excluded = isExcluded132Line(lineName);
+  // استثناء خاص بهذا البرج بالذات (مفرد/مزدوج) يُقدَّم على إعداد الخط الافتراضي إذا كان محدَّداً
+  let chainOverride = null;
+  if (towerNumber != null && towerNumber !== '') {
+    const t = getLineTowers(lineName).find(tw => String(tw.num) === String(towerNumber));
+    if (t && t.chain_override) chainOverride = t.chain_override; // 'single' | 'double'
+  }
+  const excluded = chainOverride ? (chainOverride === 'single') : isExcluded132Line(lineName);
   if (excluded) {
-    // الخطوط المستثناة: تعليق=سلسلة واحدة، شد=سلسلتين
+    // الخطوط/الأبراج المستثناة: تعليق=سلسلة واحدة، شد=سلسلتين
     return isShad ? 'chain2_12' : 'chain1_10';
   }
   // القاعدة العامة: تعليق=سلسلتين، شد=4 سلاسل
@@ -2949,7 +2955,8 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
   wrap.innerHTML = '';
 
   const lineName = document.getElementById('f_line_name') ? document.getElementById('f_line_name').value : '';
-  const mode = getInsulatorMode(voltage, towerType, lineName);
+  const towerNum = document.getElementById('f_tower_number').value;
+  const mode = getInsulatorMode(voltage, towerType, lineName, towerNum);
   const count = getInsulatorCount(mode);
   const isDouble = isDoubleCircuitLine(lineName);
   const chainsPerPhase = getChainsPerPhase(mode);
@@ -3412,7 +3419,8 @@ const FIELDS = ['iron_intersections','tower_foundations',
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
   const lineName = document.getElementById('f_line_name').value;
-  const insMode = getInsulatorMode(currentVoltage, towerType, lineName);
+  const _fTowerNum = document.getElementById('f_tower_number').value;
+  const insMode = getInsulatorMode(currentVoltage, towerType, lineName, _fTowerNum);
   function svgFor(state) {
     if (insMode === 'v') return generateVShapeSVG(state);
     if (insMode === 'straight4') return generateQuadChainSVG(state, 4, 32);
@@ -4107,7 +4115,7 @@ async function confirmExportPDF() {
 
       const infoImg = drawArabicTextPNG(items, 760, { border: true });
       // رسم العوازل بالطريقة المثبتة (Canvas 2D مباشرة) — بديل foreignObject الذي يُنتج صوراً فارغة على iOS Safari
-      const insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2);
+      const insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number);
 
       const infoH = infoImg ? usableW * (infoImg.h / infoImg.w) : 0;
       const insH = insImg ? usableW * (insImg.h / insImg.w) : 0;
@@ -8508,7 +8516,7 @@ function renderTowerDetail(lineName, towerNum) {
   if (!r) { body.innerHTML = '<div class="empty-state">لم يتم كشف هذا البرج بعد</div>'; return; }
 
   const voltage = r.voltage || LINE_VOLTAGE[lineName] || 132;
-  const mode = getInsulatorMode(voltage, r.tower_type||'', lineName);
+  const mode = getInsulatorMode(voltage, r.tower_type||'', lineName, r.tower_number);
   const [stA, stB] = lineEndpoints(lineName);
 
   let html = `<div class="form-card" style="margin-bottom:14px">
@@ -8766,7 +8774,7 @@ function drawGroupedCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, t
 }
 
 // يبني صورة PNG واحدة فيها الفيزات R/S/T جنب بعض — بالرسم المباشر فقط، بدون أي تحويل HTML/SVG وسيط
-function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineName, insulatorCycleJSON, insulatorStateJSON2, insulatorCycleJSON2) {
+function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineName, insulatorCycleJSON, insulatorStateJSON2, insulatorCycleJSON2, towerNumber) {
   const state = safeParseJSON(insulatorStateJSON);
   if (!state) return null;
   const isDouble = isDoubleCircuitLine(lineName);
@@ -8774,7 +8782,7 @@ function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineNam
   const hasDamage1 = ['R','S','T'].some(p => (state[p]||[]).some(Boolean));
   const hasDamage2 = state2 ? ['R','S','T'].some(p => (state2[p]||[]).some(Boolean)) : false;
   if (!hasDamage1 && !hasDamage2) return null;
-  const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
+  const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'', towerNumber);
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['',''];
   const cycleAll = safeParseJSON(insulatorCycleJSON) || {R:[],S:[],T:[]};
   const treatedAll = getInsulatorTreatedIdx(state, cycleAll);
@@ -8932,16 +8940,25 @@ function renderLineTowersEditor() {
   const countEl = document.getElementById('lmTowersCount');
   countEl.textContent = _editingLineTowersList.length ? `إجمالي الأبراج: ${_editingLineTowersList.length}` : 'ما فيه أبراج مولّدة بعد';
   wrap.innerHTML = _editingLineTowersList.map((t, i) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
+    <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
       <span style="min-width:56px;font-weight:700">برج ${t.num}</span>
-      <select onchange="updateLineTowerType(${i}, this.value)" style="flex:1;padding:5px 8px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.8rem">
+      <select onchange="updateLineTowerType(${i}, this.value)" style="flex:1.4;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
         ${LINE_TOWER_TYPE_OPTIONS.map(o => `<option ${o===t.type?'selected':''}>${o}</option>`).join('')}
+      </select>
+      <select onchange="updateLineTowerChainOverride(${i}, this.value)" title="استثناء نوع العوازل لهذا البرج فقط (اختياري)" style="flex:1;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
+        <option value="" ${!t.chain_override?'selected':''}>عوازل: افتراضي الخط</option>
+        <option value="single" ${t.chain_override==='single'?'selected':''}>عوازل: مفرد</option>
+        <option value="double" ${t.chain_override==='double'?'selected':''}>عوازل: مزدوج</option>
       </select>
     </div>`).join('') || '<div class="empty-state">ولّد نطاقاً أولاً</div>';
 }
 
 function updateLineTowerType(i, val) {
   if (_editingLineTowersList[i]) _editingLineTowersList[i].type = val;
+}
+
+function updateLineTowerChainOverride(i, val) {
+  if (_editingLineTowersList[i]) _editingLineTowersList[i].chain_override = val || undefined;
 }
 
 async function saveLineTowersToServer(lineName) {
@@ -9355,7 +9372,7 @@ async function exportOpenDeparturesPDF() {
           const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator' || d.type === 'insulator2');
           let insImg = null;
           if (hasOpenInsulatorDep && r.insulator_state) {
-            insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2);
+            insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number);
           }
 
           // حساب الارتفاع الكلي للكتلة (تفاصيل المغادرات + صورة العوازل معاً)
@@ -9643,7 +9660,7 @@ function renderDepTowerDetail(lineName, towerNum) {
 
   const deps = extractDepsFromRecord(r);
   const voltage = r.voltage || LINE_VOLTAGE[lineName] || 132;
-  const mode = getInsulatorMode(voltage, r.tower_type||'', lineName);
+  const mode = getInsulatorMode(voltage, r.tower_type||'', lineName, r.tower_number);
   const [stA, stB] = lineEndpoints(lineName);
 
   let html = `<div class="form-card" style="margin-bottom:14px">
@@ -9985,7 +10002,7 @@ function buildTreatInsulatorUI(voltage, towerType, lineName, circuit) {
   const wrap = document.getElementById(wrapId);
   if (!wrap) return;
   wrap.innerHTML = '';
-  const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'');
+  const mode = getInsulatorMode(voltage||132, towerType||'', lineName||'', typeof towerNumber !== 'undefined' ? towerNumber : null);
   const count = getInsulatorCount(mode);
   const stateObj = circuit === 2 ? treatInsulatorState2 : treatInsulatorState;
   const cycleObj = circuit === 2 ? treatCycleState2 : treatCycleState;
@@ -10145,7 +10162,7 @@ function getTouchedSeveritySections(r) {
   const wrap = document.getElementById('treatPhasesWrap');
   let insTouched = false, insResolved = true;
   if (wrap) {
-    const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
+    const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'', r.tower_number);
     const blocks = wrap.querySelectorAll('.phase-block');
     blocks.forEach((block, pi) => {
       const phase = ['R','S','T'][pi]; if (!phase) return;
@@ -10161,7 +10178,7 @@ function getTouchedSeveritySections(r) {
   }
   const wrap2 = document.getElementById('treatPhasesWrap2');
   if (wrap2) {
-    const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
+    const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'', r.tower_number);
     const blocks2 = wrap2.querySelectorAll('.phase-block');
     blocks2.forEach((block, pi) => {
       const phase = ['R','S','T'][pi]; if (!phase) return;
@@ -10230,7 +10247,7 @@ async function saveTreatment() {
   }
 
   const now = new Date().toISOString().split('T')[0];
-  const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'');
+  const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'', r.tower_number);
   const isDouble = isDoubleCircuitLine(r.line_name);
   const stateAfter = JSON.parse(JSON.stringify(treatInsulatorState));
   const cycleAfter = JSON.parse(JSON.stringify(treatCycleState));
@@ -10628,7 +10645,8 @@ function calcLineHealthWithTreatments(lineName) {
     const mode = getInsulatorMode(
       LINE_VOLTAGE[lineName] || 132,
       r.tower_type || '',
-      lineName
+      lineName,
+      r.tower_number
     );
 
     // عدد السلاسل وقيمة كل سلسلة لكل طور
