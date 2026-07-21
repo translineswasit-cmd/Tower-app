@@ -404,8 +404,9 @@ tbody tr:hover { background: #F7FAFC; }
 <!-- VIEW PASSWORD MODAL -->
 <div class="modal-bg" id="viewPasswordModal">
   <div class="modal-box" style="max-width:380px">
-    <h3>👁️ بيانات تسجيل الدخول</h3>
-    <p style="margin:6px 0 14px 0;color:#666;font-size:0.85rem"><span id="vp_name"></span></p>
+    <h3>🔑 كلمة مرور جديدة</h3>
+    <p style="margin:6px 0 4px 0;color:#666;font-size:0.85rem"><span id="vp_name"></span></p>
+    <p style="margin:0 0 14px 0;color:#C53030;font-size:0.78rem">⚠️ كلمة المرور القديمة توقفت — بلّغ هذي الجديدة للموظف</p>
     <div class="field" style="margin-bottom:10px">
       <label>اسم المستخدم</label>
       <div style="display:flex;gap:8px;align-items:center">
@@ -2173,22 +2174,19 @@ async function doLogin() {
   errBox.classList.remove('show');
 
   try {
-    const res = await sbFetch(`users?username=eq.${encodeURIComponent(username)}&select=*`);
+    const res = await sbFetch('rpc/verify_login', {
+      method: 'POST',
+      body: JSON.stringify({ p_username: username, p_password: password })
+    });
     const data = await res.json();
 
-    if (!data.length) {
-      errBox.textContent = '❌ اسم المستخدم غير صحيح';
+    if (!Array.isArray(data) || !data.length) {
+      errBox.textContent = '❌ اسم المستخدم أو كلمة المرور غير صحيحة';
       errBox.classList.add('show');
       btn.disabled = false; btn.textContent = 'دخول'; return;
     }
 
     const user = data[0];
-    if (user.password !== password) {
-      errBox.textContent = '❌ الباسورد غير صحيح';
-      errBox.classList.add('show');
-      btn.disabled = false; btn.textContent = 'دخول'; return;
-    }
-
     if (!user.is_active) {
       errBox.textContent = '⚠️ هذا الحساب معطّل، تواصل مع المدير';
       errBox.classList.add('show');
@@ -5654,7 +5652,10 @@ async function changeAccountPassword() {
   if (!newpass) { showToast('⚠️ أدخل كلمة مرور جديدة أولاً', 'error'); return; }
   if (newpass.length < 4) { showToast('⚠️ كلمة المرور قصيرة جداً', 'error'); return; }
   try {
-    const res = await sbFetch(`users?id=eq.${currentUser.id}`, { method: 'PATCH', body: JSON.stringify({ password: newpass }) });
+    const res = await sbFetch('rpc/set_user_password', {
+      method: 'POST',
+      body: JSON.stringify({ p_user_id: String(currentUser.id), p_new_password: newpass })
+    });
     if (!res.ok) throw new Error();
     document.getElementById('acc_newpass').value = '';
     showToast('✅ تم تحديث كلمة المرور');
@@ -7616,7 +7617,7 @@ function openAccountActionsModal(id) {
   const wrap = document.getElementById('accountActionsGrid');
   let html = '';
   if (isAdmin) {
-    html += `<button class="acc-action-btn" onclick="closeAccountActionsModal();openViewPasswordModal('${u.id}')">${ICON_EYE}<span>معاينة الحساب</span></button>`;
+    html += `<button class="acc-action-btn" onclick="closeAccountActionsModal();resetUserPassword('${u.id}')">${ICON_EYE}<span>إعادة تعيين كلمة المرور</span></button>`;
   }
   html += `<button class="acc-action-btn" onclick="closeAccountActionsModal();toggleUserActive('${u.id}', ${u.is_active})">${u.is_active ? ICON_PAUSE : ICON_PLAY}<span>${u.is_active ? 'إيقاف الحساب' : 'تفعيل الحساب'}</span></button>`;
   html += `<button class="acc-action-btn" onclick="closeAccountActionsModal();openDeleteUserModal('${u.id}')">${ICON_TRASH}<span>حذف الحساب</span></button>`;
@@ -7625,13 +7626,23 @@ function openAccountActionsModal(id) {
 }
 function closeAccountActionsModal() { document.getElementById('accountActionsModal').classList.remove('show'); accountActionsUserId = null; }
 
-function openViewPasswordModal(id) {
+async function resetUserPassword(id) {
   const u = allUsers.find(x => x.id === id);
   if (!u) return;
-  document.getElementById('vp_name').textContent = u.full_name || '—';
-  document.getElementById('vp_username').textContent = u.username || '—';
-  document.getElementById('vp_password').textContent = u.password || '—';
-  document.getElementById('viewPasswordModal').classList.add('show');
+  if (!confirm(`إعادة تعيين كلمة مرور جديدة لـ${u.full_name || 'هذا الحساب'}؟ كلمة المرور القديمة تتوقف عن العمل فوراً.`)) return;
+  const newPassword = genPassword();
+  try {
+    const res = await sbFetch('rpc/set_user_password', {
+      method: 'POST',
+      body: JSON.stringify({ p_user_id: String(id), p_new_password: newPassword })
+    });
+    if (!res.ok) throw new Error();
+    document.getElementById('vp_name').textContent = u.full_name || '—';
+    document.getElementById('vp_username').textContent = u.username || '—';
+    document.getElementById('vp_password').textContent = newPassword;
+    document.getElementById('viewPasswordModal').classList.add('show');
+    showToast('✅ تم تعيين كلمة مرور جديدة');
+  } catch { showToast('❌ تعذر إعادة التعيين، حاول مرة أخرى', 'error'); }
 }
 function closeViewPasswordModal() { document.getElementById('viewPasswordModal').classList.remove('show'); }
 
@@ -7703,9 +7714,17 @@ async function createMember() {
     const res = await sbFetch('users', {
       method: 'POST',
       headers: { 'Prefer': 'return=representation' },
-      body: JSON.stringify({ full_name: fullName, username, password, role, department, email: username+'@local.app', can_manage_inventory: canManageInventory })
+      body: JSON.stringify({ full_name: fullName, username, role, department, email: username+'@local.app', can_manage_inventory: canManageInventory })
     });
     if (!res.ok) throw new Error();
+    const created = await res.json();
+    const newId = created[0].id;
+
+    const passRes = await sbFetch('rpc/set_user_password', {
+      method: 'POST',
+      body: JSON.stringify({ p_user_id: String(newId), p_new_password: password })
+    });
+    if (!passRes.ok) throw new Error();
 
     document.getElementById('resultUsername').textContent = username;
     document.getElementById('resultPassword').textContent = password;
