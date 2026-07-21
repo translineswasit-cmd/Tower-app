@@ -1418,6 +1418,25 @@ tbody tr:hover { background: #F7FAFC; }
 
     <!-- أبراج الخط: توليد نطاق أرقام + تحديد استثناءات النوع (شد/عبور/نهائي...) -->
     <div style="margin-top:18px;border-top:1.5px solid #E2E8F0;padding-top:14px">
+      <label style="font-weight:700;color:#1a2e4a;display:block;margin-bottom:8px">⚙️ إعدادات الخط الفنية</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label>عدد الدوائر</label>
+          <select id="lm_circuit_count" style="padding:10px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit">
+            <option value="1">دائرة واحدة</option>
+            <option value="2">دائرتان (2+1)</option>
+          </select>
+        </div>
+        <div class="field"><label>نوع سلسلة العوازل (132 ك.ف)</label>
+          <select id="lm_chain_mode" style="padding:10px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit">
+            <option value="double">مضاعف (الحالة العامة)</option>
+            <option value="single">مفرد (استثنائي)</option>
+          </select>
+        </div>
+      </div>
+      <p style="color:#a0aec0;font-size:0.76rem;margin-top:4px">نوع سلسلة العوازل يطبَّق على خطوط 132 ك.ف فقط (تعليق: مفرد=سلسلة واحدة/مضاعف=سلسلتين — شد: سلسلتين/4 سلاسل على التوالي).</p>
+    </div>
+
+    <div style="margin-top:18px;border-top:1.5px solid #E2E8F0;padding-top:14px">
       <label style="font-weight:700;color:#1a2e4a;display:block;margin-bottom:8px">🗼 أبراج الخط (رقم كل برج ونوعه — تُستخدم بشاشة الفحص والمغادرات)</label>
       <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
         <div class="field" style="flex:1;min-width:90px"><label>من برج</label><input id="lm_tw_from" type="number" placeholder="1"></div>
@@ -1927,7 +1946,11 @@ const LINE_VOLTAGE = {"واسط الحرارية - الامين رقم 1 400 ك.
 
 // الخطوط المزدوجة (دائرتين فعليتين على نفس هيكل البرج) — عوازل وأسلاك مكرّرة لكل دائرة
 const DOUBLE_CIRCUIT_LINES = ["دبوني - جصان (1+2) 132 ك.ف","شمال الكوت - جنوب الكوت (1+2) 132 ك.ف","شمال غرب الكوت - الحي (1+2) 132 ك.ف","واسط - شمال الكوت (1+2) 132 ك.ف","واسط - شمال غرب الكوت (1+2) 132 ك.ف","واسط - نعمانية (1+2) 132 ك.ف","واسط الحرارية - عزيزية (1+2) 132 ك.ف"];
-function isDoubleCircuitLine(lineName) { return DOUBLE_CIRCUIT_LINES.includes(lineName); }
+function isDoubleCircuitLine(lineName) {
+  const ov = lineSettingsCache[lineName];
+  if (ov && ov.circuit_count != null) return Number(ov.circuit_count) === 2;
+  return DOUBLE_CIRCUIT_LINES.includes(lineName);
+}
 // ==================== كادر قسم الخطوط (جدول ديناميكي: أعضاء + أعمدة قابلة للتعديل الكامل) ====================
 const STAFF_ROSTER_COLUMNS_DEFAULT = [{"key": "title", "label": "العنوان الوظيفي"}, {"key": "birth_year", "label": "تاريخ التولد"}, {"key": "certificate", "label": "الشهادة الحالية"}, {"key": "specialty", "label": "التخصص"}, {"key": "location", "label": "الموقع"}];
 
@@ -2009,6 +2032,8 @@ const EXCLUDED_132_LINES = [
   'دبوني - جصان'
 ];
 function isExcluded132Line(lineName) {
+  const ov = lineSettingsCache[lineName];
+  if (ov && ov.chain_mode) return ov.chain_mode === 'single';
   return EXCLUDED_132_LINES.some(ex => lineName && lineName.includes(ex.split(' - ')[0]) && lineName.includes(ex.split(' - ')[1]));
 }
 const TOWER_CATEGORY_400 = { XA:'تعليق', XB:'تعليق', XC:'شد', XD:'شد', XE:'تعليق' };
@@ -4748,7 +4773,7 @@ function printOfficialForm() {
 // تصدير PDF مباشر برسم النص بـ Canvas 2D — بدون أي نص زائد يضيفه نظام iOS تلقائياً عند الطباعة المباشرة
 function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
   const v = id => (document.getElementById(id).value || '');
-  const sidePad = 26, scale = 3;
+  const sidePad = 26, scale = 5;
   const mctx = document.createElement('canvas').getContext('2d');
   function wrapText(ctx, text, maxWidth) {
     const words = String(text).split(' ').filter(w => w !== '');
@@ -5972,7 +5997,7 @@ function buildMemoCanvasPNG(widthCss) {
   const senderTitle = document.getElementById('memo_sender_title').value || '';
   const senderName = document.getElementById('memo_sender_name').value || '';
 
-  const sidePad = 30, scale = 3;
+  const sidePad = 30, scale = 5;
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
   const fontNormal = '16px Tahoma, Arial';
@@ -8819,6 +8844,8 @@ function openAddLineModal() {
   ['lm_name','lm_length','lm_towers','lm_tension','lm_capacity','lm_wire','lm_ground','lm_year','lm_notes','lm_tw_from','lm_tw_to'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('lm_voltage').value = '132';
   document.getElementById('lm_status').value = 'بالعمل';
+  document.getElementById('lm_circuit_count').value = '1';
+  document.getElementById('lm_chain_mode').value = 'double';
   _editingLineTowersList = [];
   renderLineTowersEditor();
   document.getElementById('lineModal').style.display = '';
@@ -8840,6 +8867,10 @@ function editLine(idx) {
   document.getElementById('lm_year').value = l.year||'';
   document.getElementById('lm_status').value = l.status||'بالعمل';
   document.getElementById('lm_notes').value = l.notes||'';
+  // إعدادات الدائرة ونوع سلسلة العوازل — من الجدول المتزامن لو مضبوطة، وإلا نستنتجها من القوائم المدمجة بالكود
+  const ov = lineSettingsCache[l.name] || {};
+  document.getElementById('lm_circuit_count').value = ov.circuit_count != null ? String(ov.circuit_count) : (isDoubleCircuitLine(l.name) ? '2' : '1');
+  document.getElementById('lm_chain_mode').value = ov.chain_mode || (isExcluded132Line(l.name) ? 'single' : 'double');
   // تحميل الأبراج الحالية (من الجدول المتزامن لو معدّلة سابقاً، وإلا من القائمة المدمجة بالكود)
   _editingLineTowersList = JSON.parse(JSON.stringify(getLineTowers(l.name)));
   document.getElementById('lm_tw_from').value = '';
@@ -8858,13 +8889,20 @@ function deleteLine(idx) {
 // كل خط له صف واحد بجدول line_towers_custom (line_name, towers JSON). الخطوط اللي ما عُدّلت بعد
 // تستمر تستخدم LINES_DATA المدمجة تلقائياً — أول تعديل يُنشئ لها صفاً بالجدول (نقل تدريجي).
 let lineTowersCache = {};
+let lineSettingsCache = {}; // { line_name: { circuit_count: 1|2, chain_mode: 'single'|'double' } }
 
 async function loadLineTowersCache() {
   try {
-    const rows = await sbFetch('line_towers_custom?select=line_name,towers');
+    const rows = await sbFetch('line_towers_custom?select=line_name,towers,circuit_count,chain_mode');
     if (Array.isArray(rows)) {
       lineTowersCache = {};
-      rows.forEach(r => { lineTowersCache[r.line_name] = r.towers || []; });
+      lineSettingsCache = {};
+      rows.forEach(r => {
+        lineTowersCache[r.line_name] = r.towers || [];
+        if (r.circuit_count != null || r.chain_mode) {
+          lineSettingsCache[r.line_name] = { circuit_count: r.circuit_count, chain_mode: r.chain_mode };
+        }
+      });
     }
   } catch (e) {}
 }
@@ -8907,16 +8945,18 @@ function updateLineTowerType(i, val) {
 }
 
 async function saveLineTowersToServer(lineName) {
-  if (!_editingLineTowersList.length) return;
+  const circuitCount = parseInt(document.getElementById('lm_circuit_count').value) || 1;
+  const chainMode = document.getElementById('lm_chain_mode').value || 'double';
   try {
     await sbFetch(`line_towers_custom?on_conflict=line_name`, {
       method: 'POST',
       headers: { 'Prefer': 'resolution=merge-duplicates' },
-      body: JSON.stringify({ line_name: lineName, towers: _editingLineTowersList })
+      body: JSON.stringify({ line_name: lineName, towers: _editingLineTowersList, circuit_count: circuitCount, chain_mode: chainMode })
     });
     lineTowersCache[lineName] = _editingLineTowersList;
+    lineSettingsCache[lineName] = { circuit_count: circuitCount, chain_mode: chainMode };
   } catch (e) {
-    showToast('⚠️ تعذّر حفظ أبراج الخط بالسيرفر: ' + (e && e.message ? e.message : 'خطأ'), 'error');
+    showToast('⚠️ تعذّر حفظ إعدادات الخط بالسيرفر: ' + (e && e.message ? e.message : 'خطأ'), 'error');
   }
 }
 
