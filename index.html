@@ -7450,7 +7450,7 @@ async function confirmPrintStaffRoster() {
 
   try {
     const pages = buildTableReportPages('كادر قسم الخطوط', columns, rows, {
-      contentBasedWidth: true, orientation, multiBlock: true, headerFontSize: 18, cellFontSize: 16, titleGap: 78
+      contentBasedWidth: true, orientation, multiBlock: true, headerFontSize: 18, cellFontSize: 16, titleGap: 65
     });
     await exportCanvasReportPDF(pages, 'كادر_قسم_الخطوط_' + new Date().toISOString().split('T')[0] + '.pdf', orientation);
     showToast('✅ تم تجهيز ملف PDF');
@@ -8030,9 +8030,11 @@ function buildTableReportPages(title, columns, rows, opts) {
   const maxContentH = pageH - titleH - headerRowH - bottomMargin;
 
   const availW = widthCss - sidePad * 2;
+  const blockGap = opts.multiBlock ? 18 : 26;
   let colWidths;
   if (opts.contentBasedWidth) {
     // عرض كل عمود حسب أطول محتوى فيه (عنوانه أو أطول قيمة)، عدا الأعمدة ذات نسبة ثابتة (مثل الملاحظات)
+    // +20 (بدل +14 سابقاً) لضمان أن العمود الحاوي لأطول نص لا يلتفّ هو نفسه (الالتفاف يطرح 16 من عرض العمود)
     mctx.font = headerFont;
     const raw = columns.map((c, ci) => {
       let w = mctx.measureText(c.label).width;
@@ -8041,15 +8043,21 @@ function buildTableReportPages(title, columns, rows, opts) {
         rows.forEach(row => { w = Math.max(w, mctx.measureText(row[ci] || '').width); });
         mctx.font = headerFont;
       }
-      return w + (opts.multiBlock ? 14 : 22); // تقليص هامش العمود عند وجود جداول جنب بعض ليتّسع عدد أكبر منها
+      return w + (opts.multiBlock ? 20 : 22);
     });
-    const fixedTotal = columns.reduce((s, c, ci) => s + (c.fixedPct ? availW * c.fixedPct / 100 : 0), 0);
-    const flexIdxs = columns.map((c, ci) => ci).filter(ci => !columns[ci].fixedPct);
-    const flexRawTotal = flexIdxs.reduce((s, ci) => s + raw[ci], 0);
-    const flexAvail = Math.max(0, availW - fixedTotal);
-    // العرض يتناسب مع المحتوى فقط: يُصغَّر لو تجاوز المساحة المتاحة، ولا يُوسَّع أبداً لملء الفراغ الزائد
-    const scaleFactor = flexRawTotal > flexAvail ? flexAvail / flexRawTotal : 1;
-    colWidths = columns.map((c, ci) => c.fixedPct ? availW * c.fixedPct / 100 : raw[ci] * scaleFactor);
+    // مهم: نسبة الأعمدة ذات fixedPct (مثل الملاحظات) تُحسب من عرض الجدول (البلوك) نفسه، لا من عرض الورقة كاملة —
+    // وإلا لو صار جدولان جنب بعض، كل عمود ملاحظات ياخذ نسبة من الورقة كاملة فيضيع الفراغ ويمنع الجدول الثاني من التسع
+    const fixedPctFraction = columns.reduce((s, c) => s + (c.fixedPct ? c.fixedPct / 100 : 0), 0);
+    const flexRawTotal = columns.reduce((s, c, ci) => s + (c.fixedPct ? 0 : raw[ci]), 0);
+    const naturalBlockWidth = fixedPctFraction < 1 ? flexRawTotal / (1 - fixedPctFraction) : flexRawTotal;
+    let rawColWidths = columns.map((c, ci) => c.fixedPct ? naturalBlockWidth * c.fixedPct / 100 : raw[ci]);
+    const rawBlockWidth = rawColWidths.reduce((s, w) => s + w, 0);
+    // الحد الأقصى المسموح لعرض الجدول: صفحة كاملة لجدول واحد عادي، أو نص الصفحة (تقريباً) لو multiBlock —
+    // لضمان دائماً إمكانية احتواء جدولين على الأقل جنب بعض (والنص الطويل جداً يلتف لسطرين بدل ما يمنع التجاور)
+    const targetMaxWidth = opts.multiBlock ? (availW - blockGap) / 2 : availW;
+    // العرض يتناسب مع المحتوى فقط: يُصغَّر لو تجاوز الحد المسموح، ولا يُوسَّع أبداً لملء الفراغ الزائد
+    const scaleFactor = rawBlockWidth > targetMaxWidth ? targetMaxWidth / rawBlockWidth : 1;
+    colWidths = rawColWidths.map(w => w * scaleFactor);
   } else {
     colWidths = columns.map(c => availW * c.pct / 100);
   }
@@ -8071,7 +8079,6 @@ function buildTableReportPages(title, columns, rows, opts) {
   columnGroups.push(cur);
 
   // جداول متعددة جنب بعض بنفس الصفحة لو الجدول ضيق ومتبقّي مساحة أفقية (يفعّلها كادر القسم فقط)
-  const blockGap = opts.multiBlock ? 18 : 26;
   let numBlocks = 1;
   if (opts.multiBlock) {
     numBlocks = Math.max(1, Math.floor((availW + blockGap) / (blockWidth + blockGap)));
