@@ -8050,7 +8050,8 @@ function buildTableReportPages(title, columns, rows, opts) {
     const fixedPctFraction = columns.reduce((s, c) => s + (c.fixedPct ? c.fixedPct / 100 : 0), 0);
     const flexRawTotal = columns.reduce((s, c, ci) => s + (c.fixedPct ? 0 : raw[ci]), 0);
     const naturalBlockWidth = fixedPctFraction < 1 ? flexRawTotal / (1 - fixedPctFraction) : flexRawTotal;
-    let rawColWidths = columns.map((c, ci) => c.fixedPct ? naturalBlockWidth * c.fixedPct / 100 : raw[ci]);
+    // نضمن أن العمود ذو النسبة الثابتة (الملاحظات) لا يقل أبداً عن عرض عنوانه نفسه — وإلا يعبر النص حدود الخلية
+    let rawColWidths = columns.map((c, ci) => c.fixedPct ? Math.max(naturalBlockWidth * c.fixedPct / 100, raw[ci]) : raw[ci]);
     const rawBlockWidth = rawColWidths.reduce((s, w) => s + w, 0);
     // الحد الأقصى المسموح لعرض الجدول: صفحة كاملة لجدول واحد عادي، أو نص الصفحة (تقريباً) لو multiBlock —
     // لضمان دائماً إمكانية احتواء جدولين على الأقل جنب بعض (والنص الطويل جداً يلتف لسطرين بدل ما يمنع التجاور)
