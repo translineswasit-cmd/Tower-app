@@ -7449,7 +7449,9 @@ async function confirmPrintStaffRoster() {
   ]);
 
   try {
-    const pages = buildTableReportPages('كادر قسم الخطوط', columns, rows, { contentBasedWidth: true, orientation });
+    const pages = buildTableReportPages('كادر قسم الخطوط', columns, rows, {
+      contentBasedWidth: true, orientation, multiBlock: true, headerFontSize: 18, cellFontSize: 16
+    });
     await exportCanvasReportPDF(pages, 'كادر_قسم_الخطوط_' + new Date().toISOString().split('T')[0] + '.pdf', orientation);
     showToast('✅ تم تجهيز ملف PDF');
   } catch (e) {
@@ -8019,8 +8021,8 @@ function buildTableReportPages(title, columns, rows, opts) {
   const scale = 2;
   const sidePad = 30;
   const mctx = document.createElement('canvas').getContext('2d');
-  const headerFont = 'bold 14px Tahoma, Arial';
-  const cellFont = '13px Tahoma, Arial';
+  const headerFont = `bold ${opts.headerFontSize || 14}px Tahoma, Arial`;
+  const cellFont = `${opts.cellFontSize || 13}px Tahoma, Arial`;
   const titleFont = 'bold 20px Tahoma, Arial';
   const cellLineH = 18, headerRowH = 32, titleH = 50;
   const pageH = orientation === 'portrait' ? widthCss * 1.414 : widthCss / 1.414; // نسبة A4 الحقيقية
@@ -8045,13 +8047,13 @@ function buildTableReportPages(title, columns, rows, opts) {
     const flexIdxs = columns.map((c, ci) => ci).filter(ci => !columns[ci].fixedPct);
     const flexRawTotal = flexIdxs.reduce((s, ci) => s + raw[ci], 0);
     const flexAvail = Math.max(0, availW - fixedTotal);
-    // لو المحتوى أصغر من المساحة المتاحة نوسّعه نسبياً ليملأ الجدول عرض الورقة، ولو أكبر نصغّره بنفس التناسب
     // العرض يتناسب مع المحتوى فقط: يُصغَّر لو تجاوز المساحة المتاحة، ولا يُوسَّع أبداً لملء الفراغ الزائد
     const scaleFactor = flexRawTotal > flexAvail ? flexAvail / flexRawTotal : 1;
     colWidths = columns.map((c, ci) => c.fixedPct ? availW * c.fixedPct / 100 : raw[ci] * scaleFactor);
   } else {
     colWidths = columns.map(c => availW * c.pct / 100);
   }
+  const blockWidth = colWidths.reduce((s, w) => s + w, 0);
 
   mctx.font = cellFont;
   const rowInfos = rows.map(row => {
@@ -8060,35 +8062,37 @@ function buildTableReportPages(title, columns, rows, opts) {
     return { lines, h };
   });
 
-  const pageGroups = [];
+  const columnGroups = [];
   let cur = [], curH = 0;
   rowInfos.forEach(ri => {
-    if (curH + ri.h > maxContentH && cur.length) { pageGroups.push(cur); cur = []; curH = 0; }
+    if (curH + ri.h > maxContentH && cur.length) { columnGroups.push(cur); cur = []; curH = 0; }
     cur.push(ri); curH += ri.h;
   });
-  pageGroups.push(cur);
+  columnGroups.push(cur);
 
-  return pageGroups.map((pageRows, pageIdx) => {
-    const ops = [];
-    let y = 20;
-    ops.push({ type: 'text', text: title, x: widthCss / 2, y: y + 20, font: titleFont, align: 'center' });
-    if (pageGroups.length > 1) {
-      ops.push({ type: 'text', text: `صفحة ${pageIdx + 1} من ${pageGroups.length}`, x: widthCss - sidePad, y: y + 20, font: '12px Tahoma, Arial', align: 'right' });
-    }
-    y += titleH;
+  // جداول متعددة جنب بعض بنفس الصفحة لو الجدول ضيق ومتبقّي مساحة أفقية (يفعّلها كادر القسم فقط)
+  const blockGap = 26;
+  let numBlocks = 1;
+  if (opts.multiBlock) {
+    numBlocks = Math.max(1, Math.floor((availW + blockGap) / (blockWidth + blockGap)));
+  }
 
-    let cx = widthCss - sidePad;
+  const pageChunks = [];
+  for (let i = 0; i < columnGroups.length; i += numBlocks) pageChunks.push(columnGroups.slice(i, i + numBlocks));
+
+  function drawTableBlock(ops, pageRows, rightEdge) {
+    let y0 = titleH;
+    let cx = rightEdge;
     columns.forEach((c, ci) => {
       const w = colWidths[ci];
       cx -= w;
-      ops.push({ type: 'rectFill', x: cx, y, w, h: headerRowH, color: '#eef1f5' });
-      ops.push({ type: 'rect', x: cx, y, w, h: headerRowH });
-      ops.push({ type: 'text', text: c.label, x: cx + w / 2, y: y + headerRowH / 2 + 5, font: headerFont, align: 'center' });
+      ops.push({ type: 'rectFill', x: cx, y: y0, w, h: headerRowH, color: '#eef1f5' });
+      ops.push({ type: 'rect', x: cx, y: y0, w, h: headerRowH });
+      ops.push({ type: 'text', text: c.label, x: cx + w / 2, y: y0 + headerRowH / 2 + 5, font: headerFont, align: 'center' });
     });
-    y += headerRowH;
-
+    let y = y0 + headerRowH;
     pageRows.forEach(ri => {
-      let cx2 = widthCss - sidePad;
+      let cx2 = rightEdge;
       ri.lines.forEach((lines, ci) => {
         const w = colWidths[ci];
         cx2 -= w;
@@ -8099,6 +8103,21 @@ function buildTableReportPages(title, columns, rows, opts) {
         });
       });
       y += ri.h;
+    });
+  }
+
+  return pageChunks.map((blocks, pageIdx) => {
+    const ops = [];
+    ops.push({ type: 'text', text: title, x: widthCss / 2, y: 40, font: titleFont, align: 'center' });
+    if (pageChunks.length > 1) {
+      ops.push({ type: 'text', text: `صفحة ${pageIdx + 1} من ${pageChunks.length}`, x: widthCss - sidePad, y: 40, font: '12px Tahoma, Arial', align: 'right' });
+    }
+    // تمركز مجموعة الجداول (جدول واحد أو أكثر) بالورقة بحيث تكون الحواف الجانبية متساوية من الجهتين
+    const totalContentW = blocks.length * blockWidth + (blocks.length - 1) * blockGap;
+    const contentRightEdge = (widthCss + totalContentW) / 2;
+    blocks.forEach((pageRows, bi) => {
+      const rightEdge = contentRightEdge - bi * (blockWidth + blockGap);
+      drawTableBlock(ops, pageRows, rightEdge);
     });
 
     const dataUrl = _renderReportCanvasPage(ops, widthCss, pageH, scale);
