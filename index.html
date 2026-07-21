@@ -7424,23 +7424,27 @@ async function confirmPrintStaffRoster() {
   closePrintStaffRosterModal();
   showToast('⏳ جاري تحضير ملف PDF...');
 
-  // توزيع عرض متناسق يملأ عرض ورقة A4: عمود الترقيم صغير ثابت، الاسم أعرض شوي، والباقي يتقاسم المتبقي بالتساوي
-  const idxColPct = 4, nameColPct = 22;
-  const otherColPct = selectedCols.length ? (100 - idxColPct - nameColPct) / selectedCols.length : 0;
+  // الاتجاه: طولي تلقائياً لو أعمدة البيانات (ت + الاسم + المختارة، بدون الملاحظات) أقل من 4
+  const totalDataCols = 2 + selectedCols.length;
+  const orientation = totalDataCols < 4 ? 'portrait' : 'landscape';
+
+  // كل عمود ياخذ عرضه حسب أطول محتوى فيه فعلياً؛ عمود الملاحظات وحده بعرض ثابت (فاضي دائماً)
   const columns = [
-    { label: 'ت', pct: idxColPct },
-    { label: 'الاسم الثلاثي', pct: nameColPct },
-    ...selectedCols.map(c => ({ label: c.label, pct: otherColPct, key: c.key }))
+    { label: 'ت' },
+    { label: 'الاسم الثلاثي' },
+    ...selectedCols.map(c => ({ label: c.label, key: c.key })),
+    { label: 'ملاحظات', fixedPct: 20 }
   ];
   const rows = selectedRows.map((row, i) => [
     String(i + 1),
     row.name || '-',
-    ...selectedCols.map(c => (row.values && row.values[c.key]) || '-')
+    ...selectedCols.map(c => (row.values && row.values[c.key]) || '-'),
+    ''
   ]);
 
   try {
-    const pages = buildTableReportPages('👥 كادر قسم الخطوط', columns, rows);
-    await exportCanvasReportPDF(pages, 'كادر_قسم_الخطوط_' + new Date().toISOString().split('T')[0] + '.pdf', 'landscape');
+    const pages = buildTableReportPages('👥 كادر قسم الخطوط', columns, rows, { contentBasedWidth: true, orientation });
+    await exportCanvasReportPDF(pages, 'كادر_قسم_الخطوط_' + new Date().toISOString().split('T')[0] + '.pdf', orientation);
     showToast('✅ تم تجهيز ملف PDF');
   } catch (e) {
     showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
@@ -8004,7 +8008,8 @@ function _renderReportCanvasPage(ops, widthCss, totalHeight, scale) {
 // يبني صفحات جدول (عنوان + رأس مظلّل + صفوف بحدود، مع التفاف نص وتقسيم صفحات تلقائي)
 function buildTableReportPages(title, columns, rows, opts) {
   opts = opts || {};
-  const widthCss = opts.widthCss || 1000; // عريض (landscape) ليسع أعمدة أكثر
+  const orientation = opts.orientation || 'landscape';
+  const widthCss = opts.widthCss || (orientation === 'portrait' ? 700 : 1000);
   const scale = 2;
   const sidePad = 30;
   const mctx = document.createElement('canvas').getContext('2d');
@@ -8012,12 +8017,34 @@ function buildTableReportPages(title, columns, rows, opts) {
   const cellFont = '13px Tahoma, Arial';
   const titleFont = 'bold 20px Tahoma, Arial';
   const cellLineH = 18, headerRowH = 32, titleH = 50;
-  const pageH = widthCss / 1.414; // نسبة A4 landscape الحقيقية
+  const pageH = orientation === 'portrait' ? widthCss * 1.414 : widthCss / 1.414; // نسبة A4 الحقيقية
   const bottomMargin = 30;
   const maxContentH = pageH - titleH - headerRowH - bottomMargin;
 
   const availW = widthCss - sidePad * 2;
-  const colWidths = columns.map(c => availW * c.pct / 100);
+  let colWidths;
+  if (opts.contentBasedWidth) {
+    // عرض كل عمود حسب أطول محتوى فيه (عنوانه أو أطول قيمة)، عدا الأعمدة ذات نسبة ثابتة (مثل الملاحظات)
+    mctx.font = headerFont;
+    const raw = columns.map((c, ci) => {
+      let w = mctx.measureText(c.label).width;
+      if (!c.fixedPct) {
+        mctx.font = cellFont;
+        rows.forEach(row => { w = Math.max(w, mctx.measureText(row[ci] || '').width); });
+        mctx.font = headerFont;
+      }
+      return w + 22;
+    });
+    const fixedTotal = columns.reduce((s, c, ci) => s + (c.fixedPct ? availW * c.fixedPct / 100 : 0), 0);
+    const flexIdxs = columns.map((c, ci) => ci).filter(ci => !columns[ci].fixedPct);
+    const flexRawTotal = flexIdxs.reduce((s, ci) => s + raw[ci], 0);
+    const flexAvail = Math.max(0, availW - fixedTotal);
+    // لو المحتوى أصغر من المساحة المتاحة نوسّعه نسبياً ليملأ الجدول عرض الورقة، ولو أكبر نصغّره بنفس التناسب
+    const scaleFactor = flexRawTotal > 0 ? flexAvail / flexRawTotal : 1;
+    colWidths = columns.map((c, ci) => c.fixedPct ? availW * c.fixedPct / 100 : raw[ci] * scaleFactor);
+  } else {
+    colWidths = columns.map(c => availW * c.pct / 100);
+  }
 
   mctx.font = cellFont;
   const rowInfos = rows.map(row => {
