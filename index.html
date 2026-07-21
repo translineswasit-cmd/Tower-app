@@ -1947,7 +1947,7 @@ const LINE_VOLTAGE = {"واسط الحرارية - الامين رقم 1 400 ك.
 // الخطوط المزدوجة (دائرتين فعليتين على نفس هيكل البرج) — عوازل وأسلاك مكرّرة لكل دائرة
 const DOUBLE_CIRCUIT_LINES = ["دبوني - جصان (1+2) 132 ك.ف","شمال الكوت - جنوب الكوت (1+2) 132 ك.ف","شمال غرب الكوت - الحي (1+2) 132 ك.ف","واسط - شمال الكوت (1+2) 132 ك.ف","واسط - شمال غرب الكوت (1+2) 132 ك.ف","واسط - نعمانية (1+2) 132 ك.ف","واسط الحرارية - عزيزية (1+2) 132 ك.ف"];
 function isDoubleCircuitLine(lineName) {
-  const ov = lineSettingsCache[lineName];
+  const ov = getLineSettingsOverride(lineName);
   if (ov && ov.circuit_count != null) return Number(ov.circuit_count) === 2;
   return DOUBLE_CIRCUIT_LINES.includes(lineName);
 }
@@ -2031,8 +2031,19 @@ const EXCLUDED_132_LINES = [
   'جنوب الكوت - الدجيلي',
   'دبوني - جصان'
 ];
+// يفحص كل صيغ اسم الخط الممكنة (نفس منطق getLineTowers) لإيجاد إعدادات الدائرة/نوع السلسلة المعدَّلة
+function getLineSettingsOverride(lineName) {
+  if (!lineName) return null;
+  const bare = lineName.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim();
+  const candidates = [lineName, bare, bare + ' 400 ك.ف', bare + ' 132 ك.ف'];
+  for (const n of candidates) {
+    if (lineSettingsCache[n]) return lineSettingsCache[n];
+  }
+  return null;
+}
+
 function isExcluded132Line(lineName) {
-  const ov = lineSettingsCache[lineName];
+  const ov = getLineSettingsOverride(lineName);
   if (ov && ov.chain_mode) return ov.chain_mode === 'single';
   return EXCLUDED_132_LINES.some(ex => lineName && lineName.includes(ex.split(' - ')[0]) && lineName.includes(ex.split(' - ')[1]));
 }
@@ -8876,7 +8887,7 @@ function editLine(idx) {
   document.getElementById('lm_status').value = l.status||'بالعمل';
   document.getElementById('lm_notes').value = l.notes||'';
   // إعدادات الدائرة ونوع سلسلة العوازل — من الجدول المتزامن لو مضبوطة، وإلا نستنتجها من القوائم المدمجة بالكود
-  const ov = lineSettingsCache[l.name] || {};
+  const ov = getLineSettingsOverride(l.name) || {};
   document.getElementById('lm_circuit_count').value = ov.circuit_count != null ? String(ov.circuit_count) : (isDoubleCircuitLine(l.name) ? '2' : '1');
   document.getElementById('lm_chain_mode').value = ov.chain_mode || (isExcluded132Line(l.name) ? 'single' : 'double');
   // تحميل الأبراج الحالية (من الجدول المتزامن لو معدّلة سابقاً، وإلا من القائمة المدمجة بالكود)
@@ -8916,16 +8927,19 @@ async function loadLineTowersCache() {
 }
 
 // المصدر الموحّد لأبراج أي خط بكل أنحاء التطبيق — يستبدل الوصول المباشر لـ LINES_DATA[lineName]
-// يدعم أيضاً حالة أن الاسم المخزَّن بـ"بيانات الخطوط" بدون لاحقة الفولتية بينما LINES_DATA يستخدمها
-// (مثال: "الكوت القديمة - شيخ سعد" مقابل "الكوت القديمة - شيخ سعد 132 ك.ف") — هذا كان يسبب رجوع قائمة فاضية
+// "بيانات الخطوط" تخزّن الاسم بدون لاحقة الفولتية، بينما LINES_DATA الأصلية تستخدم لاحقة ("...132 ك.ف").
+// هذي الدالة تفحص كل الصيغ الممكنة للاسم، وتعطي الأولوية دائماً للبيانات المعدَّلة (الكاش المتزامن)
+// أياً كانت صيغة الاسم المستخدمة بالاستدعاء — قبل الرجوع للبيانات الأصلية المدمجة بالكود.
 function getLineTowers(lineName) {
-  if (lineTowersCache[lineName] && lineTowersCache[lineName].length) return lineTowersCache[lineName];
-  if (LINES_DATA[lineName]) return LINES_DATA[lineName];
-  const n400 = lineName + ' 400 ك.ف', n132 = lineName + ' 132 ك.ف';
-  if (lineTowersCache[n400] && lineTowersCache[n400].length) return lineTowersCache[n400];
-  if (LINES_DATA[n400]) return LINES_DATA[n400];
-  if (lineTowersCache[n132] && lineTowersCache[n132].length) return lineTowersCache[n132];
-  if (LINES_DATA[n132]) return LINES_DATA[n132];
+  if (!lineName) return [];
+  const bare = lineName.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim();
+  const candidates = [lineName, bare, bare + ' 400 ك.ف', bare + ' 132 ك.ف'];
+  for (const n of candidates) {
+    if (lineTowersCache[n] && lineTowersCache[n].length) return lineTowersCache[n];
+  }
+  for (const n of candidates) {
+    if (LINES_DATA[n]) return LINES_DATA[n];
+  }
   return [];
 }
 
