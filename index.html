@@ -1417,6 +1417,19 @@ tbody tr:hover { background: #F7FAFC; }
       <div class="field"><label>الحالة</label><select id="lm_status" style="padding:10px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit"><option>بالعمل</option><option>خارج العمل</option></select></div>
     </div>
     <div class="field" style="margin-top:12px"><label>ملاحظات</label><textarea id="lm_notes" rows="2" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ccc;font-family:inherit;resize:vertical"></textarea></div>
+
+    <!-- أبراج الخط: توليد نطاق أرقام + تحديد استثناءات النوع (شد/عبور/نهائي...) -->
+    <div style="margin-top:18px;border-top:1.5px solid #E2E8F0;padding-top:14px">
+      <label style="font-weight:700;color:#1a2e4a;display:block;margin-bottom:8px">🗼 أبراج الخط (رقم كل برج ونوعه — تُستخدم بشاشة الفحص والمغادرات)</label>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:90px"><label>من برج</label><input id="lm_tw_from" type="number" placeholder="1"></div>
+        <div class="field" style="flex:1;min-width:90px"><label>إلى برج</label><input id="lm_tw_to" type="number" placeholder="150"></div>
+        <button class="btn btn-secondary btn-sm" onclick="generateLineTowersRange()">🔄 توليد (الكل تعليق افتراضياً)</button>
+      </div>
+      <p style="color:#a0aec0;font-size:0.76rem;margin-top:4px">التوليد يستبدل القائمة الحالية بالكامل. بعده حدد يدوياً فقط الأبراج الاستثنائية (شد/عبور/نهائي/خاص) من القائمة تحت.</p>
+      <p id="lmTowersCount" style="font-size:0.8rem;color:#4a5568;margin-top:6px;font-weight:700"></p>
+      <div id="lmTowersListWrap" style="max-height:260px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px;margin-top:6px"></div>
+    </div>
     <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="closeLineModal()">إلغاء</button>
       <button class="btn btn-primary" onclick="saveLineModal()">💾 حفظ</button>
@@ -2175,6 +2188,7 @@ function enterApp() {
 
   applyRolePermissions();
   loadRecords();
+  if (navigator.onLine) loadLineTowersCache(); // كاش أبراج الخطوط المعدَّلة (يفشل بصمت أوف لاين، القيم المدمجة بالكود تبقى تشتغل كاحتياط)
 }
 
 function logout() {
@@ -2399,7 +2413,7 @@ function onLineChange(skipModalClose) {
     renderActiveLinesTabs();
     return;
   }
-  const towers = LINES_DATA[name];
+  const towers = getLineTowers(name);
   towers.forEach(t => {
     const o = document.createElement('option');
     o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code||''; tSel.appendChild(o);
@@ -2547,7 +2561,9 @@ function getTowerCriticalityLevel(rec) {
 
 function isInspectionComplete(rec) {
   if (!rec) return false;
-  const core = ['iron_intersections','tower_foundations','tower_attachments','road_access'];
+  // ملاحظة: tower_attachments (ملحقات البرج) أُزيل من هذا الفحص لأنه لا يوجد له حقل إدخال
+  // بنموذج الفحص أصلاً — بقاؤه بالقائمة كان يمنع أي كشف من الاكتمال مهما عُبّي بالكامل
+  const core = ['iron_intersections','tower_foundations','road_access'];
   return core.every(f => rec[f] && String(rec[f]).trim() !== '');
 }
 
@@ -2577,7 +2593,7 @@ async function renderTowersGrid(lineName) {
   titleEl.textContent = '🗼 أبراج خط: ' + lineName;
   grid.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات الأبراج...</div>';
   await loadFullRecordsCache();
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   grid.innerHTML = towers.map(t => {
     const rec = getLatestRecordForTower(lineName, t.num);
     const level = getTowerCriticalityLevel(rec);
@@ -2660,7 +2676,7 @@ function openTowerModal(lineName, towerNum) {
   const tSel = document.getElementById('f_tower_number');
   if (tSel.dataset.loadedFor !== lineName) {
     tSel.innerHTML = '<option value="">--</option>';
-    (LINES_DATA[lineName]||[]).forEach(t => {
+    getLineTowers(lineName).forEach(t => {
       const o = document.createElement('option');
       o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code||'';
       tSel.appendChild(o);
@@ -2711,7 +2727,7 @@ function onTowerChangeOriginal() {
 // WIRES / GROUND DYNAMIC LABELS
 // ========================
 function getNeighborLabels(lineName, towerNum) {
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   const idx = towers.findIndex(t => t.num === towerNum);
   const [stA, stB] = lineEndpoints(lineName);
   const prevLabel = (idx <= 0) ? ('مدخل محطة ' + stA) : ('برج ' + towers[idx-1].num);
@@ -4387,7 +4403,7 @@ function getWireTypeForLine(lineName) {
 
 // نفس منطق "الأبراج التي تستحق فحص حراري" المستخدم بالكشف العادي (أبراج الشد فقط)
 function getTensionTowersForLine(lineName) {
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   const voltage = LINE_VOLTAGE[lineName];
   return towers.filter(t => isThermalRelevantTower(t, voltage)).map(t => t.num);
 }
@@ -5059,7 +5075,7 @@ function isSingleEntryLine(lineName) {
 }
 
 function buildThermalPointOptions(lineName) {
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   const voltage = LINE_VOLTAGE[lineName];
   const [stA, stB] = lineEndpoints(lineName);
   const singleEntry = isSingleEntryLine(lineName);
@@ -7779,7 +7795,7 @@ function calcLineHealth(lineName) {
   const allRec = JSON.parse(localStorage.getItem('inspections_cache') || '[]');
   const rec = allRec.filter(r => r.line_name === lineName);
   if (!rec.length) return null;
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   const coverage = towers.length > 0 ? new Set(rec.map(r => r.tower_number)).size / towers.length : 0;
   let elIss = 0, elTot = 0, mIss = 0, mTot = 0;
   rec.forEach(r => {
@@ -7803,7 +7819,8 @@ function renderLinesStatus() {
   let html = '';
   filtered.forEach(l => {
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
-    const lineName = LINES_DATA[l.name+' 400 ك.ف'] ? l.name+' 400 ك.ف' : (LINES_DATA[l.name+' 132 ك.ف'] ? l.name+' 132 ك.ف' : null);
+    const _n400 = l.name+' 400 ك.ف', _n132 = l.name+' 132 ك.ف';
+    const lineName = (LINES_DATA[_n400]||lineTowersCache[_n400]) ? _n400 : ((LINES_DATA[_n132]||lineTowersCache[_n132]) ? _n132 : null);
     const health = lineName ? calcLineHealthWithTreatments(lineName) : null;
     let badge, elBar, mBar, washBar;
     const getColor = s => s>=80?'#1e8449':s>=60?'#f39c12':'#c0392b';
@@ -8373,7 +8390,7 @@ function backToTowerList() {
 
 function renderLineTowerList(lineName) {
   const body = document.getElementById('lineTowerListBody');
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   const latestRecs = getLatestRecordsPerTower(lineName);
   const recByTower = {}; latestRecs.forEach(r => { recByTower[r.tower_number] = r; });
 
@@ -8758,9 +8775,11 @@ let editingLineIdx = null;
 function openAddLineModal() {
   editingLineIdx = null;
   document.getElementById('lineModalTitle').textContent = 'إضافة خط جديد';
-  ['lm_name','lm_length','lm_towers','lm_tension','lm_capacity','lm_wire','lm_ground','lm_year','lm_notes'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  ['lm_name','lm_length','lm_towers','lm_tension','lm_capacity','lm_wire','lm_ground','lm_year','lm_notes','lm_tw_from','lm_tw_to'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('lm_voltage').value = '132';
   document.getElementById('lm_status').value = 'بالعمل';
+  _editingLineTowersList = [];
+  renderLineTowersEditor();
   document.getElementById('lineModal').style.display = '';
 }
 
@@ -8780,6 +8799,11 @@ function editLine(idx) {
   document.getElementById('lm_year').value = l.year||'';
   document.getElementById('lm_status').value = l.status||'بالعمل';
   document.getElementById('lm_notes').value = l.notes||'';
+  // تحميل الأبراج الحالية (من الجدول المتزامن لو معدّلة سابقاً، وإلا من القائمة المدمجة بالكود)
+  _editingLineTowersList = JSON.parse(JSON.stringify(getLineTowers(l.name)));
+  document.getElementById('lm_tw_from').value = '';
+  document.getElementById('lm_tw_to').value = '';
+  renderLineTowersEditor();
   document.getElementById('lineModal').style.display = '';
 }
 
@@ -8787,6 +8811,72 @@ function deleteLine(idx) {
   if (currentUser.role !== 'admin') { showToast('⛔ الحذف من صلاحيات المدير فقط', 'error'); return; }
   if (!confirm('هل تريد حذف هذا الخط؟')) return;
   const data = getLinesInfoData(); data.splice(idx,1); saveLinesInfoData(data); renderLinesInfo();
+}
+
+// ==================== أبراج الخطوط: تخزين متزامن يحل محل LINES_DATA المدمجة بالكود ====================
+// كل خط له صف واحد بجدول line_towers_custom (line_name, towers JSON). الخطوط اللي ما عُدّلت بعد
+// تستمر تستخدم LINES_DATA المدمجة تلقائياً — أول تعديل يُنشئ لها صفاً بالجدول (نقل تدريجي).
+let lineTowersCache = {};
+
+async function loadLineTowersCache() {
+  try {
+    const rows = await sbFetch('line_towers_custom?select=line_name,towers');
+    if (Array.isArray(rows)) {
+      lineTowersCache = {};
+      rows.forEach(r => { lineTowersCache[r.line_name] = r.towers || []; });
+    }
+  } catch (e) {}
+}
+
+// المصدر الموحّد لأبراج أي خط بكل أنحاء التطبيق — يستبدل الوصول المباشر لـ LINES_DATA[lineName]
+function getLineTowers(lineName) {
+  if (lineTowersCache[lineName] && lineTowersCache[lineName].length) return lineTowersCache[lineName];
+  return LINES_DATA[lineName] || [];
+}
+
+let _editingLineTowersList = [];
+
+function generateLineTowersRange() {
+  const from = parseInt(document.getElementById('lm_tw_from').value);
+  const to = parseInt(document.getElementById('lm_tw_to').value);
+  if (!from || !to || to < from) { showToast('⚠️ أدخل نطاقاً صحيحاً (من ≤ إلى)', 'error'); return; }
+  if (to - from > 500) { showToast('⚠️ النطاق كبير جداً (حد أقصى 500 برج)', 'error'); return; }
+  _editingLineTowersList = [];
+  for (let n = from; n <= to; n++) _editingLineTowersList.push({ num: n, type: 'برج تعليق' });
+  renderLineTowersEditor();
+}
+
+const LINE_TOWER_TYPE_OPTIONS = ['برج تعليق', 'برج شد', 'برج عبور', 'برج عبور اسفل الخط', 'برج نهائي', 'برج خاص'];
+
+function renderLineTowersEditor() {
+  const wrap = document.getElementById('lmTowersListWrap');
+  const countEl = document.getElementById('lmTowersCount');
+  countEl.textContent = _editingLineTowersList.length ? `إجمالي الأبراج: ${_editingLineTowersList.length}` : 'ما فيه أبراج مولّدة بعد';
+  wrap.innerHTML = _editingLineTowersList.map((t, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
+      <span style="min-width:56px;font-weight:700">برج ${t.num}</span>
+      <select onchange="updateLineTowerType(${i}, this.value)" style="flex:1;padding:5px 8px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.8rem">
+        ${LINE_TOWER_TYPE_OPTIONS.map(o => `<option ${o===t.type?'selected':''}>${o}</option>`).join('')}
+      </select>
+    </div>`).join('') || '<div class="empty-state">ولّد نطاقاً أولاً</div>';
+}
+
+function updateLineTowerType(i, val) {
+  if (_editingLineTowersList[i]) _editingLineTowersList[i].type = val;
+}
+
+async function saveLineTowersToServer(lineName) {
+  if (!_editingLineTowersList.length) return;
+  try {
+    await sbFetch(`line_towers_custom?on_conflict=line_name`, {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({ line_name: lineName, towers: _editingLineTowersList })
+    });
+    lineTowersCache[lineName] = _editingLineTowersList;
+  } catch (e) {
+    showToast('⚠️ تعذّر حفظ أبراج الخط بالسيرفر: ' + (e && e.message ? e.message : 'خطأ'), 'error');
+  }
 }
 
 function closeLineModal() { document.getElementById('lineModal').style.display = 'none'; }
@@ -8811,8 +8901,10 @@ function saveLineModal() {
     notes: document.getElementById('lm_notes').value.trim()
   };
   if (editingLineIdx !== null) data[editingLineIdx] = entry; else data.push(entry);
-  saveLinesInfoData(data); closeLineModal(); renderLinesInfo();
-  showToast('تم حفظ بيانات الخط');
+  saveLinesInfoData(data);
+  saveLineTowersToServer(name); // يحفظ قائمة الأبراج (رقم + نوع) بجدول متزامن، متاح لكل الأجهزة فوراً
+  closeLineModal(); renderLinesInfo();
+  showToast('تم حفظ بيانات الخط' + (_editingLineTowersList.length ? ` (${_editingLineTowersList.length} برج)` : ''));
 }
 
 // ========================
@@ -10445,7 +10537,7 @@ function mechSevScore(sev, maxVal) {
 function calcLineHealthWithTreatments(lineName) {
   const rec = getLatestRecordsPerTower(lineName);
   if (!rec.length) return null;
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   const coverage = towers.length > 0 ? rec.length / towers.length : 0;
 
   let totalElScore = 0, totalMScore = 0;
@@ -10551,7 +10643,7 @@ function onEmgLineChange() {
   const towerSel = document.getElementById('emg_tower');
   towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
   if (!lineName) { towerSel.disabled = true; return; }
-  const towers = LINES_DATA[lineName] || [];
+  const towers = getLineTowers(lineName);
   towers.forEach(t => {
     const opt = document.createElement('option');
     opt.value = t.num; opt.textContent = 'برج ' + t.num;
