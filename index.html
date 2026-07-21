@@ -3381,7 +3381,10 @@ const FIELDS = ['iron_intersections','tower_foundations',
   'wires_r1','wires_r2','wires_s1','wires_s2','wires_t1','wires_t2',
   'wires_r1_c2','wires_s1_c2','wires_t1_c2','wires_circuit',
   'ground_1','ground_2','fire_causes_notes','road_access','road_access_notes','notes',
-  'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire','insulator_washing','insulator_chain_types'];
+  'sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire','insulator_washing'];
+  // ملاحظة: insulator_chain_types أُزيل من هذي القائمة — ما إله عنصر HTML (f_insulator_chain_types غير موجود)،
+  // وقيمته الصحيحة أصلاً تُحسب وتُحفظ مباشرة بسطر "insulator_chain_types: JSON.stringify(chainTypes)" بالأسفل.
+  // بقاؤه هنا كان يسبب استثناء (Cannot read properties of null) يوقف getFormData() بالكامل قبل أي محاولة حفظ.
 
 function getFormData() {
   const towerType = document.getElementById('f_tower_type').value;
