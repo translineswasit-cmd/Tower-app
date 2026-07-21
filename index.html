@@ -7450,7 +7450,7 @@ async function confirmPrintStaffRoster() {
 
   try {
     const pages = buildTableReportPages('كادر قسم الخطوط', columns, rows, {
-      contentBasedWidth: true, orientation, multiBlock: true, headerFontSize: 18, cellFontSize: 16
+      contentBasedWidth: true, orientation, multiBlock: true, headerFontSize: 18, cellFontSize: 16, titleGap: 78
     });
     await exportCanvasReportPDF(pages, 'كادر_قسم_الخطوط_' + new Date().toISOString().split('T')[0] + '.pdf', orientation);
     showToast('✅ تم تجهيز ملف PDF');
@@ -8024,7 +8024,7 @@ function buildTableReportPages(title, columns, rows, opts) {
   const headerFont = `bold ${opts.headerFontSize || 14}px Tahoma, Arial`;
   const cellFont = `${opts.cellFontSize || 13}px Tahoma, Arial`;
   const titleFont = 'bold 20px Tahoma, Arial';
-  const cellLineH = 18, headerRowH = 32, titleH = 50;
+  const cellLineH = 18, headerRowH = 32, titleH = opts.titleGap || 50;
   const pageH = orientation === 'portrait' ? widthCss * 1.414 : widthCss / 1.414; // نسبة A4 الحقيقية
   const bottomMargin = 30;
   const maxContentH = pageH - titleH - headerRowH - bottomMargin;
@@ -8041,7 +8041,7 @@ function buildTableReportPages(title, columns, rows, opts) {
         rows.forEach(row => { w = Math.max(w, mctx.measureText(row[ci] || '').width); });
         mctx.font = headerFont;
       }
-      return w + 22;
+      return w + (opts.multiBlock ? 14 : 22); // تقليص هامش العمود عند وجود جداول جنب بعض ليتّسع عدد أكبر منها
     });
     const fixedTotal = columns.reduce((s, c, ci) => s + (c.fixedPct ? availW * c.fixedPct / 100 : 0), 0);
     const flexIdxs = columns.map((c, ci) => ci).filter(ci => !columns[ci].fixedPct);
@@ -8071,7 +8071,7 @@ function buildTableReportPages(title, columns, rows, opts) {
   columnGroups.push(cur);
 
   // جداول متعددة جنب بعض بنفس الصفحة لو الجدول ضيق ومتبقّي مساحة أفقية (يفعّلها كادر القسم فقط)
-  const blockGap = 26;
+  const blockGap = opts.multiBlock ? 18 : 26;
   let numBlocks = 1;
   if (opts.multiBlock) {
     numBlocks = Math.max(1, Math.floor((availW + blockGap) / (blockWidth + blockGap)));
