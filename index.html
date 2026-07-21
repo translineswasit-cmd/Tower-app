@@ -1743,6 +1743,10 @@ tbody tr:hover { background: #F7FAFC; }
         <button class="btn btn-secondary btn-sm" onclick="togglePrintStaffColumnsSelectAll()" id="printStaffColumnsSelectAllBtn">إلغاء التحديد</button>
       </div>
       <div id="printStaffColumnsWrap" style="max-height:220px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px"></div>
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 2px 2px;font-size:0.85rem;font-weight:700">
+        <input type="checkbox" id="printStaffNotesColChk" checked>
+        <span>إضافة عمود "الملاحظات" (فارغ للتعبئة اليدوية)</span>
+      </label>
     </div>
     <div style="margin-top:14px">
       <div id="printStaffLocationQuickBtns" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px"></div>
@@ -7347,6 +7351,7 @@ async function syncStaffRosterQueue() {
 let _printStaffMembersSnapshot = []; // لقطة ثابتة تضمن تطابق data-idx حتى لو تغيّرت البيانات أثناء فتح النافذة
 
 function openPrintStaffRosterModal() {
+  document.getElementById('printStaffNotesColChk').checked = true;
   const cols = staffRosterColumnsCache;
   const wrap = document.getElementById('printStaffColumnsWrap');
   wrap.innerHTML = cols.map((c, i) => `
@@ -7425,7 +7430,8 @@ async function confirmPrintStaffRoster() {
   showToast('⏳ جاري تحضير ملف PDF...');
 
   // الاتجاه: طولي تلقائياً لو أعمدة البيانات (ت + الاسم + المختارة، بدون الملاحظات) أقل من 4
-  const totalDataCols = 2 + selectedCols.length;
+  const includeNotes = document.getElementById('printStaffNotesColChk').checked;
+  const totalDataCols = 2 + selectedCols.length + (includeNotes ? 1 : 0);
   const orientation = totalDataCols < 4 ? 'portrait' : 'landscape';
 
   // كل عمود ياخذ عرضه حسب أطول محتوى فيه فعلياً؛ عمود الملاحظات وحده بعرض ثابت (فاضي دائماً)
@@ -7433,13 +7439,13 @@ async function confirmPrintStaffRoster() {
     { label: 'ت' },
     { label: 'الاسم الثلاثي' },
     ...selectedCols.map(c => ({ label: c.label, key: c.key })),
-    { label: 'ملاحظات', fixedPct: 20 }
+    ...(includeNotes ? [{ label: 'الملاحظات', fixedPct: 20 }] : [])
   ];
   const rows = selectedRows.map((row, i) => [
     String(i + 1),
     row.name || '-',
     ...selectedCols.map(c => (row.values && row.values[c.key]) || '-'),
-    ''
+    ...(includeNotes ? [''] : [])
   ]);
 
   try {
