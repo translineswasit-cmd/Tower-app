@@ -7449,7 +7449,7 @@ async function confirmPrintStaffRoster() {
   ]);
 
   try {
-    const pages = buildTableReportPages('👥 كادر قسم الخطوط', columns, rows, { contentBasedWidth: true, orientation });
+    const pages = buildTableReportPages('كادر قسم الخطوط', columns, rows, { contentBasedWidth: true, orientation });
     await exportCanvasReportPDF(pages, 'كادر_قسم_الخطوط_' + new Date().toISOString().split('T')[0] + '.pdf', orientation);
     showToast('✅ تم تجهيز ملف PDF');
   } catch (e) {
@@ -8046,7 +8046,8 @@ function buildTableReportPages(title, columns, rows, opts) {
     const flexRawTotal = flexIdxs.reduce((s, ci) => s + raw[ci], 0);
     const flexAvail = Math.max(0, availW - fixedTotal);
     // لو المحتوى أصغر من المساحة المتاحة نوسّعه نسبياً ليملأ الجدول عرض الورقة، ولو أكبر نصغّره بنفس التناسب
-    const scaleFactor = flexRawTotal > 0 ? flexAvail / flexRawTotal : 1;
+    // العرض يتناسب مع المحتوى فقط: يُصغَّر لو تجاوز المساحة المتاحة، ولا يُوسَّع أبداً لملء الفراغ الزائد
+    const scaleFactor = flexRawTotal > flexAvail ? flexAvail / flexRawTotal : 1;
     colWidths = columns.map((c, ci) => c.fixedPct ? availW * c.fixedPct / 100 : raw[ci] * scaleFactor);
   } else {
     colWidths = columns.map(c => availW * c.pct / 100);
