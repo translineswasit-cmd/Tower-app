@@ -800,6 +800,13 @@ tbody tr:hover { background: #F7FAFC; }
         <input type="date" id="depLogExportFilterTo" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
       </div>
     </div>
+    <div class="field" style="margin-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <label style="margin:0">الأبراج</label>
+        <button type="button" class="btn-sm" style="border:1px solid #CBD5E0;border-radius:6px;background:#F7FAFC;padding:2px 8px;font-size:0.75rem;cursor:pointer" onclick="toggleAllDepLogExportTowers()">تحديد الكل / إلغاء الكل</button>
+      </div>
+      <div id="depLogExportTowersWrap" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px 8px;max-height:160px;overflow-y:auto;margin-top:6px;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px"></div>
+    </div>
     <p id="depLogExportResultCount" style="margin-top:12px;color:#718096;font-size:0.82rem"></p>
     <div class="form-actions" style="margin-top:18px;flex-direction:column;gap:10px">
       <button class="btn btn-primary" style="width:100%;background:#922b21" onclick="exportDepLogPDF()">📄 PDF</button>
@@ -2952,20 +2959,91 @@ function buildPlasticChain(phase, chainIdx, stateObj, damaged, onToggle, rows) {
   return wrapper;
 }
 
+// يبني سلسلة خزف (عازل قديم صلب: قضيب + مظلات كبيرة متساوية الحجم، بني غامق) — لا تُستخدم إلا كحالة موجودة أصلاً بأبراج قديمة
+function buildCeramicChain(phase, chainIdx, stateObj, damaged, onToggle, rows) {
+  rows = rows || 12;
+  const w = 28;
+  const h = rows * 14 + (rows - 1) * 2; // نفس معادلة طول سلسلة الزجاج بالضبط
+  const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  svg.setAttribute('width', w); svg.setAttribute('height', h);
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.style.cursor = 'pointer'; svg.style.display = 'block';
+
+  const ns = 'http://www.w3.org/2000/svg';
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function paint(isDamaged) {
+    svg.innerHTML = '';
+    const metal = '#7A7A7A';
+    const rodColor = isDamaged ? '#C53030' : '#5C2A21';
+    const shedColor = isDamaged ? '#E57373' : '#6B3025';
+    const cx = w / 2;
+    const capH = Math.max(6, h * 0.09);
+
+    svg.appendChild(el('rect', { x: cx - 4, y: 0, width: 8, height: capH, fill: metal }));
+    svg.appendChild(el('circle', { cx, cy: capH * 0.4, r: 2.8, fill: metal }));
+
+    const bodyTop = capH, bodyBottom = h - capH, bodyH = bodyBottom - bodyTop;
+    svg.appendChild(el('rect', { x: cx - 2.5, y: bodyTop, width: 5, height: bodyH, fill: rodColor }));
+
+    // مظلات كبيرة متساوية الحجم (خيار أ) — أعرض وأقرب لبعضها من البلاستك، بلا تناوب كبير/صغير
+    const nSheds = Math.max(3, Math.round(rows / 2));
+    const step = bodyH / nSheds;
+    const shedW = 20;
+    for (let i = 0; i < nSheds; i++) {
+      const y = bodyTop + step * (i + 0.5);
+      const path = `M ${cx-2} ${y-3}
+        C ${cx-shedW/2} ${y-2}, ${cx-shedW/2} ${y+2}, ${cx-2.3} ${y+4.2}
+        L ${cx+2.3} ${y+4.2}
+        C ${cx+shedW/2} ${y+2}, ${cx+shedW/2} ${y-2}, ${cx+2} ${y-3} Z`;
+      svg.appendChild(el('path', { d: path, fill: shedColor }));
+    }
+
+    svg.appendChild(el('rect', { x: cx - 4, y: bodyBottom, width: 8, height: capH, fill: metal }));
+    svg.appendChild(el('circle', { cx, cy: h - capH * 0.4, r: 2.8, fill: metal }));
+
+    svg.appendChild(el('rect', { x: 0, y: 0, width: w, height: h, fill: 'transparent' }));
+  }
+
+  let isDmg = !!damaged;
+  paint(isDmg);
+
+  if (currentUser.role !== 'readonly') {
+    svg.addEventListener('click', () => {
+      isDmg = !isDmg;
+      paint(isDmg);
+      onToggle(isDmg);
+    });
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px';
+  const lbl = document.createElement('div');
+  lbl.textContent = 'خزف';
+  lbl.style.cssText = 'font-size:0.5rem;color:#5C2A21;font-weight:700;background:#F5E9E6;padding:1px 4px;border-radius:4px';
+  wrapper.appendChild(lbl);
+  wrapper.appendChild(svg);
+  return wrapper;
+}
+
 // يبني زر التبديل بين زجاج/بلاستيك
 function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuild) {
   const btn = document.createElement('button');
+  const CYCLE_NEXT = { glass: 'plastic', plastic: 'ceramic', ceramic: 'glass' };
+  const cur0 = (chainTypes[phase] || [])[chainIdx] || 'glass';
   btn.textContent = '🔄';
-  btn.title = 'تبديل نوع السلسلة (زجاج ↔ بلاستيك)';
+  btn.title = 'تبديل نوع السلسلة (زجاج → بلاستك → خزف)';
   btn.style.cssText = 'font-size:0.65rem;padding:1px 5px;border:1px solid #CBD5E0;border-radius:8px;background:#F7FAFC;cursor:pointer;margin-bottom:2px';
   btn.addEventListener('click', () => {
     const cur = (chainTypes[phase] || [])[chainIdx] || 'glass';
     if (!chainTypes[phase]) chainTypes[phase] = [];
-    chainTypes[phase][chainIdx] = cur === 'glass' ? 'plastic' : 'glass';
-    if (chainTypes[phase][chainIdx] === 'plastic') {
-      // تصفير عوازل هذه السلسلة (حذف القديمة)
-      for (let r=0; r<rows; r++) { stateObj[phase][chainIdx*rows+r] = false; cycleObj[phase][chainIdx*rows+r] = 0; }
-    }
+    chainTypes[phase][chainIdx] = CYCLE_NEXT[cur] || 'glass';
+    // أي انتقال لمادة جديدة (بلاستك أو خزف أو زجاج جديد) يصفّر عوازل هذي السلسلة (تُعتبر مادة جديدة كاملة)
+    for (let r=0; r<rows; r++) { stateObj[phase][chainIdx*rows+r] = false; cycleObj[phase][chainIdx*rows+r] = 0; }
     onRebuild();
   });
   return btn;
@@ -2985,8 +3063,17 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
   const chainsPerPhase = getChainsPerPhase(mode);
   const rowsPerChain = Math.floor(count / chainsPerPhase);
 
-  // تهيئة chainTypes
-  chainTypes = savedChainTypes ? JSON.parse(JSON.stringify(savedChainTypes)) : { R: [], S: [], T: [] };
+  // تهيئة chainTypes: لو كشف جديد بلا بيانات سابقة، نأخذ الإعداد الافتراضي المحفوظ لهذا البرج تحديداً
+  // (مثلاً برج معلَّم "خزف" بأبراج الخط يفتح مباشرة على خزف بدون ما يحتاج الفني يبدّله يدوياً)
+  if (savedChainTypes) {
+    chainTypes = JSON.parse(JSON.stringify(savedChainTypes));
+  } else {
+    const towerDefault = getTowerMaterialDefault(lineName, towerNum);
+    chainTypes = { R: [], S: [], T: [] };
+    if (towerDefault && towerDefault !== 'glass') {
+      ['R','S','T'].forEach(p => { chainTypes[p] = Array(chainsPerPhase).fill(towerDefault); });
+    }
+  }
   ['R','S','T'].forEach(p => { if (!chainTypes[p]) chainTypes[p] = []; });
 
   if (savedState) {
@@ -3033,13 +3120,14 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
         for (let ci=0; ci<2; ci++) {
           const chainWrap = document.createElement('div');
           chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
-          const isPlastic = (chainTypes[phase]||[])[ci] === 'plastic';
+          const material = (chainTypes[phase]||[])[ci] || 'glass';
           const toggleBtn = buildChainToggleBtn(phase, ci, stateObj, cycleObj, rowsPerChain, rebuildUI);
           chainWrap.appendChild(toggleBtn);
-          if (isPlastic) {
-            // حالة البلاستيك: نخزّنها في أول عازل بالسلسلة (true=متضرر)
+          if (material === 'plastic' || material === 'ceramic') {
+            // حالة البلاستك/الخزف: نخزّنها في أول عازل بالسلسلة (true=متضرر)
             const dmg = !!(stateObj[phase] && stateObj[phase][ci*rowsPerChain]);
-            const pEl = buildPlasticChain(phase, ci, stateObj, dmg, (isDmg) => {
+            const buildFn = material === 'ceramic' ? buildCeramicChain : buildPlasticChain;
+            const pEl = buildFn(phase, ci, stateObj, dmg, (isDmg) => {
               for (let r=0; r<rowsPerChain; r++) stateObj[phase][ci*rowsPerChain+r] = isDmg;
             }, rowsPerChain);
             chainWrap.appendChild(pEl);
@@ -3059,12 +3147,13 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
       } else if (mode === 'chain1_10') {
         const chainWrap = document.createElement('div');
         chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
-        const isPlastic = (chainTypes[phase]||[])[0] === 'plastic';
+        const material = (chainTypes[phase]||[])[0] || 'glass';
         const toggleBtn = buildChainToggleBtn(phase, 0, stateObj, cycleObj, rowsPerChain, rebuildUI);
         chainWrap.appendChild(toggleBtn);
-        if (isPlastic) {
+        if (material === 'plastic' || material === 'ceramic') {
           const dmg = !!(stateObj[phase] && stateObj[phase][0]);
-          const pEl = buildPlasticChain(phase, 0, stateObj, dmg, (isDmg) => {
+          const buildFn = material === 'ceramic' ? buildCeramicChain : buildPlasticChain;
+          const pEl = buildFn(phase, 0, stateObj, dmg, (isDmg) => {
             for (let r=0; r<rowsPerChain; r++) stateObj[phase][r] = isDmg;
           }, rowsPerChain);
           chainWrap.appendChild(pEl);
@@ -3348,22 +3437,80 @@ function generateSingleChainSVG(state, rows) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
 }
 
+// شكل عمود بلاستك (نص SVG قابل للدمج) — نسخة نصية مطابقة لـ buildTreatPlasticColumn
+// أخضر = استُبدلت هذي السلسلة بهذي الجلسة، رمادي = بلاستك موجود من قبل (بدون تلوين ضرر لأنها تُستبدل كاملة لا تُعالَج جزئياً)
+function plasticColumnSVGString(colX, colW, rows, justReplaced) {
+  const h = rows * 14 + (rows - 1) * 2;
+  const metal = '#5A5F63';
+  const rodColor = justReplaced ? '#276749' : '#8A949C';
+  const shedColor = justReplaced ? '#48BB78' : '#9AA4AC';
+  const cx = colX + colW / 2, capH = Math.max(5, h * 0.08);
+  let s = '';
+  s += `<circle cx="${cx}" cy="${capH*0.4}" r="2.4" fill="${metal}"/>`;
+  s += `<rect x="${cx-2.2}" y="0" width="4.4" height="${capH}" fill="${metal}"/>`;
+  const bodyTop = capH, bodyBottom = h - capH, bodyH = bodyBottom - bodyTop;
+  s += `<rect x="${cx-1.5}" y="${bodyTop}" width="3" height="${bodyH}" fill="${rodColor}"/>`;
+  const nPairs = Math.max(2, Math.round(rows / 2));
+  const step = bodyH / (nPairs * 2);
+  const bigW = 11, smallW = 7.5;
+  for (let i = 0; i < nPairs * 2; i++) {
+    const y = bodyTop + step * (i + 0.5);
+    const sw = (i % 2 === 0) ? bigW : smallW;
+    const path = `M ${cx-1.2} ${y-2} C ${cx-sw/2} ${y-1.2}, ${cx-sw/2} ${y+1.2}, ${cx-1.3} ${y+2.4} L ${cx+1.3} ${y+2.4} C ${cx+sw/2} ${y+1.2}, ${cx+sw/2} ${y-1.2}, ${cx+1.2} ${y-2} Z`;
+    s += `<path d="${path}" fill="${shedColor}"/>`;
+  }
+  s += `<circle cx="${cx}" cy="${h - capH*0.4}" r="2.4" fill="${metal}"/>`;
+  s += `<rect x="${cx-2.2}" y="${bodyBottom}" width="4.4" height="${capH}" fill="${metal}"/>`;
+  return s;
+}
+
+// شكل عمود خزف (نص SVG قابل للدمج) — نسخة نصية مطابقة لـ buildTreatCeramicColumn
+function ceramicColumnSVGString(colX, colW, rows) {
+  const h = rows * 14 + (rows - 1) * 2;
+  const metal = '#7A7A7A', rodColor = '#5C2A21', shedColor = '#6B3025';
+  const cx = colX + colW / 2, capH = Math.max(5, h * 0.09);
+  let s = '';
+  s += `<rect x="${cx-3.2}" y="0" width="6.4" height="${capH}" fill="${metal}"/>`;
+  const bodyTop = capH, bodyBottom = h - capH, bodyH = bodyBottom - bodyTop;
+  s += `<rect x="${cx-2}" y="${bodyTop}" width="4" height="${bodyH}" fill="${rodColor}"/>`;
+  const nSheds = Math.max(3, Math.round(rows / 2));
+  const step = bodyH / nSheds, shedW = 16;
+  for (let i = 0; i < nSheds; i++) {
+    const y = bodyTop + step * (i + 0.5);
+    const path = `M ${cx-1.6} ${y-2.4} C ${cx-shedW/2} ${y-1.6}, ${cx-shedW/2} ${y+1.6}, ${cx-1.8} ${y+3.4} L ${cx+1.8} ${y+3.4} C ${cx+shedW/2} ${y+1.6}, ${cx+shedW/2} ${y-1.6}, ${cx+1.6} ${y-2.4} Z`;
+    s += `<path d="${path}" fill="${shedColor}"/>`;
+  }
+  s += `<rect x="${cx-3.2}" y="${bodyBottom}" width="6.4" height="${capH}" fill="${metal}"/>`;
+  return s;
+}
+
 // نسخة ثلاثية الألوان عامة (تدعم 1، 2، أو 4 أعمدة) — لسجل المعالجات
 // أبيض=سليم، أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة
-function generateChainSVG3Color(state, treatedIdx, cols, rows, cycleArr) {
+// chainTypes (اختياري): مصفوفة مادة كل سلسلة بهذا الفيز (glass/plastic/ceramic) — لو مو موجودة تُعتبر كل السلاسل زجاج (سلوك قديم كما هو)
+function generateChainSVG3Color(state, treatedIdx, cols, rows, cycleArr, chainTypes) {
   cols = cols || 2; rows = rows || 12;
   const treatedSet = new Set(treatedIdx||[]);
   const isQuad = cols >= 4;
   const w = isQuad ? 11 : 18, h = isQuad ? 8 : 14, gap = isQuad ? 1.2 : 2, colGap = isQuad ? 3.5 : 6;
   let rects='';
-  for(let col=0;col<cols;col++) for(let row=0;row<rows;row++){
-    const idx=col*rows+row, x=col*(w+colGap), y=row*(h+gap);
-    const cyc = (cycleArr&&cycleArr[idx])||0;
-    let fill='white', stroke='#555';
-    if (treatedSet.has(idx)) { fill=insShade(INS_GREEN_SHADES,cyc); stroke='#276749'; }
-    else if (state[idx]) { fill=insShade(INS_RED_SHADES,cyc); stroke='#9B0000'; }
-    const rx = isQuad ? 1.5 : 2, sw = isQuad ? 1 : 1.5;
-    rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+  for(let col=0;col<cols;col++) {
+    const material = (chainTypes && chainTypes[col]) || 'glass';
+    const colX = col*(w+colGap);
+    if (material === 'plastic' || material === 'ceramic') {
+      let justReplaced = false;
+      for (let row=0; row<rows; row++) { if (treatedSet.has(col*rows+row)) { justReplaced = true; break; } }
+      rects += material === 'ceramic' ? ceramicColumnSVGString(colX, w, rows) : plasticColumnSVGString(colX, w, rows, justReplaced);
+      continue;
+    }
+    for(let row=0;row<rows;row++){
+      const idx=col*rows+row, x=colX, y=row*(h+gap);
+      const cyc = (cycleArr&&cycleArr[idx])||0;
+      let fill='white', stroke='#555';
+      if (treatedSet.has(idx)) { fill=insShade(INS_GREEN_SHADES,cyc); stroke='#276749'; }
+      else if (state[idx]) { fill=insShade(INS_RED_SHADES,cyc); stroke='#9B0000'; }
+      const rx = isQuad ? 1.5 : 2, sw = isQuad ? 1 : 1.5;
+      rects+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+    }
   }
   const svgW=cols*w+(cols-1)*colGap, svgH=rows*(h+gap)-gap;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${rects}</svg>`;
@@ -4173,13 +4320,14 @@ function openDepLogExportModal() {
   sel.value = document.getElementById('depLogFilterLine')?.value || '';
   document.getElementById('depLogExportFilterFrom').value = document.getElementById('depLogFilterFrom')?.value || '';
   document.getElementById('depLogExportFilterTo').value = document.getElementById('depLogFilterTo')?.value || '';
-  updateDepLogExportResultCount();
+  updateDepLogExportTowerList();
   document.getElementById('depLogExportModalBg').classList.add('show');
 }
 function closeDepLogExportModal() {
   document.getElementById('depLogExportModalBg').classList.remove('show');
 }
-function getDepLogExportFiltered() {
+// يرجّع السجلات المطابقة لفلتر الخط + التاريخ فقط (بدون فلتر الأبراج) — تُستخدم لبناء قائمة الأبراج المتاحة للاختيار
+function getDepLogExportFilteredByLineDate() {
   const line = document.getElementById('depLogExportFilterLine').value;
   const from = document.getElementById('depLogExportFilterFrom').value;
   const to = document.getElementById('depLogExportFilterTo').value;
@@ -4190,6 +4338,42 @@ function getDepLogExportFiltered() {
     return mLine && mFrom && mTo;
   });
 }
+// يبني قائمة الأبراج (checkboxes) المتاحة ضمن فلتر الخط/التاريخ الحالي — كلها محددة افتراضياً
+function updateDepLogExportTowerList() {
+  const wrap = document.getElementById('depLogExportTowersWrap');
+  const rows = getDepLogExportFilteredByLineDate();
+  const uniqueTowers = [...new Set(rows.map(t => t.tower_number).filter(v => v !== undefined && v !== null && v !== ''))]
+    .sort((a,b) => (parseInt(a)||0) - (parseInt(b)||0) || String(a).localeCompare(String(b)));
+  if (!uniqueTowers.length) {
+    wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد أبراج مطابقة</div>';
+    updateDepLogExportResultCount();
+    return;
+  }
+  wrap.innerHTML = uniqueTowers.map(tn => `
+    <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
+      <input type="checkbox" class="depLogExportTowerChk" value="${tn}" checked>
+      <span>برج ${tn}</span>
+    </label>`).join('');
+  wrap.querySelectorAll('.depLogExportTowerChk').forEach(cb => cb.addEventListener('change', updateDepLogExportResultCount));
+  updateDepLogExportResultCount();
+}
+function toggleAllDepLogExportTowers() {
+  const boxes = document.querySelectorAll('.depLogExportTowerChk');
+  if (!boxes.length) return;
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  updateDepLogExportResultCount();
+}
+function getDepLogExportSelectedTowers() {
+  return new Set(Array.from(document.querySelectorAll('.depLogExportTowerChk:checked')).map(b => b.value));
+}
+// يرجّع السجلات النهائية المطابقة (خط + تاريخ + الأبراج المحددة) — هذي المستخدمة فعلياً بالتصدير
+function getDepLogExportFiltered() {
+  const rows = getDepLogExportFilteredByLineDate();
+  const selectedTowers = getDepLogExportSelectedTowers();
+  if (!selectedTowers.size) return [];
+  return rows.filter(t => selectedTowers.has(String(t.tower_number)));
+}
 function updateDepLogExportResultCount() {
   const n = getDepLogExportFiltered().length;
   document.getElementById('depLogExportResultCount').textContent = `📋 عدد المعالجات المطابقة: ${n}`;
@@ -4197,7 +4381,7 @@ function updateDepLogExportResultCount() {
 document.addEventListener('DOMContentLoaded', () => {
   ['depLogExportFilterLine','depLogExportFilterFrom','depLogExportFilterTo'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.addEventListener('change', updateDepLogExportResultCount);
+    if (el) el.addEventListener('change', updateDepLogExportTowerList);
   });
 });
 
@@ -4252,73 +4436,151 @@ function svgStringToPNGDataURL(svgString, scale) {
   });
 }
 
+// يحوّل نص SVG إلى عنصر Image محمّل جاهز للرسم المباشر بكانفاس (بدون تحويله لصورة منفصلة أولاً)
+function svgStringToImageEl(svgString) {
+  return new Promise((resolve) => {
+    try {
+      const wMatch = svgString.match(/width="([\d.]+)"/);
+      const hMatch = svgString.match(/height="([\d.]+)"/);
+      const w = wMatch ? parseFloat(wMatch[1]) : 120;
+      const h = hMatch ? parseFloat(hMatch[1]) : 160;
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      const timer = setTimeout(() => { URL.revokeObjectURL(url); resolve(null); }, 5000);
+      img.onload = () => { clearTimeout(timer); URL.revokeObjectURL(url); resolve({ img, w, h }); };
+      img.onerror = () => { clearTimeout(timer); URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    } catch (e) { resolve(null); }
+  });
+}
+
+// يلف نصاً عربياً (RTL) على عدة أسطر حسب العرض المتاح — بديل عن splitTextToSize الخاص بـ jsPDF (ما يدعم العربي)
+function wrapArabicText(ctx, text, maxWidth) {
+  if (!text) return [];
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach(word => {
+    const test = current ? current + ' ' + word : word;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  });
+  if (current) lines.push(current);
+  return lines;
+}
+
+// يبني بطاقة معالجة واحدة كصورة (كانفاس) — يدعم العربي بشكل صحيح لأن الرسم بالكانفاس عبر fillText
+// وليس عبر jsPDF مباشرة (jsPDF بخطوطه الافتراضية لا يدعم الحروف العربية إطلاقاً)
+async function buildTreatLogRecordCanvas(t) {
+  const CARD_W = 760, PAD = 18, IMG_H = 90;
+  const svgEntries = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
+  const imgResults = [];
+  for (const [label, svg] of svgEntries) {
+    const res = await svgStringToImageEl(svg);
+    if (res) imgResults.push({ label, res });
+  }
+
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+  mctx.font = '13px Tahoma, Arial, sans-serif';
+  const items = (t.items_treated||[]).map(it => it.label);
+  const itemsText = items.length ? ('المعالَج: ' + items.join('، ')) : '';
+  const itemLines = wrapArabicText(mctx, itemsText, CARD_W - PAD*2);
+
+  const headerH = 40;
+  const itemsH = itemLines.length ? (itemLines.length * 17 + 8) : 0;
+  const imagesH = imgResults.length ? (IMG_H + 24) : 0;
+  const totalH = headerH + itemsH + imagesH + PAD;
+
+  // مضاعف دقة معتدل (لا نضخّم الدقة أكثر من اللازم) — يحافظ على وضوح كافٍ مع حجم ملف صغير
+  const scale = 1.3;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(CARD_W * scale);
+  canvas.height = Math.ceil(totalH * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, totalH);
+  ctx.direction = 'rtl';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+
+  let y = PAD + 12;
+  ctx.fillStyle = '#1A2A46';
+  ctx.font = 'bold 14px Tahoma, Arial, sans-serif';
+  ctx.fillText(`الخط: ${t.line_name||'-'}   |   برج: ${t.tower_number||'-'}   |   التاريخ: ${t.treatment_date||'-'}   |   المعالج: ${t.treated_by||'-'}`, CARD_W - PAD, y);
+  y += 18;
+
+  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+  y += 14;
+
+  if (itemLines.length) {
+    ctx.font = '13px Tahoma, Arial, sans-serif';
+    ctx.fillStyle = '#3C3C3C';
+    itemLines.forEach(line => { ctx.fillText(line, CARD_W - PAD, y); y += 17; });
+    y += 4;
+  }
+
+  if (imgResults.length) {
+    let x = CARD_W - PAD;
+    for (const { label, res } of imgResults) {
+      const ratio = res.w && res.h ? (res.w / res.h) : 1;
+      const imgW = Math.min(IMG_H * ratio, 150) || 100;
+      x -= imgW;
+      try { ctx.drawImage(res.img, x, y, imgW, IMG_H); } catch(e) {}
+      ctx.font = '11px Tahoma, Arial, sans-serif';
+      ctx.fillStyle = '#718096';
+      ctx.textAlign = 'center';
+      ctx.fillText(label, x + imgW/2, y + IMG_H + 13);
+      ctx.textAlign = 'right';
+      x -= 14;
+    }
+  }
+
+  // JPEG بجودة متوسطة-منخفضة (0.5) لإبقاء حجم ملف الـ PDF صغيراً حتى مع عدد كبير من المعالجات
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
+}
+
 async function exportDepLogPDF() {
   const rows = getDepLogExportFiltered();
   if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
   showToast('⏳ جاري تحضير PDF...');
 
-  let __pdfImgFails = 0;
   try {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
-    let y = 40;
+    const pageH = doc.internal.pageSize.getHeight();
+    const marginX = 30, marginTop = 50, marginBottom = 26;
+    let y = marginTop;
 
-    doc.setFontSize(16);
-    doc.text('Treatments Log Report', pageW/2, y, { align: 'center' });
-    y += 22;
-    doc.setFontSize(10);
-    doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, y, { align: 'center' });
-    y += 20;
+    doc.setFontSize(13);
+    doc.text('Treatments Log Report', pageW/2, 26, { align: 'center' });
+    doc.setFontSize(9);
+    doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, 38, { align: 'center' });
 
     for (let i = 0; i < rows.length; i++) {
       const t = rows[i];
-      if (y > 380) { doc.addPage(); y = 40; }
-
-      doc.setFontSize(11);
-      doc.setTextColor(20,40,70);
-      doc.text(`Line: ${t.line_name||'-'}  |  Tower: ${t.tower_number||'-'}  |  Date: ${t.treatment_date||'-'}  |  By: ${t.treated_by||'-'}`, 40, y);
-      y += 14;
-
-      const items = (t.items_treated||[]).map(it => it.label).join(', ');
-      if (items) {
-        doc.setFontSize(9);
-        doc.setTextColor(60,60,60);
-        const splitItems = doc.splitTextToSize('Treated: ' + items, pageW-80);
-        doc.text(splitItems, 40, y);
-        y += splitItems.length * 11 + 4;
-      }
-
-      // صور العوازل (R/S/T) إن وجدت
-      const svgs = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
-      if (svgs.length) {
-        const imgH = 90;
-        let x = 40;
-        for (const [label, svg] of svgs) {
-          const result = await svgStringToPNGDataURL(svg);
-          if (result) {
-            const ratio = result.w && result.h ? (result.w / result.h) : 1;
-            const imgW = Math.min(imgH * ratio, 150) || 100;
-            try { doc.addImage(result.dataUrl, 'JPEG', x, y, imgW, imgH); } catch(e) { __pdfImgFails++; }
-            doc.setFontSize(8);
-            doc.text(label, x + 4, y + imgH + 10);
-            x += 160;
-          }
-        }
-        y += imgH + 20;
-      }
-
-      doc.setDrawColor(220,220,220);
-      doc.line(40, y, pageW-40, y);
-      y += 16;
+      const card = await buildTreatLogRecordCanvas(t);
+      const drawW = pageW - marginX*2;
+      const drawH = card.h * (drawW / card.w);
+      if (y + drawH > pageH - marginBottom) { doc.addPage(); y = marginTop; }
+      doc.addImage(card.dataUrl, 'JPEG', marginX, y, drawW, drawH);
+      y += drawH + 8;
     }
 
     const blob = doc.output('blob');
     const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.pdf';
     await shareOrDownloadFile(blob, filename, 'application/pdf');
-    showToast(__pdfImgFails ? ('⚠️ تم تجهيز PDF لكن تعذّر إدراج ' + __pdfImgFails + ' صورة') : ('✅ تم تجهيز PDF (' + rows.length + ' معالجة)'), __pdfImgFails ? 'error' : undefined);
+    showToast('✅ تم تجهيز PDF (' + rows.length + ' معالجة)');
     closeDepLogExportModal();
   } catch (err) {
+    console.error(err);
     showToast('❌ تعذر تجهيز PDF', 'error');
   }
 }
@@ -9044,6 +9306,13 @@ function getLineTowers(lineName) {
   return [];
 }
 
+// نوع العازل الافتراضي المحفوظ لبرج معيّن ('glass'|'plastic'|'ceramic') — يُقرأ عند فتح كشف جديد له
+function getTowerMaterialDefault(lineName, towerNumber) {
+  if (!lineName || towerNumber == null || towerNumber === '') return null;
+  const t = getLineTowers(lineName).find(tw => String(tw.num) === String(towerNumber));
+  return (t && t.material_default) || null;
+}
+
 let _editingLineTowersList = [];
 
 function generateLineTowersRange() {
@@ -9063,15 +9332,20 @@ function renderLineTowersEditor() {
   const countEl = document.getElementById('lmTowersCount');
   countEl.textContent = _editingLineTowersList.length ? `إجمالي الأبراج: ${_editingLineTowersList.length}` : 'ما فيه أبراج مولّدة بعد';
   wrap.innerHTML = _editingLineTowersList.map((t, i) => `
-    <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
+    <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5;flex-wrap:wrap">
       <span style="min-width:56px;font-weight:700">برج ${t.num}</span>
-      <select onchange="updateLineTowerType(${i}, this.value)" style="flex:1.4;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
+      <select onchange="updateLineTowerType(${i}, this.value)" style="flex:1.2;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
         ${LINE_TOWER_TYPE_OPTIONS.map(o => `<option ${o===t.type?'selected':''}>${o}</option>`).join('')}
       </select>
       <select onchange="updateLineTowerChainOverride(${i}, this.value)" title="استثناء نوع العوازل لهذا البرج فقط (اختياري)" style="flex:1;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
         <option value="" ${!t.chain_override?'selected':''}>عوازل: افتراضي الخط</option>
         <option value="single" ${t.chain_override==='single'?'selected':''}>عوازل: مفرد</option>
         <option value="double" ${t.chain_override==='double'?'selected':''}>عوازل: مزدوج</option>
+      </select>
+      <select onchange="updateLineTowerMaterial(${i}, this.value)" title="نوع العازل الافتراضي — يفتح عليه الكشف الجديد تلقائياً" style="flex:1;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
+        <option value="glass" ${!t.material_default||t.material_default==='glass'?'selected':''}>مادة: زجاج (افتراضي)</option>
+        <option value="plastic" ${t.material_default==='plastic'?'selected':''}>مادة: بلاستك</option>
+        <option value="ceramic" ${t.material_default==='ceramic'?'selected':''}>مادة: خزف</option>
       </select>
     </div>`).join('') || '<div class="empty-state">ولّد نطاقاً أولاً</div>';
 }
@@ -9082,6 +9356,10 @@ function updateLineTowerType(i, val) {
 
 function updateLineTowerChainOverride(i, val) {
   if (_editingLineTowersList[i]) _editingLineTowersList[i].chain_override = val || undefined;
+}
+
+function updateLineTowerMaterial(i, val) {
+  if (_editingLineTowersList[i]) _editingLineTowersList[i].material_default = (val && val !== 'glass') ? val : undefined;
 }
 
 async function saveLineTowersToServer(lineName) {
@@ -10022,15 +10300,16 @@ function extractDepsFromRecord(r) {
   if (r.insulator_washing === 'needs_washing') deps.push({type:'washing',label:'💧 العوازل تحتاج غسل',key:'washing'});
   else if (r.insulator_washing === 'very_dirty') deps.push({type:'washing',label:'💧 العوازل ملوثة جداً (منطقة معامل)',key:'washing'});
 
-  // عوازل بلاستيك متضررة
+  // عوازل بلاستك/خزف متضررة (سلسلة كاملة تُعتبر متضررة لو أول عازل فيها مسجَّل كمتضرر)
   try {
     const cTypes = r.insulator_chain_types ? safeParseJSON(r.insulator_chain_types) : null;
     const state = r.insulator_state ? safeParseJSON(r.insulator_state) : null;
     if (cTypes && state) {
+      const MAT_LABEL = { plastic: 'بلاستك', ceramic: 'خزف' };
       ['R','S','T'].forEach(phase => {
         (cTypes[phase]||[]).forEach((t, ci) => {
-          if (t === 'plastic' && state[phase] && state[phase][ci * Math.ceil((state[phase].length||10) / (cTypes[phase].length||1))]) {
-            deps.push({type:'insulator',label:`عازل بلاستيك متضرر — فيز ${phase} (سلسلة ${ci+1})`,key:`plastic_${phase}_${ci}`});
+          if ((t === 'plastic' || t === 'ceramic') && state[phase] && state[phase][ci * Math.ceil((state[phase].length||10) / (cTypes[phase].length||1))]) {
+            deps.push({type:'insulator',label:`عازل ${MAT_LABEL[t]} متضرر — فيز ${phase} (سلسلة ${ci+1})`,key:`${t}_${phase}_${ci}`});
           }
         });
       });
@@ -10189,6 +10468,29 @@ function buildTreatPlasticColumn(rows, justReplaced) {
 }
 
 // يبني عمود سلسلة واحد أثناء المعالجة (زجاج أو بلاستك حسب treatChainTypes)، مع زرّي تبديل كامل السلسلة
+// رسم عمود خزف أثناء المعالجة (عرض فقط — الخزف لا يُستحدث جديداً أبداً، فقط يُستبدل لزجاج/بلاستك عند الضرر)
+function buildTreatCeramicColumn(rows) {
+  const w = 20, h = rows * 14 + (rows - 1) * 2;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('width', w); svg.setAttribute('height', h); svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  function el(tag, attrs) { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+  const metal = '#7A7A7A', rodColor = '#5C2A21', shedColor = '#6B3025';
+  const cx = w / 2, capH = Math.max(5, h * 0.09);
+  svg.appendChild(el('rect', { x: cx - 3.2, y: 0, width: 6.4, height: capH, fill: metal }));
+  const bodyTop = capH, bodyBottom = h - capH, bodyH = bodyBottom - bodyTop;
+  svg.appendChild(el('rect', { x: cx - 2, y: bodyTop, width: 4, height: bodyH, fill: rodColor }));
+  const nSheds = Math.max(3, Math.round(rows / 2));
+  const step = bodyH / nSheds, shedW = 16;
+  for (let i = 0; i < nSheds; i++) {
+    const y = bodyTop + step * (i + 0.5);
+    const path = `M ${cx-1.6} ${y-2.4} C ${cx-shedW/2} ${y-1.6}, ${cx-shedW/2} ${y+1.6}, ${cx-1.8} ${y+3.4} L ${cx+1.8} ${y+3.4} C ${cx+shedW/2} ${y+1.6}, ${cx+shedW/2} ${y-1.6}, ${cx+1.6} ${y-2.4} Z`;
+    svg.appendChild(el('path', { d: path, fill: shedColor }));
+  }
+  svg.appendChild(el('rect', { x: cx - 3.2, y: bodyBottom, width: 6.4, height: capH, fill: metal }));
+  return svg;
+}
+
 function buildTreatChainColumn(phase, chainIdx, rows, offsetIdx) {
   const circuitAtBuild = _currentTreatCircuit;
   const stateObj = circuitAtBuild === 2 ? treatInsulatorState2 : treatInsulatorState;
@@ -10202,6 +10504,8 @@ function buildTreatChainColumn(phase, chainIdx, rows, offsetIdx) {
 
   if (material === 'plastic') {
     outer.appendChild(buildTreatPlasticColumn(rows, justReplaced));
+  } else if (material === 'ceramic') {
+    outer.appendChild(buildTreatCeramicColumn(rows));
   } else {
     const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
     for (let row = 0; row < rows; row++) {
@@ -10525,7 +10829,8 @@ async function saveTreatment() {
     return generateChainSVG(state, 2, 12);
   }
   // SVG ثلاثي الألوان (لسجل المعالجات: أحمر=لسا متضرر، أخضر=عولج بهذي الجلسة، أبيض=سليم)
-  function svg3ColorForMode(state, treatedIdx, cycleArr) {
+  // phaseChainTypes: مادة كل سلسلة بهذا الفيز (زجاج/بلاستك/خزف) — تُستخدم لرسم الشكل الصحيح بدل مربعات الزجاج دائماً
+  function svg3ColorForMode(state, treatedIdx, cycleArr, phaseChainTypes) {
     const dims = mode === 'v' ? null
       : mode === 'straight4' ? [4,32]
       : mode === 'chain4_12' ? [4,12]
@@ -10534,7 +10839,7 @@ async function saveTreatment() {
       : mode === 'chain1_10' ? [1,10]
       : [2,12];
     if (mode === 'v') return generateVShapeSVG3Color(state, treatedIdx, cycleArr);
-    return generateChainSVG3Color(state, treatedIdx, dims[0], dims[1], cycleArr);
+    return generateChainSVG3Color(state, treatedIdx, dims[0], dims[1], cycleArr, phaseChainTypes);
   }
   const treatment = {
     inspection_id: r.id,
@@ -10548,9 +10853,9 @@ async function saveTreatment() {
     insulator_state_before: r.insulator_state,
     insulator_state_after: JSON.stringify(stateAfter),
     insulator_cycle_after: JSON.stringify(cycleAfter),
-    insulator_svg_r: svg3ColorForMode(treatInsulatorState.R||[], treatedIndices.R, treatCycleState.R||[]),
-    insulator_svg_s: svg3ColorForMode(treatInsulatorState.S||[], treatedIndices.S, treatCycleState.S||[]),
-    insulator_svg_t: svg3ColorForMode(treatInsulatorState.T||[], treatedIndices.T, treatCycleState.T||[]),
+    insulator_svg_r: svg3ColorForMode(treatInsulatorState.R||[], treatedIndices.R, treatCycleState.R||[], treatChainTypes.R),
+    insulator_svg_s: svg3ColorForMode(treatInsulatorState.S||[], treatedIndices.S, treatCycleState.S||[], treatChainTypes.S),
+    insulator_svg_t: svg3ColorForMode(treatInsulatorState.T||[], treatedIndices.T, treatCycleState.T||[], treatChainTypes.T),
     items_treated: items_treated,
     notes: ''
   };
@@ -10875,9 +11180,9 @@ function calcLineHealthWithTreatments(lineName) {
           const perChain = Math.ceil(total / chainsPerPhase);
           let phaseScore = 0;
           for (let c = 0; c < chainsPerPhase; c++) {
-            const isPlastic = cTypes && cTypes[phase] && cTypes[phase][c] === 'plastic';
-            if (isPlastic) {
-              // البلاستيك: إما سليم = chainVal كامل أو متضرر = 0
+            const isSingleUnit = cTypes && cTypes[phase] && (cTypes[phase][c] === 'plastic' || cTypes[phase][c] === 'ceramic');
+            if (isSingleUnit) {
+              // البلاستك/الخزف: إما سليم = chainVal كامل أو متضرر = 0
               const damaged = ps[c * perChain] === true;
               phaseScore += damaged ? 0 : chainVal;
             } else {
