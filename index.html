@@ -510,7 +510,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="page-title">🧰 الخدمات</div>
   <div class="cards-grid cards-grid-3col">
     <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
-    <div class="card" id="svcRecordsCard" onclick="showPage('records');loadRecords();"><span class="icon">📋</span><span class="label">السجلات والتقارير</span></div>
+    <div class="card" id="svcHubCard" onclick="showPage('recordsHub');openRecordsHub()"><span class="icon">📚</span><span class="label">السجلات والتقارير</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
@@ -520,7 +520,6 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
     <div class="card" id="svcBackupCard" onclick="showPage('backup')"><span class="icon">💾</span><span class="label">النسخ الاحتياطي</span></div>
-    <div class="card" id="svcReportsCard" onclick="showPage('reports');openReportsPage()"><span class="icon">📊</span><span class="label">التقارير</span></div>
     <div class="card" onclick="showPage('account');loadAccountPage();"><span class="icon">👤</span><span class="label">الحساب</span></div>
   </div>
 </div>
@@ -786,6 +785,32 @@ tbody tr:hover { background: #F7FAFC; }
 </div>
 
 <!-- تصدير سجل المعالجات -->
+<div class="treat-modal-bg" id="treatmentEditModalBg">
+  <div class="treat-modal">
+    <h3>✏️ تعديل المعالجة</h3>
+    <div class="field" style="margin-top:14px">
+      <label>تاريخ المعالجة</label>
+      <input type="date" id="teEditDate" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>المعالج</label>
+      <input type="text" id="teEditTreatedBy" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>العناصر المعالَجة (احذف أي عنصر أُضيف بالخطأ)</label>
+      <div id="teEditItemsWrap" style="margin-top:6px;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px;max-height:180px;overflow-y:auto"></div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>ملاحظات</label>
+      <textarea id="teEditNotes" rows="3" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%"></textarea>
+    </div>
+    <div class="form-actions" style="margin-top:18px;flex-direction:column;gap:10px">
+      <button class="btn btn-primary" onclick="saveTreatmentEdit()" style="width:100%">💾 حفظ التعديل</button>
+      <button class="btn btn-secondary" onclick="closeTreatmentEditModal()" style="width:100%">إلغاء</button>
+    </div>
+  </div>
+</div>
+
 <div class="treat-modal-bg" id="depLogExportModalBg">
   <div class="treat-modal">
     <h3>📤 تصدير سجل المعالجات</h3>
@@ -1668,74 +1693,100 @@ tbody tr:hover { background: #F7FAFC; }
 </div>
 
 <!-- REPORTS (UNIFIED) -->
-<div class="page" id="page-reports">
-  <div class="page-title">📊 التقارير</div>
+<div class="page" id="page-recordsHub">
+  <div class="page-title">📚 السجلات والتقارير</div>
 
-  <div class="admin-card">
-    <div class="field">
-      <label>اسم الخط</label>
-      <select id="repFilterLine" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
-        <option value="">-- كل الخطوط --</option>
-      </select>
+  <!-- المستوى الرئيسي: 3 بطاقات + التصدير -->
+  <div id="hubHomeView">
+    <div class="cards-grid">
+      <div class="card" onclick="openHubBrowse('visual')"><span class="icon">👁️</span><span class="label">الكشف البصري</span></div>
+      <div class="card" onclick="openHubBrowse('thermal')"><span class="icon">🌡️</span><span class="label">الكشف الحراري</span></div>
+      <div class="card" onclick="openHubBrowse('treat')"><span class="icon">🔧</span><span class="label">سجل المعالجات</span></div>
     </div>
 
-    <div class="field" style="margin-top:12px">
-      <label>نوع البيانات</label>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="inspection" checked onchange="onReportFilterChange()"> كشف</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="treatment" checked onchange="onReportFilterChange()"> معالجة</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="thermal" checked onchange="onReportFilterChange()"> كشف حراري</label>
-      </div>
-    </div>
-
-    <div class="grid-2" style="margin-top:12px">
+    <div class="admin-card" style="margin-top:18px">
+      <h3 style="margin-top:0">📤 تصدير تقرير</h3>
       <div class="field">
-        <label>من تاريخ</label>
-        <input type="date" id="repFrom" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+        <label>اسم الخط</label>
+        <select id="repFilterLine" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+          <option value="">-- كل الخطوط --</option>
+        </select>
       </div>
-      <div class="field">
-        <label>إلى تاريخ</label>
-        <input type="date" id="repTo" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
-      </div>
-    </div>
 
-    <div class="field" style="margin-top:14px">
-      <label>الأبراج</label>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="all" checked onchange="onReportTowersModeChange()"> كل الأبراج</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="range" onchange="onReportTowersModeChange()"> نطاق محدد</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="specific" onchange="onReportTowersModeChange()"> أبراج معينة</label>
+      <div class="field" style="margin-top:12px">
+        <label>نوع البيانات</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="inspection" checked onchange="onReportFilterChange()"> كشف</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="treatment" checked onchange="onReportFilterChange()"> معالجة</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="thermal" checked onchange="onReportFilterChange()"> كشف حراري</label>
+        </div>
       </div>
-      <div id="repTowersRangeWrap" style="display:none;gap:10px;margin-top:8px" class="grid-2">
-        <div class="field"><label>من برج</label><input type="number" id="repTowerFrom" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%"></div>
-        <div class="field"><label>إلى برج</label><input type="number" id="repTowerTo" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%"></div>
-      </div>
-      <div id="repTowersSpecificWrap" style="display:none;margin-top:8px">
-        <button type="button" class="btn-sm" style="border:1px solid #CBD5E0;border-radius:6px;background:#F7FAFC;padding:2px 8px;font-size:0.75rem;cursor:pointer;margin-bottom:6px" onclick="toggleAllReportTowers()">تحديد الكل / إلغاء الكل</button>
-        <div id="repTowersWrap" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px 8px;max-height:160px;overflow-y:auto;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px"></div>
-      </div>
-    </div>
 
-    <div class="field" style="margin-top:14px">
-      <label>التصنيف (لبيانات الكشف والمعالجة — يُتجاهل تلقائياً للكشف الحراري)</label>
-      <p style="font-size:0.76rem;color:#a0aec0;margin:2px 0 6px">لو اخترت تصنيفاً معيناً، يظهر بس الأبراج اللي فيها فعلاً ضرر بهذا التصنيف. "الكل" = بدون أي تصفية (كل الأبراج).</p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;background:#EBF0F5;padding:4px 10px;border-radius:14px"><input type="checkbox" id="repCategoryAll" checked onchange="onReportCategoryAllToggle()"> الكل</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="foundation" onchange="onReportCategoryPick()"> 🧱 قواعد</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="insulator" onchange="onReportCategoryPick()"> ⚡ عوازل</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="wires" onchange="onReportCategoryPick()"> 〰️ أسلاك</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="iron" onchange="onReportCategoryPick()"> 🔩 حديد</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="ground" onchange="onReportCategoryPick()"> 🌍 أرضي</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="fire" onchange="onReportCategoryPick()"> 🔥 مسببات حرائق</label>
-        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="road" onchange="onReportCategoryPick()"> 🛣️ الطريق</label>
+      <div class="grid-2" style="margin-top:12px">
+        <div class="field">
+          <label>من تاريخ</label>
+          <input type="date" id="repFrom" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+        </div>
+        <div class="field">
+          <label>إلى تاريخ</label>
+          <input type="date" id="repTo" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <label>الأبراج</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="all" checked onchange="onReportTowersModeChange()"> كل الأبراج</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="range" onchange="onReportTowersModeChange()"> نطاق محدد</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="specific" onchange="onReportTowersModeChange()"> أبراج معينة</label>
+        </div>
+        <div id="repTowersRangeWrap" style="display:none;gap:10px;margin-top:8px" class="grid-2">
+          <div class="field"><label>من برج</label><input type="number" id="repTowerFrom" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%"></div>
+          <div class="field"><label>إلى برج</label><input type="number" id="repTowerTo" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%"></div>
+        </div>
+        <div id="repTowersSpecificWrap" style="display:none;margin-top:8px">
+          <button type="button" class="btn-sm" style="border:1px solid #CBD5E0;border-radius:6px;background:#F7FAFC;padding:2px 8px;font-size:0.75rem;cursor:pointer;margin-bottom:6px" onclick="toggleAllReportTowers()">تحديد الكل / إلغاء الكل</button>
+          <div id="repTowersWrap" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px 8px;max-height:160px;overflow-y:auto;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px"></div>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <label>التصنيف (لبيانات الكشف والمعالجة — يُتجاهل تلقائياً للكشف الحراري)</label>
+        <p style="font-size:0.76rem;color:#a0aec0;margin:2px 0 6px">لو اخترت تصنيفاً معيناً، يظهر بس الأبراج اللي فيها فعلاً ضرر بهذا التصنيف. "الكل" = بدون أي تصفية (كل الأبراج).</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;background:#EBF0F5;padding:4px 10px;border-radius:14px"><input type="checkbox" id="repCategoryAll" checked onchange="onReportCategoryAllToggle()"> الكل</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="foundation" onchange="onReportCategoryPick()"> 🧱 قواعد</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="insulator" onchange="onReportCategoryPick()"> ⚡ عوازل</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="wires" onchange="onReportCategoryPick()"> 〰️ أسلاك</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="iron" onchange="onReportCategoryPick()"> 🔩 حديد</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="ground" onchange="onReportCategoryPick()"> 🌍 أرضي</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="fire" onchange="onReportCategoryPick()"> 🔥 مسببات حرائق</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="road" onchange="onReportCategoryPick()"> 🛣️ الطريق</label>
+        </div>
+      </div>
+
+      <p id="repResultCount" style="margin-top:14px;color:#718096;font-size:0.82rem"></p>
+      <div style="display:flex;gap:10px;margin-top:10px">
+        <button class="btn btn-primary" style="flex:1" onclick="exportUnifiedReportExcel()">📊 تصدير Excel</button>
+        <button class="btn btn-primary" style="flex:1;background:#922b21" onclick="generateUnifiedReportPDF()">📄 تصدير PDF</button>
       </div>
     </div>
+  </div>
 
-    <p id="repResultCount" style="margin-top:14px;color:#718096;font-size:0.82rem"></p>
-    <div style="display:flex;gap:10px;margin-top:10px">
-      <button class="btn btn-primary" style="flex:1" onclick="exportUnifiedReportExcel()">📊 تصدير Excel</button>
-      <button class="btn btn-primary" style="flex:1;background:#922b21" onclick="generateUnifiedReportPDF()">📄 تصدير PDF</button>
-    </div>
+  <!-- مستوى ٢: قائمة الخطوط -->
+  <div id="hubLinesView" style="display:none">
+    <div id="hubLinesList" class="cards-grid"></div>
+  </div>
+
+  <!-- مستوى ٣: قائمة تواريخ الكشف لخط معيّن -->
+  <div id="hubDatesView" style="display:none">
+    <div id="hubDatesList" class="cards-grid"></div>
+  </div>
+
+  <!-- مستوى ٤: تفاصيل تاريخ كشف معيّن -->
+  <div id="hubDetailView" style="display:none">
+    <div id="hubDetailSummary" class="admin-card"></div>
+    <div id="hubDetailList" style="margin-top:14px"></div>
   </div>
 </div>
 <div class="page" id="page-staffStats">
@@ -2372,7 +2423,7 @@ function applyRolePermissions() {
     if (el) el.style.display = isTechnician ? 'none' : '';
   });
   // السجلات والاستمارات: مخفية بالكامل عن الفني (بكل مكان، حتى بالخدمات)
-  ['svcRecordsCard','svcFormsCard'].forEach(id => {
+  ['svcHubCard','svcFormsCard'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = isTechnician ? 'none' : '';
   });
@@ -2381,7 +2432,7 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','reports'];
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','recordsHub'];
 let pageStack = [];
 
 // مكدس المستويات الفرعية داخل نفس الصفحة (مثلاً: قائمة خطوط ← أبراج الخط ← تفاصيل برج)
@@ -4213,7 +4264,7 @@ function badge(val) {
 }
 
 function editRecord(id) {
-  const r = records.find(x => x.id === id);
+  const r = records.find(x => x.id === id) || (fullRecordsCache||[]).find(x => x.id === id);
   if (!r) return;
   editId = id; setFormData(r);
   document.getElementById('formTitle').textContent = '✏️ تعديل السجل';
@@ -11301,7 +11352,7 @@ async function renderDepLog() {
       <div class="dep-card-header">
         <div class="dep-card-title">✅ ${t.line_name} — برج ${t.tower_number}</div>
         <div class="dep-card-meta">📅 ${t.treatment_date} | 👤 ${t.treated_by||'—'}</div>
-        ${(currentUser.role==='admin')?`<button class="btn-sm btn-del" onclick="deleteTreatmentRecord('${t.id}')">🗑️ حذف</button>`:''}
+        ${(currentUser.role==='admin')?`<button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer;margin-left:6px" onclick="openTreatmentEditModal('${t.id}')">✏️ تعديل</button><button class="btn-sm btn-del" onclick="deleteTreatmentRecord('${t.id}')">🗑️ حذف</button>`:''}
       </div>
       ${hasCircuit2?'<div style="font-size:0.72rem;font-weight:700;color:#4A5568;margin-top:10px">الدائرة الأولى</div>':''}
       <div style="display:flex;gap:12px;margin-top:${hasCircuit2?'4px':'10px'};flex-wrap:wrap">
@@ -12478,6 +12529,305 @@ async function generateUnifiedReportPDF() {
   } catch (err) {
     console.error(err);
     showToast('❌ تعذر تجهيز التقرير', 'error');
+  }
+}
+
+// ========================
+// المركز الموحّد: تصفح خط ← تاريخ ← تفاصيل (كشف بصري / كشف حراري / سجل معالجات)
+// ========================
+let hubBrowseType = null; // 'visual' | 'thermal' | 'treat'
+let hubSelectedLine = null;
+let hubSelectedDate = null;
+
+function showHubView(id) {
+  ['hubHomeView','hubLinesView','hubDatesView','hubDetailView'].forEach(v => {
+    const el = document.getElementById(v);
+    if (el) el.style.display = (v === id) ? '' : 'none';
+  });
+}
+
+async function openRecordsHub() {
+  showHubView('hubHomeView');
+  hubBrowseType = null; hubSelectedLine = null; hubSelectedDate = null;
+  await openReportsPage(); // يهيّئ فلاتر ونتائج قسم التصدير (كما هو تماماً)
+}
+
+// يرجّع كل المجموعات (خط+تاريخ) لنوع معيّن، بكل عناصرها
+function getHubGroups(type) {
+  const map = new Map();
+  function ensure(line, date) {
+    const key = line + '||' + date;
+    if (!map.has(key)) map.set(key, { line_name: line, date, items: [], raw: [], forms: [] });
+    return map.get(key);
+  }
+  if (type === 'visual') {
+    (fullRecordsCache||[]).forEach(r => { if (r.line_name && r.inspection_date) ensure(r.line_name, r.inspection_date).items.push(r); });
+  } else if (type === 'treat') {
+    (treatmentsCache||[]).forEach(t => { if (t.line_name && t.treatment_date) ensure(t.line_name, t.treatment_date).items.push(t); });
+  } else if (type === 'thermal') {
+    (thermalRecords||[]).forEach(r => { if (r.line_name && r.inspection_date) ensure(r.line_name, r.inspection_date).raw.push(r); });
+    (reportThermalFormsCache||[]).forEach(f => { if (f.line_name && f.inspection_date) ensure(f.line_name, f.inspection_date).forms.push(f); });
+  }
+  return map;
+}
+
+const HUB_TYPE_LABELS = { visual: '👁️ الكشف البصري', thermal: '🌡️ الكشف الحراري', treat: '🔧 سجل المعالجات' };
+
+async function openHubBrowse(type) {
+  hubBrowseType = type;
+  pushLevel(() => { showHubView('hubHomeView'); });
+  showToast('⏳ جاري التحميل...');
+  if (type === 'visual') await loadFullRecordsCache(true).catch(()=>{});
+  if (type === 'treat') await loadTreatments().catch(()=>{});
+  if (type === 'thermal') await Promise.all([loadThermalArchive().catch(()=>{}), loadReportThermalForms().catch(()=>{})]);
+  renderHubLines();
+  showHubView('hubLinesView');
+}
+
+function renderHubLines() {
+  const map = getHubGroups(hubBrowseType);
+  const perLine = new Map();
+  [...map.values()].forEach(g => { perLine.set(g.line_name, (perLine.get(g.line_name)||0) + 1); });
+  const lines = [...perLine.keys()].sort((a,b) => a.localeCompare(b, 'ar'));
+  const list = document.getElementById('hubLinesList');
+  if (!lines.length) { list.innerHTML = `<div class="empty-state">لا توجد بيانات ${HUB_TYPE_LABELS[hubBrowseType]} بعد</div>`; return; }
+  list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${HUB_TYPE_LABELS[hubBrowseType]} — اختر الخط</div>` +
+    lines.map(line => `<div class="card" onclick="openHubDates(${JSON.stringify(line)})"><span class="icon">📡</span><span class="label">${line}</span><span class="sublabel">${perLine.get(line)} تاريخ كشف</span></div>`).join('');
+}
+
+function openHubDates(line) {
+  hubSelectedLine = line;
+  pushLevel(() => { showHubView('hubLinesView'); });
+  renderHubDates();
+  showHubView('hubDatesView');
+}
+
+function renderHubDates() {
+  const map = getHubGroups(hubBrowseType);
+  const groups = [...map.values()].filter(g => g.line_name === hubSelectedLine).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  const list = document.getElementById('hubDatesList');
+  if (!groups.length) { list.innerHTML = '<div class="empty-state">لا توجد تواريخ</div>'; return; }
+  list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${hubSelectedLine} — اختر التاريخ</div>` +
+    groups.map(g => {
+      let count, unit;
+      if (hubBrowseType === 'thermal') { count = g.raw.length + g.forms.length; unit = 'قراءة/استمارة'; }
+      else { count = g.items.length; unit = hubBrowseType === 'treat' ? 'معالجة' : 'برج'; }
+      return `<div class="card" onclick="openHubDetail(${JSON.stringify(g.date)})"><span class="icon">📅</span><span class="label">${g.date}</span><span class="sublabel">${count} ${unit}</span></div>`;
+    }).join('');
+}
+
+function openHubDetail(date) {
+  hubSelectedDate = date;
+  pushLevel(() => { showHubView('hubDatesView'); });
+  renderHubDetail();
+  showHubView('hubDetailView');
+}
+
+function getCurrentHubGroup() {
+  const map = getHubGroups(hubBrowseType);
+  return map.get(hubSelectedLine + '||' + hubSelectedDate);
+}
+
+function renderHubDetail() {
+  const g = getCurrentHubGroup();
+  const summary = document.getElementById('hubDetailSummary');
+  const list = document.getElementById('hubDetailList');
+  if (!g) { summary.innerHTML = '<p>لا توجد بيانات</p>'; list.innerHTML = ''; return; }
+
+  if (hubBrowseType === 'visual') {
+    const withIssues = g.items.filter(r => ['sev_foundation','sev_iron','sev_insulator','sev_wires','sev_ground','sev_fire'].some(f => isIssueSev(r[f])));
+    summary.innerHTML = `
+      <h3 style="margin-top:0">${g.line_name} — ${g.date}</h3>
+      <p style="font-size:0.85rem;color:#4A5568">🗼 عدد الأبراج المكشوفة: <b>${g.items.length}</b> | ⚠️ فيها ضرر: <b>${withIssues.length}</b></p>
+      <button class="btn btn-del" style="margin-top:10px" onclick="deleteWholeHubDate()">🗑️ حذف هذا الكشف بالكامل (كل أبراج هذا التاريخ)</button>
+      <button class="btn btn-primary" style="margin-top:6px" onclick="exportHubGroupNow()">📄 تصدير هذا الكشف (PDF)</button>
+    `;
+    list.innerHTML = g.items.sort((a,b)=>(a.tower_number||0)-(b.tower_number||0)).map(r => `
+      <div class="dep-card">
+        <div class="dep-card-header">
+          <div class="dep-card-title">🗼 برج ${r.tower_number}</div>
+          <div class="dep-card-meta">${r.tower_type||''} | 👤 ${r.created_by_name||'—'}</div>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer" onclick="editRecord('${r.id}')">✏️ تعديل</button>
+          ${(currentUser.role==='admin')?`<button class="btn-sm btn-del" onclick="hubDeleteSingleInspection('${r.id}')">🗑️ حذف</button>`:''}
+        </div>
+      </div>`).join('');
+
+  } else if (hubBrowseType === 'treat') {
+    summary.innerHTML = `
+      <h3 style="margin-top:0">${g.line_name} — ${g.date}</h3>
+      <p style="font-size:0.85rem;color:#4A5568">🔧 عدد المعالجات: <b>${g.items.length}</b></p>
+      <button class="btn btn-del" style="margin-top:10px" onclick="deleteWholeHubDate()">🗑️ حذف كل معالجات هذا التاريخ</button>
+      <button class="btn btn-primary" style="margin-top:6px" onclick="exportHubGroupNow()">📄 تصدير هذا الكشف (PDF)</button>
+    `;
+    list.innerHTML = g.items.sort((a,b)=>(a.tower_number||0)-(b.tower_number||0)).map(t => `
+      <div class="dep-card">
+        <div class="dep-card-header">
+          <div class="dep-card-title">🗼 برج ${t.tower_number}</div>
+          <div class="dep-card-meta">👤 ${t.treated_by||'—'}</div>
+        </div>
+        <div class="dep-items" style="margin-top:8px">${(t.items_treated||[]).map(i=>`<span class="dep-item fixed">✅ ${i.label}</span>`).join('')}</div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          ${(currentUser.role==='admin')?`<button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer" onclick="openTreatmentEditModal('${t.id}')">✏️ تعديل</button><button class="btn-sm btn-del" onclick="hubDeleteSingleTreatment('${t.id}')">🗑️ حذف</button>`:''}
+        </div>
+      </div>`).join('');
+
+  } else if (hubBrowseType === 'thermal') {
+    summary.innerHTML = `
+      <h3 style="margin-top:0">${g.line_name} — ${g.date}</h3>
+      <p style="font-size:0.85rem;color:#4A5568">🌡️ قراءات خام: <b>${g.raw.length}</b> | 📄 استمارات رسمية: <b>${g.forms.length}</b></p>
+      <button class="btn btn-primary" style="margin-top:6px" onclick="exportHubGroupNow()">📄 تصدير هذا الكشف (PDF)</button>
+    `;
+    let html = '';
+    if (g.forms.length) {
+      html += '<h4 style="margin:10px 0 6px">📄 الاستمارات الرسمية</h4>' + g.forms.map(f => `
+        <div class="dep-card">
+          <div class="dep-card-header">
+            <div class="dep-card-title">📄 استمارة (${(f.rows||[]).length} برج)</div>
+            <div class="dep-card-meta">👤 ${f.created_by||'—'}</div>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px">
+            <button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer" onclick="openOfficialFormFromArchive('${f.id}')">✏️ فتح/تعديل</button>
+            ${(currentUser.role==='admin')?`<button class="btn-sm btn-del" onclick="hubDeleteOfficialForm('${f.id}')">🗑️ حذف</button>`:''}
+          </div>
+        </div>`).join('');
+    }
+    if (g.raw.length) {
+      html += '<h4 style="margin:10px 0 6px">🌡️ القراءات الخام</h4>' + g.raw.map(r => `
+        <div class="dep-card">
+          <div class="dep-card-header">
+            <div class="dep-card-title">🗼 ${r.point_label||('برج '+(r.tower_number||''))}</div>
+            <div class="dep-card-meta">R:${r.r1??'-'} S:${r.s1??'-'} T:${r.t1??'-'} | 👤 ${r.created_by_name||'—'}</div>
+          </div>
+          <div style="margin-top:8px">
+            ${(currentUser.role==='admin')?`<button class="btn-sm btn-del" onclick="hubDeleteRawThermal('${r.id}')">🗑️ حذف</button>`:''}
+          </div>
+        </div>`).join('');
+    }
+    list.innerHTML = html || '<div class="empty-state">لا توجد قراءات</div>';
+  }
+}
+
+async function hubDeleteSingleInspection(id) {
+  if (!(currentUser.role === 'admin')) { showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error'); return; }
+  if (!confirm('🗑️ تأكيد حذف كشف هذا البرج؟ هذا الإجراء لا يمكن التراجع عنه.')) return;
+  try {
+    const res = await sbFetch(`inspections?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error();
+    fullRecordsCache = fullRecordsCache.filter(r => r.id !== id);
+    showToast('🗑️ تم الحذف');
+    renderHubDetail();
+  } catch (e) { showToast('❌ تعذر الحذف', 'error'); }
+}
+async function hubDeleteSingleTreatment(id) {
+  await deleteTreatmentRecord(id); // نفس الدالة المستخدمة بشاشة المغادرات — يضمن التزامن بكل مكان
+  renderHubDetail();
+}
+async function hubDeleteOfficialForm(id) {
+  await deleteOfficialFormFromArchive(id);
+  await loadReportThermalForms();
+  renderHubDetail();
+}
+async function hubDeleteRawThermal(id) {
+  if (!(currentUser.role === 'admin')) { showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error'); return; }
+  if (!confirm('🗑️ تأكيد حذف هذي القراءة؟')) return;
+  try {
+    const res = await sbFetch(`thermal_inspections?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error();
+    thermalRecords = thermalRecords.filter(r => r.id !== id);
+    showToast('🗑️ تم الحذف');
+    renderHubDetail();
+  } catch (e) { showToast('❌ تعذر الحذف', 'error'); }
+}
+
+async function deleteWholeHubDate() {
+  if (!(currentUser.role === 'admin')) { showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error'); return; }
+  const g = getCurrentHubGroup();
+  if (!g) return;
+  const n = g.items.length;
+  if (!confirm(`🗑️ تأكيد حذف كل بيانات ${hubSelectedLine} بتاريخ ${hubSelectedDate} (${n} سجل)؟ هذا الإجراء لا يمكن التراجع عنه نهائياً.`)) return;
+  showToast('⏳ جاري الحذف...');
+  const table = hubBrowseType === 'visual' ? 'inspections' : 'treatments';
+  const ids = g.items.map(x => x.id);
+  let success = 0;
+  for (const id of ids) {
+    try { const res = await sbFetch(`${table}?id=eq.${id}`, { method: 'DELETE' }); if (res.ok) success++; } catch (e) {}
+  }
+  if (hubBrowseType === 'visual') fullRecordsCache = fullRecordsCache.filter(r => !ids.includes(r.id));
+  else treatmentsCache = treatmentsCache.filter(t => !ids.includes(t.id));
+  showToast(`🗑️ تم حذف ${success} من ${n}`);
+  goBackFromOperation(); // نرجع لقائمة التواريخ لأن هذا التاريخ ما عاد موجود
+}
+
+// تصدير سريع لنفس الخط والتاريخ المعروضين حالياً — يهيّئ فلاتر قسم التصدير تلقائياً ثم يصدّر PDF
+async function exportHubGroupNow() {
+  showHubView('hubHomeView');
+  document.getElementById('repFilterLine').value = hubSelectedLine;
+  document.getElementById('repFrom').value = hubSelectedDate;
+  document.getElementById('repTo').value = hubSelectedDate;
+  document.querySelectorAll('.repTypeChk').forEach(cb => { cb.checked = (cb.value === hubBrowseType) || (cb.value === 'inspection' && hubBrowseType === 'visual'); });
+  document.querySelector('input[name="repTowersMode"][value="all"]').checked = true;
+  onReportTowersModeChange();
+  await generateUnifiedReportPDF();
+}
+
+// ========================
+// تعديل المعالجة (مودال مشترك بين المغادرات والمركز الموحّد)
+// ========================
+let treatmentEditingId = null;
+let treatmentEditingItems = [];
+
+function openTreatmentEditModal(id) {
+  const t = treatmentsCache.find(x => x.id === id);
+  if (!t) { showToast('⚠️ تعذر إيجاد هذي المعالجة', 'error'); return; }
+  treatmentEditingId = id;
+  treatmentEditingItems = JSON.parse(JSON.stringify(t.items_treated || []));
+  document.getElementById('teEditDate').value = t.treatment_date || '';
+  document.getElementById('teEditTreatedBy').value = t.treated_by || '';
+  document.getElementById('teEditNotes').value = t.notes || '';
+  renderTreatmentEditItems();
+  document.getElementById('treatmentEditModalBg').classList.add('show');
+}
+function renderTreatmentEditItems() {
+  const wrap = document.getElementById('teEditItemsWrap');
+  if (!treatmentEditingItems.length) { wrap.innerHTML = '<p style="font-size:0.8rem;color:#718096">لا توجد عناصر — احفظ الحذف كامل من زر الحذف بدل هذا</p>'; return; }
+  wrap.innerHTML = treatmentEditingItems.map((it, i) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #F0F2F5">
+      <span style="font-size:0.82rem">${it.label}</span>
+      <button type="button" class="btn-sm btn-del" onclick="removeTreatmentEditItem(${i})">✕</button>
+    </div>`).join('');
+}
+function removeTreatmentEditItem(i) {
+  treatmentEditingItems.splice(i, 1);
+  renderTreatmentEditItems();
+}
+function closeTreatmentEditModal() {
+  document.getElementById('treatmentEditModalBg').classList.remove('show');
+  treatmentEditingId = null;
+}
+async function saveTreatmentEdit() {
+  if (!treatmentEditingId) return;
+  if (!treatmentEditingItems.length) { showToast('⚠️ لازم يبقى عنصر واحد على الأقل بالمعالجة، أو احذفها بالكامل من زر الحذف', 'error'); return; }
+  const patch = {
+    treatment_date: document.getElementById('teEditDate').value,
+    treated_by: document.getElementById('teEditTreatedBy').value,
+    notes: document.getElementById('teEditNotes').value,
+    items_treated: treatmentEditingItems
+  };
+  try {
+    const res = await sbFetch(`treatments?id=eq.${treatmentEditingId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    if (!res.ok) throw new Error();
+    const idx = treatmentsCache.findIndex(t => t.id === treatmentEditingId);
+    if (idx > -1) Object.assign(treatmentsCache[idx], patch);
+    showToast('✅ تم حفظ التعديل — انتشر بكل الأماكن (المغادرات والمركز الموحّد)');
+    closeTreatmentEditModal();
+    const depPage = document.getElementById('page-departures');
+    if (depPage && depPage.classList.contains('active')) renderDepLog();
+    const hubPage = document.getElementById('page-recordsHub');
+    if (hubPage && hubPage.classList.contains('active') && hubBrowseType === 'treat' && hubSelectedDate) renderHubDetail();
+  } catch (e) {
+    showToast('❌ تعذر حفظ التعديل', 'error');
   }
 }
 
