@@ -520,6 +520,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
     <div class="card" id="svcBackupCard" onclick="showPage('backup')"><span class="icon">💾</span><span class="label">النسخ الاحتياطي</span></div>
+    <div class="card" id="svcReportsCard" onclick="showPage('reports');openReportsPage()"><span class="icon">📊</span><span class="label">التقارير</span></div>
     <div class="card" onclick="showPage('account');loadAccountPage();"><span class="icon">👤</span><span class="label">الحساب</span></div>
   </div>
 </div>
@@ -1665,6 +1666,75 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="backupRestoreLog" style="margin-top:12px;font-size:0.78rem;color:#4A5568;white-space:pre-wrap"></div>
   </div>
 </div>
+
+<!-- REPORTS (UNIFIED) -->
+<div class="page" id="page-reports">
+  <div class="page-title">📊 التقارير</div>
+
+  <div class="admin-card">
+    <div class="field">
+      <label>اسم الخط</label>
+      <select id="repFilterLine" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+        <option value="">-- كل الخطوط --</option>
+      </select>
+    </div>
+
+    <div class="field" style="margin-top:12px">
+      <label>نوع البيانات</label>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="inspection" checked onchange="onReportFilterChange()"> كشف</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="treatment" checked onchange="onReportFilterChange()"> معالجة</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repTypeChk" value="thermal" checked onchange="onReportFilterChange()"> كشف حراري</label>
+      </div>
+    </div>
+
+    <div class="grid-2" style="margin-top:12px">
+      <div class="field">
+        <label>من تاريخ</label>
+        <input type="date" id="repFrom" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+      </div>
+      <div class="field">
+        <label>إلى تاريخ</label>
+        <input type="date" id="repTo" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:14px">
+      <label>الأبراج</label>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="all" checked onchange="onReportTowersModeChange()"> كل الأبراج</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="range" onchange="onReportTowersModeChange()"> نطاق محدد</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="radio" name="repTowersMode" value="specific" onchange="onReportTowersModeChange()"> أبراج معينة</label>
+      </div>
+      <div id="repTowersRangeWrap" style="display:none;gap:10px;margin-top:8px" class="grid-2">
+        <div class="field"><label>من برج</label><input type="number" id="repTowerFrom" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%"></div>
+        <div class="field"><label>إلى برج</label><input type="number" id="repTowerTo" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%"></div>
+      </div>
+      <div id="repTowersSpecificWrap" style="display:none;margin-top:8px">
+        <button type="button" class="btn-sm" style="border:1px solid #CBD5E0;border-radius:6px;background:#F7FAFC;padding:2px 8px;font-size:0.75rem;cursor:pointer;margin-bottom:6px" onclick="toggleAllReportTowers()">تحديد الكل / إلغاء الكل</button>
+        <div id="repTowersWrap" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px 8px;max-height:160px;overflow-y:auto;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px"></div>
+      </div>
+    </div>
+
+    <div class="field" style="margin-top:14px">
+      <label>التصنيف (لبيانات الكشف والمعالجة — يُتجاهل تلقائياً للكشف الحراري)</label>
+      <p style="font-size:0.76rem;color:#a0aec0;margin:2px 0 6px">لو اخترت تصنيفاً معيناً، يظهر بس الأبراج اللي فيها فعلاً ضرر بهذا التصنيف. "الكل" = بدون أي تصفية (كل الأبراج).</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;background:#EBF0F5;padding:4px 10px;border-radius:14px"><input type="checkbox" id="repCategoryAll" checked onchange="onReportCategoryAllToggle()"> الكل</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="foundation" onchange="onReportCategoryPick()"> 🧱 قواعد</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="insulator" onchange="onReportCategoryPick()"> ⚡ عوازل</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="wires" onchange="onReportCategoryPick()"> 〰️ أسلاك</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="iron" onchange="onReportCategoryPick()"> 🔩 حديد</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="ground" onchange="onReportCategoryPick()"> 🌍 أرضي</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="fire" onchange="onReportCategoryPick()"> 🔥 مسببات حرائق</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="repCatChk" value="road" onchange="onReportCategoryPick()"> 🛣️ الطريق</label>
+      </div>
+    </div>
+
+    <p id="repResultCount" style="margin-top:14px;color:#718096;font-size:0.82rem"></p>
+    <button class="btn btn-primary" style="width:100%;margin-top:10px;background:#922b21" onclick="generateUnifiedReportPDF()">📄 إصدار التقرير (PDF)</button>
+  </div>
+</div>
 <div class="page" id="page-staffStats">
   <div class="page-title"><img src="icon-stats.png" style="width:28px;height:28px;vertical-align:middle;margin-left:6px"> إحصائيات الموظفين</div>
 
@@ -2207,9 +2277,8 @@ async function doLogin() {
     });
     const data = await res.json();
 
-    // 🔧 تشخيص مؤقت — لاحقاً نشيل هذا الجزء بعد ما نلقى السبب
     if (!Array.isArray(data) || !data.length) {
-      errBox.textContent = `🔧DEBUG (HTTP ${res.status}): ${JSON.stringify(data)}`;
+      errBox.textContent = '❌ اسم المستخدم أو كلمة المرور غير صحيحة';
       errBox.classList.add('show');
       btn.disabled = false; btn.textContent = 'دخول'; return;
     }
@@ -2237,7 +2306,7 @@ async function doLogin() {
 
     enterApp();
   } catch (e) {
-    errBox.textContent = `🔧DEBUG (catch): ${e.message}`;
+    errBox.textContent = '⚠️ خطأ بالاتصال. تحقق من الإنترنت';
     errBox.classList.add('show');
     btn.disabled = false; btn.textContent = 'دخول';
   }
@@ -2309,7 +2378,7 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup'];
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','reports'];
 let pageStack = [];
 
 // مكدس المستويات الفرعية داخل نفس الصفحة (مثلاً: قائمة خطوط ← أبراج الخط ← تفاصيل برج)
@@ -3239,8 +3308,8 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
         // v, straight4, chain4_12 — نبقيهن كما هم بدون تبديل (بلاستيك نادر عليهم)
         let el;
         if (mode === 'v') el = buildVShape(phase, stateObj, cycleObj);
-        else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB, 4, 32, stateObj, cycleObj);
-        else if (mode === 'chain4_12') el = buildStraight4Chain(phase, stA, stB, 4, 12, stateObj, cycleObj);
+        else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB, 4, 32, stateObj, cycleObj, rebuildUI);
+        else if (mode === 'chain4_12') el = buildStraight4Chain(phase, stA, stB, 4, 12, stateObj, cycleObj, rebuildUI);
         else el = buildChain(phase, rowsPerChain, stateObj, cycleObj);
         block.appendChild(el);
       }
@@ -3377,7 +3446,7 @@ function buildSingleChain(phase, rows, stateObj, cycleObj) {
   return wrap;
 }
 
-function buildStraight4Chain(phase, stationA, stationB, totalCols, rows, stateObj, cycleObj) {
+function buildStraight4Chain(phase, stationA, stationB, totalCols, rows, stateObj, cycleObj, rebuildFn) {
   stateObj = stateObj || insulatorState;
   cycleObj = cycleObj || insulatorCycleState;
   totalCols = totalCols || 4; rows = rows || 32;
@@ -3399,27 +3468,42 @@ function buildStraight4Chain(phase, stationA, stationB, totalCols, rows, stateOb
     const colsWrap = document.createElement('div'); colsWrap.style.display = 'flex'; colsWrap.style.gap = '6px';
     for (let c = 0; c < colsPerGroup; c++) {
       const col = c + colOffset;
-      const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
-      for (let row = 0; row < rows; row++) {
-        const idx = col*rows+row;
-        const rect = document.createElement('div');
-        rect.className = 'ins-rect';
-        function paint() {
-          const cyc = (cycleObj[phase]&&cycleObj[phase][idx]) || 0;
-          if (stateObj[phase][idx]) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
-          else if (cyc > 0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
-          else { rect.style.background = 'white'; rect.style.borderColor = '#555'; }
+      const material = (chainTypes[phase]||[])[col] || 'glass';
+      const chainWrap = document.createElement('div');
+      chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
+      if (rebuildFn) chainWrap.appendChild(buildChainToggleBtn(phase, col, stateObj, cycleObj, rows, rebuildFn));
+      if (material === 'plastic' || material === 'ceramic') {
+        // حالة البلاستك/الخزف: نخزّنها بأول عازل بالسلسلة (true=متضرر)
+        const dmg = !!(stateObj[phase] && stateObj[phase][col*rows]);
+        const buildFn = material === 'ceramic' ? buildCeramicChain : buildPlasticChain;
+        const pEl = buildFn(phase, col, stateObj, dmg, (isDmg) => {
+          for (let r=0; r<rows; r++) stateObj[phase][col*rows+r] = isDmg;
+        }, rows);
+        chainWrap.appendChild(pEl);
+      } else {
+        const colDiv = document.createElement('div'); colDiv.className = 'chain-col';
+        for (let row = 0; row < rows; row++) {
+          const idx = col*rows+row;
+          const rect = document.createElement('div');
+          rect.className = 'ins-rect';
+          function paint() {
+            const cyc = (cycleObj[phase]&&cycleObj[phase][idx]) || 0;
+            if (stateObj[phase][idx]) { rect.style.background = insShade(INS_RED_SHADES, cyc); rect.style.borderColor = '#9B0000'; }
+            else if (cyc > 0) { rect.style.background = insShade(INS_GREEN_SHADES, cyc-1); rect.style.borderColor = '#276749'; }
+            else { rect.style.background = 'white'; rect.style.borderColor = '#555'; }
+          }
+          paint();
+          if (currentUser.role !== 'readonly') {
+            rect.addEventListener('click', () => {
+              stateObj[phase][idx] = !stateObj[phase][idx];
+              paint();
+            });
+          }
+          colDiv.appendChild(rect);
         }
-        paint();
-        if (currentUser.role !== 'readonly') {
-          rect.addEventListener('click', () => {
-            stateObj[phase][idx] = !stateObj[phase][idx];
-            paint();
-          });
-        }
-        colDiv.appendChild(rect);
+        chainWrap.appendChild(colDiv);
       }
-      colsWrap.appendChild(colDiv);
+      colsWrap.appendChild(chainWrap);
     }
     groupWrap.appendChild(colsWrap);
     return groupWrap;
@@ -10795,6 +10879,11 @@ function getTouchedSeveritySections(r) {
       });
     });
   }
+  // تبديلات كامل السلسلة (زجاج↔بلاستك) بهذي الجلسة تُعتبر "معالجة" أيضاً حتى لو ما فيها ضغط يدوي
+  // على عوازل مفردة — بدون هذا السطر، تبديل سلسلة كاملة ما يُحسب "لمس" للقسم، وتبقى درجة الخطورة
+  // القديمة (مثلاً "حرجة") عالقة للأبد رغم إن كل عوازلها استُبدلت فعلياً
+  if (chainReplacementLog.length) insTouched = true;
+
   if (insTouched) touched.push({ key:'insulator', label: SEVERITY_TREAT_SECTIONS.insulator.label, field: SEVERITY_TREAT_SECTIONS.insulator.field, resolved: insResolved });
 
   // باقي الأقسام
@@ -11903,6 +11992,417 @@ async function startBackupRestore() {
   btn.disabled = false;
   pendingRestoreData = null;
   document.getElementById('backupRestoreConfirmInput').value = '';
+}
+
+// ========================
+// التقارير الموحّدة
+// ========================
+const REPORT_CATEGORIES = {
+  foundation: { label: '🧱 قواعد', sevField: 'sev_foundation' },
+  insulator:  { label: '⚡ عوازل', sevField: 'sev_insulator' },
+  wires:      { label: '〰️ أسلاك', sevField: 'sev_wires' },
+  iron:       { label: '🔩 حديد', sevField: 'sev_iron' },
+  ground:     { label: '🌍 أرضي', sevField: 'sev_ground' },
+  fire:       { label: '🔥 مسببات حرائق', sevField: 'sev_fire' },
+  road:       { label: '🛣️ الطريق', sevField: null }
+};
+// بادئات مفاتيح "items_treated" بسجل المعالجات، لكل تصنيف — تُستخدم لفلترة تقرير المعالجات بالتصنيف
+const REPORT_CATEGORY_TREATMENT_PREFIXES = {
+  foundation: ['foundation'],
+  insulator: ['ins_', 'ins2_', 'chainreplace_'],
+  wires: ['wire_'],
+  iron: ['iron'],
+  ground: ['ground_'],
+  fire: ['fire'],
+  road: ['road']
+};
+
+// كاش خاص بالتقارير (لا يوجد كاش عام مسبق للاستمارات الرسمية بالتطبيق)
+let reportThermalFormsCache = [];
+async function loadReportThermalForms() {
+  try {
+    const res = await sbFetch('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
+    reportThermalFormsCache = await res.json();
+  } catch (e) { reportThermalFormsCache = []; }
+}
+
+async function openReportsPage() {
+  await Promise.all([
+    loadFullRecordsCache(true).catch(()=>{}),
+    loadTreatments().catch(()=>{}),
+    loadReportThermalForms().catch(()=>{})
+  ]);
+
+  const lineSet = new Set();
+  (fullRecordsCache||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); });
+  (treatmentsCache||[]).forEach(t => { if (t.line_name) lineSet.add(t.line_name); });
+  (reportThermalFormsCache||[]).forEach(f => { if (f.line_name) lineSet.add(f.line_name); });
+  const uniqueLines = [...lineSet].sort();
+  const sel = document.getElementById('repFilterLine');
+  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' + uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
+
+  document.getElementById('repFrom').value = '';
+  document.getElementById('repTo').value = '';
+  document.querySelector('input[name="repTowersMode"][value="all"]').checked = true;
+  document.getElementById('repTowerFrom').value = '';
+  document.getElementById('repTowerTo').value = '';
+  document.getElementById('repCategoryAll').checked = true;
+  document.querySelectorAll('.repCatChk').forEach(cb => { cb.checked = false; cb.disabled = true; });
+  onReportTowersModeChange();
+}
+
+function onReportCategoryAllToggle() {
+  const allChecked = document.getElementById('repCategoryAll').checked;
+  document.querySelectorAll('.repCatChk').forEach(cb => { cb.disabled = allChecked; if (allChecked) cb.checked = false; });
+  updateReportResultCount();
+}
+function onReportCategoryPick() {
+  const anyChecked = Array.from(document.querySelectorAll('.repCatChk')).some(cb => cb.checked);
+  if (anyChecked) document.getElementById('repCategoryAll').checked = false;
+  else document.getElementById('repCategoryAll').checked = true;
+  document.querySelectorAll('.repCatChk').forEach(cb => cb.disabled = !anyChecked && document.getElementById('repCategoryAll').checked);
+  updateReportResultCount();
+}
+// null = بدون تصفية تصنيف (كل الأبراج)
+function getReportSelectedCategories() {
+  if (document.getElementById('repCategoryAll').checked) return null;
+  const picked = Array.from(document.querySelectorAll('.repCatChk:checked')).map(cb => cb.value);
+  return picked.length ? picked : null;
+}
+
+function onReportTowersModeChange() {
+  const mode = document.querySelector('input[name="repTowersMode"]:checked').value;
+  document.getElementById('repTowersRangeWrap').style.display = mode === 'range' ? 'grid' : 'none';
+  document.getElementById('repTowersSpecificWrap').style.display = mode === 'specific' ? '' : 'none';
+  if (mode === 'specific') updateReportTowersList();
+  updateReportResultCount();
+}
+
+function getReportSelectedTypes() {
+  return Array.from(document.querySelectorAll('.repTypeChk:checked')).map(cb => cb.value);
+}
+
+// يرجّع كل أرقام الأبراج المتاحة ضمن فلتر الخط/التاريخ/النوع الحالي (بدون فلتر الأبراج نفسه) — لبناء قائمة "أبراج معينة"
+function getReportAvailableTowers() {
+  const line = document.getElementById('repFilterLine').value;
+  const from = document.getElementById('repFrom').value;
+  const to = document.getElementById('repTo').value;
+  const types = getReportSelectedTypes();
+  const towers = new Set();
+  if (types.includes('inspection')) {
+    (fullRecordsCache||[]).forEach(r => {
+      if ((!line || r.line_name === line) && (!from || (r.inspection_date||'') >= from) && (!to || (r.inspection_date||'') <= to) && r.tower_number != null) {
+        towers.add(String(r.tower_number));
+      }
+    });
+  }
+  if (types.includes('treatment')) {
+    (treatmentsCache||[]).forEach(t => {
+      if ((!line || t.line_name === line) && (!from || (t.treatment_date||'') >= from) && (!to || (t.treatment_date||'') <= to) && t.tower_number != null) {
+        towers.add(String(t.tower_number));
+      }
+    });
+  }
+  if (types.includes('thermal')) {
+    (reportThermalFormsCache||[]).forEach(f => {
+      if (line && f.line_name !== line) return;
+      if (from && (f.inspection_date||'') < from) return;
+      if (to && (f.inspection_date||'') > to) return;
+      (Array.isArray(f.rows) ? f.rows : []).forEach(row => { if (row.tower_number) towers.add(String(row.tower_number)); });
+    });
+  }
+  return [...towers].sort((a,b) => (parseInt(a)||0) - (parseInt(b)||0) || a.localeCompare(b));
+}
+
+function updateReportTowersList() {
+  const wrap = document.getElementById('repTowersWrap');
+  const towers = getReportAvailableTowers();
+  if (!towers.length) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد أبراج مطابقة</div>'; return; }
+  wrap.innerHTML = towers.map(tn => `
+    <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
+      <input type="checkbox" class="repTowerChk" value="${tn}" checked onchange="updateReportResultCount()">
+      <span>برج ${tn}</span>
+    </label>`).join('');
+}
+function toggleAllReportTowers() {
+  const boxes = document.querySelectorAll('.repTowerChk');
+  if (!boxes.length) return;
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  updateReportResultCount();
+}
+
+// دالة تحقق موحّدة: هل رقم برج معيّن يمر فلتر الأبراج الحالي (كل / نطاق / معيّنة)؟
+function reportTowerPasses(towerNumber) {
+  const mode = document.querySelector('input[name="repTowersMode"]:checked').value;
+  if (mode === 'all') return true;
+  if (mode === 'range') {
+    const from = parseFloat(document.getElementById('repTowerFrom').value);
+    const to = parseFloat(document.getElementById('repTowerTo').value);
+    const n = parseFloat(towerNumber);
+    if (isNaN(n)) return false;
+    if (!isNaN(from) && n < from) return false;
+    if (!isNaN(to) && n > to) return false;
+    return true;
+  }
+  // specific
+  const selected = new Set(Array.from(document.querySelectorAll('.repTowerChk:checked')).map(b => b.value));
+  return selected.has(String(towerNumber));
+}
+
+function onReportFilterChange() {
+  if (document.querySelector('input[name="repTowersMode"]:checked').value === 'specific') updateReportTowersList();
+  updateReportResultCount();
+}
+
+const isIssueSev = s => !!(s && s !== 'ok');
+
+// هل سجل كشف فيه فعلاً ضرر بأي من التصنيفات المطلوبة؟ (categories=null يعني بدون تصفية = مطابق دائماً)
+function inspectionMatchesCategories(r, categories) {
+  if (!categories) return true;
+  return categories.some(cat => {
+    if (cat === 'road') return !!(r.road_access && r.road_access !== 'متاح');
+    const field = REPORT_CATEGORIES[cat] && REPORT_CATEGORIES[cat].sevField;
+    return field ? isIssueSev(r[field]) : false;
+  });
+}
+function treatmentMatchesCategories(t, categories) {
+  if (!categories) return true;
+  const items = t.items_treated || [];
+  return categories.some(cat => {
+    const prefixes = REPORT_CATEGORY_TREATMENT_PREFIXES[cat] || [];
+    return items.some(it => prefixes.some(p => (it.key||'').startsWith(p) || (it.key||'') === p));
+  });
+}
+
+function getReportFilteredInspections() {
+  const line = document.getElementById('repFilterLine').value;
+  const from = document.getElementById('repFrom').value;
+  const to = document.getElementById('repTo').value;
+  const categories = getReportSelectedCategories();
+  return (fullRecordsCache||[]).filter(r =>
+    (!line || r.line_name === line) &&
+    (!from || (r.inspection_date||'') >= from) &&
+    (!to || (r.inspection_date||'') <= to) &&
+    reportTowerPasses(r.tower_number) &&
+    inspectionMatchesCategories(r, categories)
+  );
+}
+function getReportFilteredTreatments() {
+  const line = document.getElementById('repFilterLine').value;
+  const from = document.getElementById('repFrom').value;
+  const to = document.getElementById('repTo').value;
+  const categories = getReportSelectedCategories();
+  return (treatmentsCache||[]).filter(t =>
+    (!line || t.line_name === line) &&
+    (!from || (t.treatment_date||'') >= from) &&
+    (!to || (t.treatment_date||'') <= to) &&
+    reportTowerPasses(t.tower_number) &&
+    treatmentMatchesCategories(t, categories)
+  );
+}
+function getReportFilteredThermalForms() {
+  const line = document.getElementById('repFilterLine').value;
+  const from = document.getElementById('repFrom').value;
+  const to = document.getElementById('repTo').value;
+  // التصنيف يُتجاهل هنا (متفق عليه) — الكشف الحراري بيانات حرارة بس، ماله علاقة بقواعد/حديد/عوازل
+  // فلتر الأبراج يُطبَّق على مستوى الصفوف داخل كل استمارة (استمارة واحدة تغطي عدة أبراج)
+  return (reportThermalFormsCache||[])
+    .filter(f => (!line || f.line_name === line) && (!from || (f.inspection_date||'') >= from) && (!to || (f.inspection_date||'') <= to))
+    .map(f => ({ ...f, rows: (Array.isArray(f.rows) ? f.rows : []).filter(row => row.tower_number && reportTowerPasses(row.tower_number)) }))
+    .filter(f => f.rows.length);
+}
+
+function updateReportResultCount() {
+  const types = getReportSelectedTypes();
+  let parts = [];
+  if (types.includes('inspection')) parts.push(`📋 كشف: ${getReportFilteredInspections().length}`);
+  if (types.includes('treatment')) parts.push(`🔧 معالجة: ${getReportFilteredTreatments().length}`);
+  if (types.includes('thermal')) parts.push(`🌡️ كشف حراري: ${getReportFilteredThermalForms().length}`);
+  document.getElementById('repResultCount').textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
+}
+
+// بطاقة كشف واحدة (كانفاس) — تعرض بس التصنيفات المختارة (أو كل شي لو "الكل")
+async function buildReportInspectionCardCanvas(r, categories) {
+  const CARD_W = 760, PAD = 18;
+  const lines = [];
+  const addCat = (label, text) => { if (text && String(text).trim()) lines.push(`${label}: ${text}`); };
+
+  const showAll = !categories;
+  if (showAll || categories.includes('foundation')) addCat('🧱 قواعد البرج', r.tower_foundations);
+  if (showAll || categories.includes('iron')) { addCat('🔩 تقاطعات الحديد', r.iron_intersections); addCat('🔩 ملحقات البرج', r.tower_attachments); }
+  if (showAll || categories.includes('insulator')) addCat('⚡ العوازل', insulatorStateToText(r.insulator_state));
+  if (showAll || categories.includes('wires')) { addCat('〰️ أسلاك R', r.wires_r1); addCat('〰️ أسلاك S', r.wires_s1); addCat('〰️ أسلاك T', r.wires_t1); }
+  if (showAll || categories.includes('ground')) { addCat('🌍 الأرضي 1', r.ground_1); addCat('🌍 الأرضي 2', r.ground_2); }
+  if (showAll || categories.includes('fire')) { addCat('🔥 مسببات الحرائق', r.fire_causes); addCat('🔥 ملاحظات', r.fire_causes_notes); }
+  if (showAll || categories.includes('road')) { addCat('🛣️ الطريق', r.road_access); addCat('🛣️ ملاحظات الطريق', r.road_access_notes); }
+  if (!lines.length) lines.push('لا توجد بيانات لهذا التصنيف بهذا الكشف');
+
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+  mctx.font = '13px Tahoma, Arial, sans-serif';
+  const wrapped = [];
+  lines.forEach(line => wrapArabicText(mctx, line, CARD_W - PAD*2).forEach(l => wrapped.push(l)));
+
+  const headerH = 40;
+  const bodyH = wrapped.length * 18 + 10;
+  const totalH = headerH + bodyH + PAD;
+  const scale = 1.3;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(CARD_W * scale);
+  canvas.height = Math.ceil(totalH * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, totalH);
+  ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+
+  let y = PAD + 12;
+  ctx.fillStyle = '#1A2A46';
+  ctx.font = 'bold 14px Tahoma, Arial, sans-serif';
+  ctx.fillText(`الخط: ${r.line_name||'-'}   |   برج: ${r.tower_number||'-'}   |   التاريخ: ${r.inspection_date||'-'}   |   الفني: ${r.created_by_name||'-'}`, CARD_W - PAD, y);
+  y += 18;
+  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+  y += 20;
+
+  ctx.font = '13px Tahoma, Arial, sans-serif';
+  ctx.fillStyle = '#3C3C3C';
+  wrapped.forEach(line => { ctx.fillText(line, CARD_W - PAD, y); y += 18; });
+
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
+}
+
+// جدول كشف حراري واحد (استمارة) — الخط + التاريخ + كل الأبراج ودرجات حرارتها
+async function buildThermalFormTableCanvas(f) {
+  const CARD_W = 760, PAD = 18, ROW_H = 20;
+  const rows = Array.isArray(f.rows) ? f.rows.filter(row => row.tower_number) : [];
+  const headerH = 46, tableHeaderH = 22;
+  const totalH = headerH + tableHeaderH + rows.length * ROW_H + PAD;
+  const scale = 1.3;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(CARD_W * scale);
+  canvas.height = Math.ceil(Math.max(totalH, 90) * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, Math.max(totalH, 90));
+  ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+
+  let y = PAD + 12;
+  ctx.fillStyle = '#1A2A46';
+  ctx.font = 'bold 14px Tahoma, Arial, sans-serif';
+  ctx.fillText(`الخط: ${f.line_name||'-'}   |   التاريخ: ${f.inspection_date||'-'}   |   الفني: ${f.created_by||'-'}`, CARD_W - PAD, y);
+  y += 18;
+  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+  y += 18;
+
+  if (!rows.length) {
+    ctx.font = '13px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#718096';
+    ctx.fillText('لا توجد قراءات مسجّلة بهذي الاستمارة', CARD_W - PAD, y);
+    return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: Math.max(totalH, 90) };
+  }
+
+  // رؤوس الأعمدة (من اليمين لليسار: برج | R | S | T | الحمل | الحرارة المحيطة | ملاحظات)
+  const cols = [
+    { key: 'tower_number', label: 'برج', w: 60 },
+    { key: 'r', label: 'R°', w: 55 },
+    { key: 's', label: 'S°', w: 55 },
+    { key: 't', label: 'T°', w: 55 },
+    { key: 'load_mw', label: 'الحمل MW', w: 80 },
+    { key: 'ambient', label: 'الحرارة المحيطة', w: 90 },
+    { key: 'notes', label: 'ملاحظات', w: CARD_W - PAD*2 - (60+55+55+55+80+90) }
+  ];
+  ctx.font = 'bold 12px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#4A5568';
+  let x = CARD_W - PAD;
+  cols.forEach(c => { ctx.fillText(c.label, x, y); x -= c.w; });
+  y += 6;
+  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+  y += 16;
+
+  ctx.font = '12px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#2D3748';
+  rows.forEach(row => {
+    x = CARD_W - PAD;
+    cols.forEach(c => {
+      const val = c.key === 'notes' ? (row.notes || '') : (row[c.key] != null ? String(row[c.key]) : '');
+      ctx.fillText(val, x, y);
+      x -= c.w;
+    });
+    y += ROW_H;
+  });
+
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: Math.max(totalH, 90) };
+}
+
+async function generateUnifiedReportPDF() {
+  const types = getReportSelectedTypes();
+  if (!types.length) { showToast('⚠️ اختر نوع بيانات واحد على الأقل', 'error'); return; }
+  const categories = getReportSelectedCategories();
+
+  const inspections = types.includes('inspection') ? getReportFilteredInspections() : [];
+  const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
+  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
+
+  if (!inspections.length && !treatments.length && !thermalForms.length) {
+    showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
+    return;
+  }
+
+  showToast('⏳ جاري تحضير التقرير...');
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const marginX = 30, marginTop = 50, marginBottom = 26;
+    let y = marginTop;
+    let firstSection = true;
+
+    function ensureSpace(h) {
+      if (y + h > pageH - marginBottom) { doc.addPage(); y = marginTop; }
+    }
+    function drawSectionTitle(title) {
+      if (!firstSection) { doc.addPage(); y = marginTop; }
+      firstSection = false;
+      doc.setFontSize(14); doc.setTextColor(20,40,70);
+      doc.text(title, pageW/2, 30, { align: 'center' });
+      y = 50;
+    }
+    async function drawCard(card) {
+      const drawW = pageW - marginX*2;
+      const drawH = card.h * (drawW / card.w);
+      ensureSpace(drawH + 8);
+      doc.addImage(card.dataUrl, 'JPEG', marginX, y, drawW, drawH);
+      y += drawH + 8;
+    }
+
+    doc.setFontSize(13); doc.setTextColor(0,0,0);
+    doc.text('Unified Report', pageW/2, 26, { align: 'center' });
+    doc.setFontSize(9);
+    doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, 38, { align: 'center' });
+    y = 50;
+
+    if (inspections.length) {
+      drawSectionTitle('📋 قسم الكشف');
+      for (const r of inspections) await drawCard(await buildReportInspectionCardCanvas(r, categories));
+    }
+    if (treatments.length) {
+      drawSectionTitle('🔧 قسم المعالجات');
+      for (const t of treatments) await drawCard(await buildTreatLogRecordCanvas(t));
+    }
+    if (thermalForms.length) {
+      drawSectionTitle('🌡️ قسم الكشف الحراري');
+      for (const f of thermalForms) await drawCard(await buildThermalFormTableCanvas(f));
+    }
+
+    const blob = doc.output('blob');
+    const filename = 'تقرير_' + new Date().toISOString().split('T')[0] + '.pdf';
+    await shareOrDownloadFile(blob, filename, 'application/pdf');
+    showToast('✅ تم تجهيز التقرير');
+  } catch (err) {
+    console.error(err);
+    showToast('❌ تعذر تجهيز التقرير', 'error');
+  }
 }
 
 function showInventoryTools() {
