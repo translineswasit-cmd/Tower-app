@@ -519,6 +519,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" id="svcFormsCard" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
+    <div class="card" id="svcBackupCard" onclick="showPage('backup')"><span class="icon">💾</span><span class="label">النسخ الاحتياطي</span></div>
     <div class="card" onclick="showPage('account');loadAccountPage();"><span class="icon">👤</span><span class="label">الحساب</span></div>
   </div>
 </div>
@@ -1638,7 +1639,32 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 </div>
 
-<!-- STAFF STATISTICS -->
+<!-- BACKUP (ADMIN ONLY) -->
+<div class="page" id="page-backup">
+  <div class="page-title">💾 النسخ الاحتياطي</div>
+
+  <div class="admin-card">
+    <h3 style="margin-top:0">⬇️ تنزيل نسخة احتياطية</h3>
+    <p style="color:#718096;font-size:0.85rem;margin-bottom:12px">يجمع بيانات كل الجداول بملف واحد (JSON) وينزّله لجهازك. احفظه بمكان آمن خارج الموقع (گوگل درايف مثلاً). يُفضّل تكرارها شهرياً.</p>
+    <button class="btn btn-primary" onclick="downloadFullBackup()" id="backupDownloadBtn">⬇️ تنزيل نسخة احتياطية الآن</button>
+    <p id="backupDownloadStatus" style="margin-top:10px;font-size:0.82rem;color:#718096"></p>
+  </div>
+
+  <div class="admin-card" style="margin-top:14px">
+    <h3 style="margin-top:0">⬆️ استعادة من نسخة احتياطية</h3>
+    <p style="color:#718096;font-size:0.85rem;margin-bottom:12px">يرفع بيانات من ملف نسخة احتياطية سابقة ويدمجها مع البيانات الحالية (تحديث/إضافة فقط — لا يمسح أي شيء موجود حالياً بقاعدة البيانات).</p>
+    <input type="file" id="backupRestoreFile" accept="application/json" onchange="handleBackupFileSelected(this)" style="margin-bottom:12px">
+    <div id="backupRestorePreview" style="display:none;margin-bottom:12px">
+      <p style="font-size:0.85rem;color:#2E4057;white-space:pre-wrap" id="backupRestoreSummary"></p>
+      <div class="field">
+        <label>اكتب كلمة "تأكيد" ثم اضغط الزر لبدء الاستعادة</label>
+        <input type="text" id="backupRestoreConfirmInput" placeholder="تأكيد" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+      </div>
+      <button class="btn btn-primary" style="margin-top:10px;background:#922b21" onclick="startBackupRestore()" id="backupRestoreBtn">⬆️ بدء الاستعادة</button>
+    </div>
+    <div id="backupRestoreLog" style="margin-top:12px;font-size:0.78rem;color:#4A5568;white-space:pre-wrap"></div>
+  </div>
+</div>
 <div class="page" id="page-staffStats">
   <div class="page-title"><img src="icon-stats.png" style="width:28px;height:28px;vertical-align:middle;margin-left:6px"> إحصائيات الموظفين</div>
 
@@ -2188,6 +2214,14 @@ async function doLogin() {
     }
 
     const user = data[0];
+
+    // الحساب مقفول مؤقتاً بسبب محاولات فاشلة متكررة — نوقف هنا قبل أي فحص ثاني
+    if (user.is_locked) {
+      errBox.textContent = `⛔ محاولات كثيرة فاشلة. حاول بعد ${user.locked_minutes_left} دقيقة`;
+      errBox.classList.add('show');
+      btn.disabled = false; btn.textContent = 'دخول'; return;
+    }
+
     if (!user.is_active) {
       errBox.textContent = '⚠️ هذا الحساب معطّل، تواصل مع المدير';
       errBox.classList.add('show');
@@ -2241,6 +2275,9 @@ function applyRolePermissions() {
   // الإدارة: للمدير فقط
   const adminCard = document.getElementById('svcAdminCard');
   if (adminCard) adminCard.style.display = (currentUser.role === 'admin') ? '' : 'none';
+  // النسخ الاحتياطي: للمدير فقط (يتعامل مع كامل بيانات قاعدة البيانات)
+  const backupCard = document.getElementById('svcBackupCard');
+  if (backupCard) backupCard.style.display = (currentUser.role === 'admin') ? '' : 'none';
   // إحصائيات الموظفين: للمدير والمشرف فقط
   const statsCard = document.getElementById('svcStatsCard');
   if (statsCard) statsCard.style.display = isAdminOrSupervisor ? '' : 'none';
@@ -2271,7 +2308,7 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo'];
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup'];
 let pageStack = [];
 
 // مكدس المستويات الفرعية داخل نفس الصفحة (مثلاً: قائمة خطوط ← أبراج الخط ← تفاصيل برج)
@@ -4513,12 +4550,19 @@ function wrapArabicText(ctx, text, maxWidth) {
 // وليس عبر jsPDF مباشرة (jsPDF بخطوطه الافتراضية لا يدعم الحروف العربية إطلاقاً)
 async function buildTreatLogRecordCanvas(t) {
   const CARD_W = 760, PAD = 18, IMG_H = 90;
-  const svgEntries = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
-  const imgResults = [];
-  for (const [label, svg] of svgEntries) {
-    const res = await svgStringToImageEl(svg);
-    if (res) imgResults.push({ label, res });
+  const svgEntries1 = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
+  const svgEntries2 = [['R', t.insulator_svg_r_2], ['S', t.insulator_svg_s_2], ['T', t.insulator_svg_t_2]].filter(([,svg]) => svg);
+  const hasCircuit2 = svgEntries2.length > 0;
+  async function loadImgs(entries) {
+    const out = [];
+    for (const [label, svg] of entries) {
+      const res = await svgStringToImageEl(svg);
+      if (res) out.push({ label, res });
+    }
+    return out;
   }
+  const imgResults1 = await loadImgs(svgEntries1);
+  const imgResults2 = hasCircuit2 ? await loadImgs(svgEntries2) : [];
 
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
@@ -4529,8 +4573,10 @@ async function buildTreatLogRecordCanvas(t) {
 
   const headerH = 40;
   const itemsH = itemLines.length ? (itemLines.length * 17 + 8) : 0;
-  const imagesH = imgResults.length ? (IMG_H + 24) : 0;
-  const totalH = headerH + itemsH + imagesH + PAD;
+  const circuitLabelH = 20; // ارتفاع سطر "الدائرة الأولى/الثانية" — يظهر بس لو فيه دائرة ثانية
+  const imagesH1 = imgResults1.length ? ((hasCircuit2 ? circuitLabelH : 0) + IMG_H + 24) : 0;
+  const imagesH2 = imgResults2.length ? (circuitLabelH + IMG_H + 24) : 0;
+  const totalH = headerH + itemsH + imagesH1 + imagesH2 + PAD;
 
   // مضاعف دقة معتدل (لا نضخّم الدقة أكثر من اللازم) — يحافظ على وضوح كافٍ مع حجم ملف صغير
   const scale = 1.3;
@@ -4561,7 +4607,14 @@ async function buildTreatLogRecordCanvas(t) {
     y += 4;
   }
 
-  if (imgResults.length) {
+  function drawImgRow(imgResults, circuitLabel) {
+    if (!imgResults.length) return;
+    if (circuitLabel) {
+      ctx.font = 'bold 12px Tahoma, Arial, sans-serif';
+      ctx.fillStyle = '#4A5568';
+      ctx.fillText(circuitLabel, CARD_W - PAD, y);
+      y += circuitLabelH;
+    }
     let x = CARD_W - PAD;
     for (const { label, res } of imgResults) {
       const ratio = res.w && res.h ? (res.w / res.h) : 1;
@@ -4575,7 +4628,10 @@ async function buildTreatLogRecordCanvas(t) {
       ctx.textAlign = 'right';
       x -= 14;
     }
+    y += IMG_H + 24;
   }
+  drawImgRow(imgResults1, hasCircuit2 ? 'الدائرة الأولى' : '');
+  drawImgRow(imgResults2, 'الدائرة الثانية');
 
   // JPEG بجودة متوسطة-منخفضة (0.5) لإبقاء حجم ملف الـ PDF صغيراً حتى مع عدد كبير من المعالجات
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
@@ -10799,6 +10855,10 @@ async function saveTreatment() {
   const cycleAfter = JSON.parse(JSON.stringify(treatCycleState));
   const stateAfter2 = isDouble ? JSON.parse(JSON.stringify(treatInsulatorState2)) : null;
   const cycleAfter2 = isDouble ? JSON.parse(JSON.stringify(treatCycleState2)) : null;
+  // هل فعلاً انبنت واجهة تحرير هذي الدائرة بهذي الجلسة؟ لو لا (ما فيها أي مغادرة عوازل نشطة)، معناها
+  // treatInsulatorState[2] ما تهيّأت من البيانات الحقيقية، فلازم لا نستخدمها لا للحفظ ولا لعرض السجل
+  const circuit1Touched = !!(treatInsulatorState.R && treatInsulatorState.R.length);
+  const circuit2Touched = isDouble && !!(treatInsulatorState2.R && treatInsulatorState2.R.length);
   const treatedIndices = { R: [], S: [], T: [] }; // مؤشرات العوازل المعالجة بهذي الجلسة (تظهر أخضر بالسجل)
   const treatedIndices2 = { R: [], S: [], T: [] };
   const items_treated = [];
@@ -10891,6 +10951,27 @@ async function saveTreatment() {
     if (mode === 'v') return generateVShapeSVG3Color(state, treatedIdx, cycleArr);
     return generateChainSVG3Color(state, treatedIdx, dims[0], dims[1], cycleArr, phaseChainTypes);
   }
+  // يبني صور الفيزات الثلاثة لدائرة معيّنة لسجل المعالجات: لو الدائرة اتلمست فعلاً هذي الجلسة نستخدم
+  // بياناتها الحيّة (فيها الأخضر)، ولو لأ نبني الصورة من الحالة الحقيقية المحفوظة حالياً بسجل الكشف
+  // (بدون أي أخضر، لأنه ما صار فيها شي هذي الجلسة) — هذا يضمن ظهور "حالة البرج الحالية" الصحيحة دائماً
+  // بما فيها شكل البلاستك/الخزف الفعلي، حتى لو الفني ما فتح هذي الدائرة إطلاقاً
+  function buildCircuitSvgs(touched, liveState, liveCycle, liveChainTypes, liveTreatedIdx, rawStateJSON, rawCycleJSON, rawChainTypesJSON) {
+    let state, cycle, chainTypes, treatedIdx;
+    if (touched) {
+      state = liveState; cycle = liveCycle; chainTypes = liveChainTypes; treatedIdx = liveTreatedIdx;
+    } else {
+      state = (rawStateJSON && safeParseJSON(rawStateJSON)) || { R: [], S: [], T: [] };
+      cycle = (rawCycleJSON && safeParseJSON(rawCycleJSON)) || { R: [], S: [], T: [] };
+      chainTypes = (rawChainTypesJSON && safeParseJSON(rawChainTypesJSON)) || { R: [], S: [], T: [] };
+      treatedIdx = { R: [], S: [], T: [] };
+    }
+    return {
+      r: svg3ColorForMode(state.R||[], treatedIdx.R||[], cycle.R||[], chainTypes.R),
+      s: svg3ColorForMode(state.S||[], treatedIdx.S||[], cycle.S||[], chainTypes.S),
+      t: svg3ColorForMode(state.T||[], treatedIdx.T||[], cycle.T||[], chainTypes.T),
+    };
+  }
+  const svgs1 = buildCircuitSvgs(circuit1Touched, treatInsulatorState, treatCycleState, treatChainTypes, treatedIndices, r.insulator_state, r.insulator_cycle, r.insulator_chain_types);
   const treatment = {
     inspection_id: r.id,
     client_uuid: genUUID(), // مفتاح فريد يمنع التكرار عند إعادة الإرسال
@@ -10903,18 +10984,33 @@ async function saveTreatment() {
     insulator_state_before: r.insulator_state,
     insulator_state_after: JSON.stringify(stateAfter),
     insulator_cycle_after: JSON.stringify(cycleAfter),
-    insulator_svg_r: svg3ColorForMode(treatInsulatorState.R||[], treatedIndices.R, treatCycleState.R||[], treatChainTypes.R),
-    insulator_svg_s: svg3ColorForMode(treatInsulatorState.S||[], treatedIndices.S, treatCycleState.S||[], treatChainTypes.S),
-    insulator_svg_t: svg3ColorForMode(treatInsulatorState.T||[], treatedIndices.T, treatCycleState.T||[], treatChainTypes.T),
+    insulator_svg_r: svgs1.r,
+    insulator_svg_s: svgs1.s,
+    insulator_svg_t: svgs1.t,
     items_treated: items_treated,
     notes: ''
   };
+  // صور عوازل الدائرة الثانية (خطوط مزدوجة فقط) — كانت مفقودة كلياً بالسجل سابقاً (لا العوازل المتضررة المتبقية ولا شكل البلاستك/الخزف)
+  if (isDouble) {
+    const svgs2 = buildCircuitSvgs(circuit2Touched, treatInsulatorState2, treatCycleState2, treatChainTypes2, treatedIndices2, r.insulator_state_2, r.insulator_cycle_2, r.insulator_chain_types_2);
+    treatment.insulator_svg_r_2 = svgs2.r;
+    treatment.insulator_svg_s_2 = svgs2.s;
+    treatment.insulator_svg_t_2 = svgs2.t;
+  }
 
   // مهم جداً: سجل الكشف نفسه (inspections) يجب أن يتحدّث ليعكس الحقيقة الفعلية الحالية مباشرة —
   // هذا يجعله المصدر الوحيد للحقيقة بكل مكان (الكشف الجديد، المغادرات، حالة الخطوط، PDF) بدون أي
   // حساب أو دمج لاحق، ويحل مشكلة "ما يظهر أخضر بمكان ثاني" نهائياً
-  const inspectionPatch = { insulator_state: JSON.stringify(stateAfter), insulator_cycle: JSON.stringify(cycleAfter), insulator_chain_types: JSON.stringify(treatChainTypes) };
-  if (isDouble) {
+  // ملاحظة حرجة: لا نكتب insulator_state/insulator_chain_types لدائرة لم تُلمس فعلياً هذي الجلسة —
+  // لأن قيمتها بالذاكرة تكون فاضية (لم تُحمَّل من الأصل)، وكتابتها كانت تمسح البيانات الحقيقية الموجودة
+  // بقاعدة البيانات لهذي الدائرة بالغلط (مثلاً برج فيه مغادرة حديد بس بدون مغادرة عوازل)
+  const inspectionPatch = {};
+  if (circuit1Touched) {
+    inspectionPatch.insulator_state = JSON.stringify(stateAfter);
+    inspectionPatch.insulator_cycle = JSON.stringify(cycleAfter);
+    inspectionPatch.insulator_chain_types = JSON.stringify(treatChainTypes);
+  }
+  if (circuit2Touched) {
     inspectionPatch.insulator_state_2 = JSON.stringify(stateAfter2);
     inspectionPatch.insulator_cycle_2 = JSON.stringify(cycleAfter2);
     inspectionPatch.insulator_chain_types_2 = JSON.stringify(treatChainTypes2);
@@ -11107,17 +11203,25 @@ async function renderDepLog() {
 
   body.innerHTML = rows.map(t => {
     const items = t.items_treated||[];
+    const hasCircuit2 = !!(t.insulator_svg_r_2 || t.insulator_svg_s_2 || t.insulator_svg_t_2);
     return `<div class="dep-card" style="border-right-color:#48BB78">
       <div class="dep-card-header">
         <div class="dep-card-title">✅ ${t.line_name} — برج ${t.tower_number}</div>
         <div class="dep-card-meta">📅 ${t.treatment_date} | 👤 ${t.treated_by||'—'}</div>
         ${(currentUser.role==='admin')?`<button class="btn-sm btn-del" onclick="deleteTreatmentRecord('${t.id}')">🗑️ حذف</button>`:''}
       </div>
-      <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap">
+      ${hasCircuit2?'<div style="font-size:0.72rem;font-weight:700;color:#4A5568;margin-top:10px">الدائرة الأولى</div>':''}
+      <div style="display:flex;gap:12px;margin-top:${hasCircuit2?'4px':'10px'};flex-wrap:wrap">
         ${t.insulator_svg_r?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">R</div>${t.insulator_svg_r}</div>`:''}
         ${t.insulator_svg_s?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">S</div>${t.insulator_svg_s}</div>`:''}
         ${t.insulator_svg_t?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">T</div>${t.insulator_svg_t}</div>`:''}
       </div>
+      ${hasCircuit2?`<div style="font-size:0.72rem;font-weight:700;color:#4A5568;margin-top:10px">الدائرة الثانية</div>
+      <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap">
+        ${t.insulator_svg_r_2?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">R</div>${t.insulator_svg_r_2}</div>`:''}
+        ${t.insulator_svg_s_2?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">S</div>${t.insulator_svg_s_2}</div>`:''}
+        ${t.insulator_svg_t_2?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">T</div>${t.insulator_svg_t_2}</div>`:''}
+      </div>`:''}
       ${items.length?`<div class="dep-items" style="margin-top:8px">${items.map(i=>`<span class="dep-item fixed">✅ ${i.label}</span>`).join('')}</div>`:''}
     </div>`;
   }).join('');
@@ -11667,6 +11771,137 @@ function showInventoryHome() {
   document.getElementById('invToolsView').style.display = 'none';
   document.getElementById('invMaterialsView').style.display = 'none';
   document.getElementById('invBorrowedView').style.display = 'none';
+}
+
+// ========================
+// النسخ الاحتياطي (أدمن فقط)
+// ========================
+// كل جداول قاعدة البيانات الفعلية المستخدمة بالتطبيق
+const BACKUP_TABLES = [
+  'inspections', 'treatments', 'memos', 'daily_reports', 'emergency_departures',
+  'inventory_tools', 'inventory_materials', 'inventory_borrowed',
+  'line_entry_thermal', 'line_towers_custom',
+  'staff_roster_columns', 'staff_roster_members',
+  'thermal_inspections', 'thermal_official_forms',
+  'users', 'work_telegrams'
+];
+
+let pendingRestoreData = null;
+
+function backupLog(msg) {
+  const el = document.getElementById('backupRestoreLog');
+  if (el) el.textContent += (el.textContent ? '\n' : '') + msg;
+}
+
+async function downloadFullBackup() {
+  if (currentUser.role !== 'admin') { showToast('⛔ هذي الميزة للأدمن فقط', 'error'); return; }
+  const btn = document.getElementById('backupDownloadBtn');
+  const statusEl = document.getElementById('backupDownloadStatus');
+  btn.disabled = true;
+  const backup = { meta: { exported_at: new Date().toISOString(), app: 'tower-app', tables: BACKUP_TABLES }, tables: {} };
+  let ok = true;
+  for (const table of BACKUP_TABLES) {
+    statusEl.textContent = `⏳ جاري تنزيل جدول: ${table}...`;
+    try {
+      const res = await sbFetch(`${table}?select=*`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      backup.tables[table] = await res.json();
+    } catch (e) {
+      ok = false;
+      statusEl.textContent = `❌ فشل تحميل جدول "${table}": ${e.message}`;
+      btn.disabled = false;
+      return;
+    }
+  }
+  const totalRows = Object.values(backup.tables).reduce((s, rows) => s + rows.length, 0);
+  const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().split('T')[0];
+  a.href = url;
+  a.download = `tower-app-backup-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  statusEl.textContent = ok ? `✅ تم تنزيل النسخة الاحتياطية (${totalRows} صف بمجموع ${BACKUP_TABLES.length} جدول)` : statusEl.textContent;
+  btn.disabled = false;
+}
+
+function handleBackupFileSelected(input) {
+  const file = input.files[0];
+  const preview = document.getElementById('backupRestorePreview');
+  const summaryEl = document.getElementById('backupRestoreSummary');
+  const confirmInput = document.getElementById('backupRestoreConfirmInput');
+  pendingRestoreData = null;
+  preview.style.display = 'none';
+  confirmInput.value = '';
+  document.getElementById('backupRestoreLog').textContent = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch (e) {
+      showToast('❌ الملف تالف أو ليس بصيغة JSON صحيحة', 'error');
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' || !parsed.tables || typeof parsed.tables !== 'object') {
+      showToast('❌ هذا الملف ليس نسخة احتياطية صحيحة من هذا التطبيق', 'error');
+      return;
+    }
+    const lines = Object.keys(parsed.tables).map(t => `• ${t}: ${(parsed.tables[t]||[]).length} صف`);
+    const exportedAt = parsed.meta && parsed.meta.exported_at ? new Date(parsed.meta.exported_at).toLocaleString('ar-IQ') : 'غير معروف';
+    summaryEl.textContent = `📅 تاريخ أخذ النسخة: ${exportedAt}\n${lines.join('\n')}\n\nسيتم دمج (تحديث/إضافة) هذي البيانات مع الموجود حالياً — بدون حذف أي شيء.`;
+    pendingRestoreData = parsed;
+    preview.style.display = '';
+  };
+  reader.readAsText(file);
+}
+
+async function startBackupRestore() {
+  if (currentUser.role !== 'admin') { showToast('⛔ هذي الميزة للأدمن فقط', 'error'); return; }
+  if (!pendingRestoreData) { showToast('⚠️ اختر ملف نسخة احتياطية أولاً', 'error'); return; }
+  const confirmInput = document.getElementById('backupRestoreConfirmInput');
+  if (confirmInput.value.trim() !== 'تأكيد') {
+    showToast('⚠️ لازم تكتب كلمة "تأكيد" بالضبط قبل البدء', 'error');
+    return;
+  }
+  const btn = document.getElementById('backupRestoreBtn');
+  btn.disabled = true;
+  document.getElementById('backupRestoreLog').textContent = '';
+  const CHUNK_SIZE = 200;
+  let totalOk = 0, totalFail = 0;
+  for (const table of Object.keys(pendingRestoreData.tables)) {
+    const rows = pendingRestoreData.tables[table] || [];
+    if (!rows.length) { backupLog(`⏭️ ${table}: فاضي، تم تخطيه`); continue; }
+    let tableOk = 0, tableFail = 0;
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
+      try {
+        const res = await sbFetch(table, {
+          method: 'POST',
+          headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify(chunk)
+        });
+        if (res.ok) { tableOk += chunk.length; } else {
+          tableFail += chunk.length;
+          backupLog(`⚠️ ${table}: فشل جزء من الدفعة (HTTP ${res.status})`);
+        }
+      } catch (e) {
+        tableFail += chunk.length;
+        backupLog(`⚠️ ${table}: خطأ اتصال (${e.message})`);
+      }
+    }
+    totalOk += tableOk; totalFail += tableFail;
+    backupLog(`✅ ${table}: ${tableOk} صف تم دمجها${tableFail ? `، ⚠️ ${tableFail} صف فشلت` : ''}`);
+  }
+  backupLog(`\n${totalFail ? '⚠️' : '✅'} انتهت الاستعادة: ${totalOk} صف نجحت${totalFail ? `، ${totalFail} صف فشلت` : ''}.`);
+  showToast(totalFail ? '⚠️ انتهت الاستعادة مع بعض الأخطاء — راجع السجل بالأسفل' : '✅ تمت الاستعادة بنجاح', totalFail ? 'error' : undefined);
+  btn.disabled = false;
+  pendingRestoreData = null;
+  document.getElementById('backupRestoreConfirmInput').value = '';
 }
 
 function showInventoryTools() {
