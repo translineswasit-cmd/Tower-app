@@ -1732,7 +1732,10 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
 
     <p id="repResultCount" style="margin-top:14px;color:#718096;font-size:0.82rem"></p>
-    <button class="btn btn-primary" style="width:100%;margin-top:10px;background:#922b21" onclick="generateUnifiedReportPDF()">📄 إصدار التقرير (PDF)</button>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <button class="btn btn-primary" style="flex:1" onclick="exportUnifiedReportExcel()">📊 تصدير Excel</button>
+      <button class="btn btn-primary" style="flex:1;background:#922b21" onclick="generateUnifiedReportPDF()">📄 تصدير PDF</button>
+    </div>
   </div>
 </div>
 <div class="page" id="page-staffStats">
@@ -12331,6 +12334,79 @@ async function buildThermalFormTableCanvas(f) {
   });
 
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: Math.max(totalH, 90) };
+}
+
+// تحويل تصنيفات التقرير إلى أعمدة Excel مطابقة (من نفس تعريف EXPORT_COLUMNS الموحّد أصلاً)
+const REPORT_CATEGORY_EXPORT_COLUMN_LABELS = {
+  foundation: ['قواعد البرج'],
+  iron: ['تقاطعات الحديد', 'ملحقات البرج'],
+  insulator: ['العوازل'],
+  wires: ['أسلاك R', 'أسلاك S', 'أسلاك T'],
+  ground: ['الأرضي 1', 'الأرضي 2'],
+  fire: ['مسببات الحرائق', 'ملاحظات مسببات الحرائق'],
+  road: ['وجود طريق', 'ملاحظات الطريق']
+};
+const REPORT_ALWAYS_COLUMNS = ['اسم الخط', 'تاريخ الكشف', 'رقم البرج', 'نوع البرج', 'الجهد', 'الموظف'];
+function getReportExcelColumns(categories) {
+  if (!categories) return EXPORT_COLUMNS; // "الكل" = كل الأعمدة
+  const labels = new Set(REPORT_ALWAYS_COLUMNS);
+  labels.add('ملاحظات');
+  categories.forEach(cat => (REPORT_CATEGORY_EXPORT_COLUMN_LABELS[cat]||[]).forEach(l => labels.add(l)));
+  return EXPORT_COLUMNS.filter(c => labels.has(c.label));
+}
+
+function exportUnifiedReportExcel() {
+  const types = getReportSelectedTypes();
+  if (!types.length) { showToast('⚠️ اختر نوع بيانات واحد على الأقل', 'error'); return; }
+  const categories = getReportSelectedCategories();
+
+  const inspections = types.includes('inspection') ? getReportFilteredInspections() : [];
+  const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
+  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
+
+  if (!inspections.length && !treatments.length && !thermalForms.length) {
+    showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
+    return;
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  if (inspections.length) {
+    const cols = getReportExcelColumns(categories);
+    const data = inspections.map(r => { const o = {}; cols.forEach(c => { o[c.label] = c.get(r); }); return o; });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'كشف');
+  }
+  if (treatments.length) {
+    const data = treatments.map(t => ({
+      'اسم الخط': t.line_name,
+      'رقم البرج': t.tower_number,
+      'تاريخ المعالجة': t.treatment_date,
+      'المعالج': t.treated_by || '',
+      'العناصر المعالَجة': (t.items_treated||[]).map(i => i.label).join('، ')
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'معالجات');
+  }
+  if (thermalForms.length) {
+    const data = [];
+    thermalForms.forEach(f => {
+      (f.rows||[]).forEach(row => {
+        data.push({
+          'اسم الخط': f.line_name,
+          'تاريخ الكشف': f.inspection_date,
+          'الفني': f.created_by || '',
+          'رقم البرج': row.tower_number,
+          'R': row.r, 'S': row.s, 'T': row.t,
+          'الحمل (MW)': row.load_mw,
+          'الحرارة المحيطة': row.ambient,
+          'ملاحظات': row.notes || ''
+        });
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'كشف حراري');
+  }
+
+  XLSX.writeFile(wb, 'تقرير_' + new Date().toISOString().split('T')[0] + '.xlsx');
+  showToast('✅ تم تصدير Excel');
 }
 
 async function generateUnifiedReportPDF() {
