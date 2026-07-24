@@ -12592,7 +12592,7 @@ function renderHubLines() {
   const list = document.getElementById('hubLinesList');
   if (!lines.length) { list.innerHTML = `<div class="empty-state">لا توجد بيانات ${HUB_TYPE_LABELS[hubBrowseType]} بعد</div>`; return; }
   list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${HUB_TYPE_LABELS[hubBrowseType]} — اختر الخط</div>` +
-    lines.map(line => `<div class="card" onclick="openHubDates(${JSON.stringify(line)})"><span class="icon">📡</span><span class="label">${line}</span><span class="sublabel">${perLine.get(line)} تاريخ كشف</span></div>`).join('');
+    lines.map(line => `<div class="card" onclick="openHubDates('${line.replace(/'/g,"\\'")}')"><span class="icon">⚡</span><span class="label">${line}</span><span class="sublabel">${perLine.get(line)} تاريخ كشف</span></div>`).join('');
 }
 
 function openHubDates(line) {
@@ -12612,7 +12612,7 @@ function renderHubDates() {
       let count, unit;
       if (hubBrowseType === 'thermal') { count = g.raw.length + g.forms.length; unit = 'قراءة/استمارة'; }
       else { count = g.items.length; unit = hubBrowseType === 'treat' ? 'معالجة' : 'برج'; }
-      return `<div class="card" onclick="openHubDetail(${JSON.stringify(g.date)})"><span class="icon">📅</span><span class="label">${g.date}</span><span class="sublabel">${count} ${unit}</span></div>`;
+      return `<div class="card" onclick="openHubDetail('${(g.date||'').replace(/'/g,"\\'")}')"><span class="icon">📅</span><span class="label">${g.date}</span><span class="sublabel">${count} ${unit}</span></div>`;
     }).join('');
 }
 
