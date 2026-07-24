@@ -51,13 +51,15 @@ body { font-family: 'Segoe UI', Arial, sans-serif; background: #eef2f7; color: #
 .dot.red { background: #FC8181; }
 
 /* HEADER MINI MODE (operation pages) */
-.header-mini { display: none; align-items: center; padding: 10px 16px; }
+.header-mini { display: none; align-items: center; justify-content: space-between; padding: 10px 16px; }
 .header.mini-mode .header-top,
 .header.mini-mode #pendingSyncBadge,
 .header.mini-mode nav { display: none !important; }
 .header.mini-mode .header-mini { display: flex; }
 .header-back-btn { background: rgba(255,255,255,0.12); color: white; border: none; border-radius: 8px; padding: 7px 16px; font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; }
 .header-back-btn:hover { background: rgba(255,255,255,0.2); }
+.header-cancel-btn { background: rgba(255,255,255,0.12); color: white; border: none; border-radius: 8px; width: 34px; height: 34px; font-family: inherit; font-size: 1rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.header-cancel-btn:hover { background: rgba(220,60,60,0.55); }
 nav { display: flex; border-top: 1px solid rgba(255,255,255,0.12); overflow-x: auto; }
 nav button { flex: 1; min-width: 80px; padding: 11px 8px; background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; font-family: inherit; font-size: 0.82rem; transition: all 0.2s; border-bottom: 3px solid transparent; white-space: nowrap; }
 nav button:hover { color: white; background: rgba(255,255,255,0.08); }
@@ -358,6 +360,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="pendingSyncBadge" onclick="showPage('pendingSync');renderPendingSyncPage();" style="display:none;background:#F6C23E;color:#1a202c;padding:8px 16px;text-align:center;font-weight:700;font-size:0.85rem;cursor:pointer;align-items:center;justify-content:center;gap:6px"></div>
   <div class="header-mini" id="headerMini">
     <button class="header-back-btn" onclick="goBackFromOperation()">→ رجوع</button>
+    <button class="header-cancel-btn" onclick="cancelToHome()" title="إلغاء والعودة للرئيسية">✕</button>
   </div>
   <nav>
     <button class="active" data-page="home" onclick="showPage('home',this)">🏠 الرئيسية</button>
@@ -912,7 +915,6 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="depLineTowersView" style="display:none">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <div class="page-title" id="depLineTowersTitle" style="margin:0;font-size:1rem">🗼 أبراج الخط</div>
-        <button class="btn btn-secondary btn-sm" onclick="backToDepLinesList()">⬅ رجوع</button>
       </div>
       <div id="depLineTowersBody"></div>
     </div>
@@ -921,7 +923,6 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="depTowerDetailView" style="display:none">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <div class="page-title" id="depTowerDetailTitle" style="margin:0;font-size:1rem">🗼 تفاصيل البرج</div>
-        <button class="btn btn-secondary btn-sm" onclick="backToDepLineTowers()">⬅ رجوع</button>
       </div>
       <div id="depTowerDetailBody"></div>
     </div>
@@ -1127,7 +1128,7 @@ tbody tr:hover { background: #F7FAFC; }
 
   <!-- Thermal: new inspection -->
   <div id="thermalNewView" style="display:none">
-    <div class="page-title">➕ الكشف الحراري الجديد <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
+    <div class="page-title">➕ الكشف الحراري الجديد</div>
 
     <!-- شريط الخطوط النشطة حالياً (كشف حراري) -->
     <div class="active-lines-tabs" id="activeThermalTabs" style="display:none"></div>
@@ -1224,7 +1225,7 @@ tbody tr:hover { background: #F7FAFC; }
   <!-- Thermal: archive -->
   <div id="thermalArchiveView" style="display:none">
     <div class="records-toolbar">
-      <div class="page-title" style="margin:0">📂 أرشيف الكشف الحراري <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
+      <div class="page-title" style="margin:0">📂 أرشيف الكشف الحراري</div>
       <div class="toolbar-right">
         <button class="btn-excel" onclick="printThermalArchive()">🖨️ طباعة</button>
         <button class="btn btn-primary" onclick="loadThermalArchive()" style="padding:9px 18px">🔄 تحديث</button>
@@ -1249,7 +1250,7 @@ tbody tr:hover { background: #F7FAFC; }
 
   <!-- Thermal: official form hub (MOE/T2-FO-177) -->
   <div id="thermalOfficialFormHomeView" style="display:none">
-    <div class="page-title">📄 استمارة الكشف الحراري <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalHome()">⬅ رجوع</button></div>
+    <div class="page-title">📄 استمارة الكشف الحراري</div>
     <div class="thermal-cards">
       <div class="card" onclick="showThermalOfficialFormNew()"><span class="icon">📝</span><span class="label">استمارة جديدة</span><span class="sublabel">MOE/T2-FO-177</span></div>
       <div class="card" onclick="showThermalOfficialFormArchive()"><span class="icon">📂</span><span class="label">أرشيف الاستمارات</span><span class="sublabel">الاستمارات المحفوظة</span></div>
@@ -1258,7 +1259,7 @@ tbody tr:hover { background: #F7FAFC; }
 
   <!-- Thermal: official form editor -->
   <div id="thermalOfficialFormView" style="display:none">
-    <div class="page-title">📝 استمارة الكشف الحراري <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalOfficialFormHome()">⬅ رجوع</button></div>
+    <div class="page-title">📝 استمارة الكشف الحراري</div>
 
     <div class="form-card">
       <h3>تحميل القياسات تلقائياً</h3>
@@ -1335,7 +1336,7 @@ tbody tr:hover { background: #F7FAFC; }
   <!-- Thermal: official form archive -->
   <div id="thermalOfficialFormArchiveView" style="display:none">
     <div class="records-toolbar">
-      <div class="page-title" style="margin:0">📂 أرشيف الاستمارات الرسمية <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showThermalOfficialFormHome()">⬅ رجوع</button></div>
+      <div class="page-title" style="margin:0">📂 أرشيف الاستمارات الرسمية</div>
     </div>
     <div id="officialFormArchiveBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
   </div>
@@ -1359,7 +1360,6 @@ tbody tr:hover { background: #F7FAFC; }
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" onclick="openPrintLinesModal()">🖨️ طباعة</button>
         <button id="btnAddLine" class="btn btn-primary btn-sm" onclick="openAddLineModal()" style="display:none">➕ إضافة خط</button>
-        <button class="btn btn-secondary btn-sm" onclick="showLinesHome()">⬅ رجوع</button>
       </div>
     </div>
     <div style="margin-bottom:10px">
@@ -1374,7 +1374,6 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="linesStatusView" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="page-title" style="margin:0">📡 حالة الخطوط</div>
-      <button class="btn btn-secondary btn-sm" onclick="showLinesHome()">⬅ رجوع</button>
     </div>
     <div style="margin-bottom:10px">
       <select id="linesStatusFilter" onchange="renderLinesStatus()" style="padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;font-size:14px">
@@ -1390,7 +1389,6 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="lineTowerListView" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="page-title" id="lineTowerListTitle" style="margin:0">🗼 أبراج الخط</div>
-      <button class="btn btn-secondary btn-sm" onclick="backToLinesStatus()">⬅ رجوع</button>
     </div>
     <div id="lineTowerListBody"></div>
   </div>
@@ -1399,7 +1397,6 @@ tbody tr:hover { background: #F7FAFC; }
   <div id="towerDetailView" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="page-title" id="towerDetailTitle" style="margin:0">🗼 تفاصيل البرج</div>
-      <button class="btn btn-secondary btn-sm" onclick="backToTowerList()">⬅ رجوع</button>
     </div>
     <div id="towerDetailBody"></div>
   </div>
@@ -1477,7 +1474,6 @@ tbody tr:hover { background: #F7FAFC; }
   <!-- TOOLS VIEW -->
   <div id="invToolsView" style="display:none">
     <div class="records-toolbar">
-      <button class="btn btn-secondary btn-sm" onclick="showInventoryHome()">⬅ رجوع</button>
       <button class="btn btn-primary btn-sm" id="btnAddTool" onclick="openAddToolModal()" style="display:none">➕ إضافة مادة جديدة</button>
     </div>
     <div style="overflow-x:auto">
@@ -1491,7 +1487,6 @@ tbody tr:hover { background: #F7FAFC; }
   <!-- MATERIALS VIEW -->
   <div id="invMaterialsView" style="display:none">
     <div class="records-toolbar">
-      <button class="btn btn-secondary btn-sm" onclick="showInventoryHome()">⬅ رجوع</button>
       <button class="btn btn-primary btn-sm" id="btnAddMaterial" onclick="openAddMaterialModal()" style="display:none">➕ إضافة مادة جديدة</button>
     </div>
     <div class="filters-bar">
@@ -1512,7 +1507,6 @@ tbody tr:hover { background: #F7FAFC; }
   <!-- BORROWED ITEMS VIEW -->
   <div id="invBorrowedView" style="display:none">
     <div class="records-toolbar">
-      <button class="btn btn-secondary btn-sm" onclick="showInventoryHome()">⬅ رجوع</button>
       <button class="btn btn-primary btn-sm" id="btnAddBorrow" onclick="openAddBorrowModal()" style="display:none">➕ إضافة مادة</button>
     </div>
     <div style="overflow-x:auto">
@@ -1820,7 +1814,7 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page" id="page-memo">
 
   <div id="memoHomeView">
-    <div class="page-title">📝 مذكرة <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="goToParentPage('forms');showFormsHome();">⬅ رجوع</button></div>
+    <div class="page-title">📝 مذكرة</div>
     <div class="thermal-cards">
       <div class="card" onclick="showMemoNew()"><span class="icon">📝</span><span class="label">مذكرة جديدة</span></div>
       <div class="card" onclick="showMemoArchive()"><span class="icon">📂</span><span class="label">أرشيف المذكرات</span></div>
@@ -1828,7 +1822,7 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 
   <div id="memoNewView" style="display:none">
-    <div class="page-title">📝 مذكرة جديدة <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showMemoHome()">⬅ رجوع</button></div>
+    <div class="page-title">📝 مذكرة جديدة</div>
     <div class="form-card">
       <div class="grid-2">
         <div class="field"><label>العدد</label><input type="text" id="memo_number"></div>
@@ -1881,7 +1875,7 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
 
   <div id="memoArchiveView" style="display:none">
-    <div class="page-title">📂 أرشيف المذكرات <button class="btn btn-secondary btn-sm" style="margin-right:10px" onclick="showMemoHome()">⬅ رجوع</button></div>
+    <div class="page-title">📂 أرشيف المذكرات</div>
     <div style="margin-bottom:12px">
       <input id="memoSearchInput" type="search" placeholder="🔍 ابحث بكلمة من الموضوع أو المتن أو الرقم..." style="width:100%;padding:10px 12px;border-radius:10px;border:1.5px solid #CBD5E0;font-size:0.9rem;font-family:inherit" oninput="filterMemoArchive(this.value)">
     </div>
@@ -2280,6 +2274,15 @@ function applyRolePermissions() {
 const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo'];
 let pageStack = [];
 
+// مكدس المستويات الفرعية داخل نفس الصفحة (مثلاً: قائمة خطوط ← أبراج الخط ← تفاصيل برج)
+// كل عنصر هو دالة "استرجاع" تُعيد عرض المستوى السابق بالضبط — عادة نفس دالة "رجوع" الموجودة أصلاً لكل مستوى
+let levelStack = [];
+function pushLevel(restoreFn) {
+  if (typeof restoreFn !== 'function') return;
+  if (levelStack[levelStack.length - 1] === restoreFn) return; // يمنع تكرار نفس المستوى لو انضغط نفس الزر مرتين (مثل إعادة المحاولة)
+  levelStack.push(restoreFn);
+}
+
 function navKeyForPage(id) {
   if (id === 'home') return 'home';
   if (id === 'account') return 'account';
@@ -2293,7 +2296,13 @@ function updateHeaderMode(id) {
 }
 
 let isGoingBack = false;
+// زر "→ رجوع" الموحّد: يرجع خطوة وحدة بس — أولاً بمستويات الصفحة الحالية (لو فيها)، وبعدين بين الصفحات نفسها
 function goBackFromOperation() {
+  if (levelStack.length) {
+    const restoreFn = levelStack.pop();
+    restoreFn();
+    return;
+  }
   isGoingBack = true;
   const prev = pageStack.pop() || 'home';
   showPage(prev);
@@ -2302,6 +2311,31 @@ function goBackFromOperation() {
 function goToParentPage(id) {
   isGoingBack = true;
   showPage(id);
+}
+
+// فحص تقريبي: هل فيه بيانات مكتوبة بالصفحة الحالية ما انحفظت؟ (يستخدمه زر الإلغاء ✕ قبل إخلاء الصفحة)
+function hasUnsavedInputs() {
+  const activePage = document.querySelector('.page.active');
+  if (!activePage) return false;
+  const fields = activePage.querySelectorAll('input, textarea, select');
+  for (const el of fields) {
+    if (el.disabled || el.readOnly) continue;
+    if (el.type === 'checkbox' || el.type === 'radio') { if (el.checked) return true; continue; }
+    if (el.tagName === 'SELECT') { if (el.value) return true; continue; }
+    if (el.value && el.value.trim() !== '') return true;
+  }
+  return false;
+}
+
+// زر "✕" الجديد بالشريط العلوي: يلغي كل التصفح الحالي (بكل مستوياته) ويرجع للرئيسية مباشرة
+function cancelToHome() {
+  if (hasUnsavedInputs() && !confirm('⚠️ عندك بيانات مكتوبة ما انحفظت بهذي الصفحة. متأكد تبي تلغي وترجع للرئيسية؟')) {
+    return;
+  }
+  levelStack = [];
+  pageStack = [];
+  isGoingBack = true;
+  showPage('home');
 }
 
 function showPage(id, btn) {
@@ -2319,6 +2353,7 @@ function showPage(id, btn) {
   }
   const currentActive = document.querySelector('.page.active');
   const currentId = currentActive ? currentActive.id.replace('page-','') : null;
+  if (currentId !== id) levelStack = []; // مستويات الصفحة السابقة ما تعود تخص الصفحة الجديدة
   if (!isGoingBack && currentId && currentId !== id) {
     // لو الصفحة الهدف موجودة أصلاً بالمكدس، نقصّه عندها بدل ما نكدّس فوقها —
     // هذا يمنع حلقة الرجوع اللانهائية (أ ← ب ← أ ← ب ...) التي كانت تُنتفخ المكدس بلا حد
@@ -4655,6 +4690,7 @@ function showThermalHome() {
   document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
 }
 function showThermalNew() {
+  pushLevel(showThermalHome);
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'block';
   document.getElementById('thermalArchiveView').style.display = 'none';
@@ -4670,6 +4706,7 @@ function showThermalNew() {
   }
 }
 function showThermalArchive() {
+  pushLevel(showThermalHome);
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'block';
@@ -4679,6 +4716,7 @@ function showThermalArchive() {
   loadThermalArchive();
 }
 function showThermalOfficialFormHome() {
+  pushLevel(showThermalHome);
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'none';
@@ -4687,6 +4725,7 @@ function showThermalOfficialFormHome() {
   document.getElementById('thermalOfficialFormArchiveView').style.display = 'none';
 }
 function showThermalOfficialFormNew() {
+  pushLevel(showThermalOfficialFormHome);
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'none';
@@ -4700,6 +4739,7 @@ function showThermalOfficialFormNew() {
   padOfficialFormRowsToMinimum();
 }
 function showThermalOfficialFormArchive() {
+  pushLevel(showThermalOfficialFormHome);
   document.getElementById('thermalHomeView').style.display = 'none';
   document.getElementById('thermalNewView').style.display = 'none';
   document.getElementById('thermalArchiveView').style.display = 'none';
@@ -4943,6 +4983,7 @@ async function openOfficialFormFromArchive(id) {
     const f = list[0];
     tfTensionTowerOptions = f.line_name ? getTensionTowersForLine(f.line_name) : [];
     showThermalOfficialFormNew();
+    pushLevel(showThermalOfficialFormArchive); // نتأكد إن الرجوع من هذي الاستمارة يودّي للأرشيف (مو للرئيسية اللي دزّها showThermalOfficialFormNew)
     officialFormRows = Array.isArray(f.rows) ? f.rows : [];
     padOfficialFormRowsToMinimum();
     document.getElementById('tf_line_name').value = f.line_name;
@@ -6053,6 +6094,7 @@ function showMemoHome() {
 }
 
 async function showMemoNew() {
+  pushLevel(showMemoHome);
   document.getElementById('memoHomeView').style.display = 'none';
   document.getElementById('memoNewView').style.display = 'block';
   document.getElementById('memoArchiveView').style.display = 'none';
@@ -6072,6 +6114,7 @@ async function showMemoNew() {
 }
 
 function showMemoArchive() {
+  pushLevel(showMemoHome);
   document.getElementById('memoHomeView').style.display = 'none';
   document.getElementById('memoNewView').style.display = 'none';
   document.getElementById('memoArchiveView').style.display = 'block';
@@ -8087,6 +8130,7 @@ function showLinesHome() {
 }
 
 function showLinesInfo() {
+  pushLevel(showLinesHome);
   document.getElementById('linesHomeView').style.display = 'none';
   document.getElementById('linesInfoView').style.display = '';
   document.getElementById('linesStatusView').style.display = 'none';
@@ -8096,6 +8140,7 @@ function showLinesInfo() {
 }
 
 async function showLinesStatus() {
+  pushLevel(showLinesHome);
   document.getElementById('linesHomeView').style.display = 'none';
   document.getElementById('linesInfoView').style.display = 'none';
   document.getElementById('linesStatusView').style.display = '';
@@ -8807,6 +8852,7 @@ function saveEditedPendingInspection() {
 let currentDrilldownLine = null;
 
 async function openLineTowerDetails(lineName) {
+  pushLevel(backToLinesStatus);
   currentDrilldownLine = lineName;
   document.getElementById('linesStatusView').style.display = 'none';
   document.getElementById('lineTowerListView').style.display = '';
@@ -8864,6 +8910,7 @@ function renderLineTowerList(lineName) {
 // صفحة تفاصيل برج واحد (مزيج الكشف + المعالجات)
 // ========================
 async function openTowerDetail(lineName, towerNum) {
+  pushLevel(backToTowerList);
   document.getElementById('lineTowerListView').style.display = 'none';
   document.getElementById('towerDetailView').style.display = '';
   document.getElementById('towerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
@@ -9991,6 +10038,7 @@ function renderDepLinesList() {
 }
 
 function openDepLineTowers(lineName) {
+  pushLevel(backToDepLinesList);
   document.getElementById('depLinesListView').style.display = 'none';
   document.getElementById('depLineTowersView').style.display = '';
   document.getElementById('depLineTowersTitle').textContent = '🗼 أبراج خط ' + lineName + ' — المغادرات';
@@ -10052,6 +10100,7 @@ function renderDepLineTowers(lineName) {
 }
 
 function openDepTowerDetail(lineName, towerNum) {
+  pushLevel(backToDepLineTowers);
   document.getElementById('depLineTowersView').style.display = 'none';
   document.getElementById('depTowerDetailView').style.display = '';
   document.getElementById('depTowerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
@@ -10176,6 +10225,7 @@ function goToTreatThisTower(lineName, towerNum) {
 }
 
 function switchDepTab(tab, btn) {
+  levelStack = []; // أي تبويب جديد يلغي أي تصفح فرعي عالق من التبويب السابق
   document.querySelectorAll('.dep-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('depListView').style.display = tab==='list'?'':'none';
@@ -11620,6 +11670,7 @@ function showInventoryHome() {
 }
 
 function showInventoryTools() {
+  pushLevel(showInventoryHome);
   document.getElementById('invHomeView').style.display = 'none';
   document.getElementById('invToolsView').style.display = '';
   document.getElementById('invMaterialsView').style.display = 'none';
@@ -11629,6 +11680,7 @@ function showInventoryTools() {
 }
 
 function showInventoryMaterials() {
+  pushLevel(showInventoryHome);
   document.getElementById('invHomeView').style.display = 'none';
   document.getElementById('invToolsView').style.display = 'none';
   document.getElementById('invMaterialsView').style.display = '';
@@ -11638,6 +11690,7 @@ function showInventoryMaterials() {
 }
 
 function showInventoryBorrowed() {
+  pushLevel(showInventoryHome);
   document.getElementById('invHomeView').style.display = 'none';
   document.getElementById('invToolsView').style.display = 'none';
   document.getElementById('invMaterialsView').style.display = 'none';
