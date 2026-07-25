@@ -308,7 +308,6 @@ tbody tr:hover { background: #F7FAFC; }
 .dep-item { padding: 4px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: all 0.2s; border: 2px solid transparent; }
 .dep-item.damaged { background: #FED7D7; color: #822727; border-color: #FC4444; }
 .dep-item.fixed { background: #C6F6D5; color: #22543D; border-color: #48BB78; }
-.dep-item.insulator-dmg { background: #FED7D7; color: #822727; }
 .dep-filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .dep-filters select, .dep-filters input { padding: 8px 12px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.85rem; }
 .treat-modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 600; align-items: center; justify-content: center; padding: 16px; }
@@ -2075,8 +2074,12 @@ tbody tr:hover { background: #F7FAFC; }
         <input id="acc_username" placeholder="اسم المستخدم">
       </div>
       <div class="field">
+        <label>كلمة المرور الحالية</label>
+        <input id="acc_curpass" type="password" placeholder="مطلوبة للتأكيد" autocomplete="current-password">
+      </div>
+      <div class="field">
         <label>كلمة مرور جديدة</label>
-        <input id="acc_newpass" type="password" placeholder="اتركه فاضي إذا ما تريد تغييره">
+        <input id="acc_newpass" type="password" placeholder="8 أحرف على الأقل" autocomplete="new-password">
       </div>
     </div>
     <div class="form-actions">
@@ -2285,12 +2288,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const o = document.createElement('option'); o.value = name; o.textContent = name; tfSel.appendChild(o);
   });
 
+  loadLinesInfoFromDB(); // بدون await حتى لا نؤخر ظهور التطبيق؛ الشاشات تتحدّث فور اكتمال التحميل
+
   // Try restore session
   const saved = localStorage.getItem(SESSION_KEY);
   if (saved) {
     try {
-      currentUser = JSON.parse(saved);
-      enterApp();
+      const parsed = JSON.parse(saved);
+      // انتهاء صلاحية الجلسة بعد 30 يوم من آخر دخول
+      if (parsed._ts && (Date.now() - parsed._ts) > 30*24*60*60*1000) {
+        localStorage.removeItem(SESSION_KEY);
+        showLogin();
+      } else {
+        currentUser = parsed;
+        enterApp();
+        // إعادة تحقق مع الخادم: الدور والتفعيل يُؤخذان من قاعدة البيانات لا من التخزين المحلي
+        // (التخزين المحلي قابل للتعديل يدوياً، فما يصلح كمصدر ثقة للصلاحيات)
+        revalidateSession();
+      }
     } catch { showLogin(); }
   } else {
     showLogin();
@@ -2307,6 +2322,24 @@ document.addEventListener('DOMContentLoaded', () => {
 function showLogin() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appRoot').style.display = 'none';
+}
+
+// تتحقق من أن الحساب المحفوظ بالجلسة لسه موجود ومفعّل، وتصحّح الدور من قاعدة البيانات.
+// بدونها كان يكفي تعديل التخزين المحلي يدوياً لرفع الصلاحية لمدير داخل الواجهة.
+async function revalidateSession() {
+  if (!currentUser || !currentUser.id) return;
+  try {
+    const res = await sbFetch(`users?id=eq.${currentUser.id}&select=id,username,full_name,role,department,phone,can_manage_inventory,is_active`);
+    if (!res.ok) return; // مشكلة شبكة: نترك الجلسة كما هي (حتى يشتغل التطبيق أوف لاين)
+    const rows = await res.json();
+    if (!Array.isArray(rows) || !rows.length) { logout(); return; }
+    const u = rows[0];
+    if (!u.is_active) { showToast('⚠️ هذا الحساب معطّل', 'error'); logout(); return; }
+    const changed = currentUser.role !== u.role || currentUser.can_manage_inventory !== !!u.can_manage_inventory;
+    currentUser = { ...currentUser, username: u.username, full_name: u.full_name, role: u.role, department: u.department, phone: u.phone, can_manage_inventory: !!u.can_manage_inventory };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    if (changed) { try { applyRolePermissions(); } catch(e) { console.warn('[tower-app] فشل تحديث صلاحيات الواجهة بعد إعادة التحقق من الجلسة', e); } }
+  } catch (e) { /* أوف لاين: نُبقي الجلسة */ }
 }
 
 async function doLogin() {
@@ -2352,7 +2385,7 @@ async function doLogin() {
       btn.disabled = false; btn.textContent = 'دخول'; return;
     }
 
-    currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department, phone: user.phone, can_manage_inventory: !!user.can_manage_inventory };
+    currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department, phone: user.phone, can_manage_inventory: !!user.can_manage_inventory, _ts: Date.now() };
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
 
     // Update last_login (fire and forget)
@@ -2601,7 +2634,7 @@ async function cleanAndSync() {
         tempFields.forEach(f => delete r[f]);
         return r;
       })));
-    } catch(e) {}
+    } catch(e) { console.warn('[tower-app] فشل تنظيف الحقول المؤقتة بقائمة', key, e); }
   });
   // تنظيف inspection_patch_queue (البنية مختلفة: {id, patch, _lastError})
   try {
@@ -2614,7 +2647,7 @@ async function cleanAndSync() {
         return r;
       })));
     }
-  } catch(e) {}
+  } catch(e) { console.warn('[tower-app] فشل تنظيف الحقول المؤقتة بقائمة تعديلات الكشف', e); }
   showToast('🧹 تم تنظيف البيانات، جاري الرفع...');
   await manualSyncAll();
 }
@@ -2780,9 +2813,8 @@ function getTowerCriticalityLevel(rec) {
         if (consec > maxConsec) maxConsec = consec;
         if (scattered > maxScattered) maxScattered = scattered;
       });
-    } catch(e) {}
+    } catch(e) { console.warn('[tower-app] فشل تحليل حالة العوازل بحساب صحة الخط للسجل', rec.id, e); }
   }
-  const foundationsCritical = /كامل/.test(rec.tower_foundations||'');
   const attachmentsCritical = /كامل/.test(rec.tower_attachments||'');
   let ironNum = 0;
   const m = (rec.iron_intersections||'').match(/\d+/);
@@ -3067,6 +3099,9 @@ let insulatorCycleState2 = {R:[],S:[],T:[]};
 // نوع كل سلسلة: { "R": ["glass","plastic"], "S": ["glass","glass"], "T": ["plastic"] }
 // "glass" = زجاج (مربعات) | "plastic" = بلاستيك (لولب)
 let chainTypes = { R: [], S: [], T: [] };
+// مادة سلاسل الدائرة الثانية — منفصلة تماماً عن الأولى (سابقاً كانتا تتشاركان نفس المصفوفة،
+// فتبديل مادة بدائرة كان يغيّر الثانية معها، ومادة الدائرة الثانية ما كانت تُحفظ إطلاقاً)
+let chainTypes2 = { R: [], S: [], T: [] };
 
 // يُعيد عدد السلاسل لكل طور حسب النمط
 function getChainsPerPhase(mode) {
@@ -3227,17 +3262,17 @@ function buildCeramicChain(phase, chainIdx, stateObj, damaged, onToggle, rows) {
 }
 
 // يبني زر التبديل بين زجاج/بلاستيك
-function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuild) {
+function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuild, typesObj) {
+  typesObj = typesObj || chainTypes; // الافتراضي: الدائرة الأولى (للتوافق مع أي نداء قديم)
   const btn = document.createElement('button');
   const CYCLE_NEXT = { glass: 'plastic', plastic: 'ceramic', ceramic: 'glass' };
-  const cur0 = (chainTypes[phase] || [])[chainIdx] || 'glass';
   btn.textContent = '🔄';
   btn.title = 'تبديل نوع السلسلة (زجاج → بلاستك → خزف)';
   btn.style.cssText = 'font-size:0.65rem;padding:1px 5px;border:1px solid #CBD5E0;border-radius:8px;background:#F7FAFC;cursor:pointer;margin-bottom:2px';
   btn.addEventListener('click', () => {
-    const cur = (chainTypes[phase] || [])[chainIdx] || 'glass';
-    if (!chainTypes[phase]) chainTypes[phase] = [];
-    chainTypes[phase][chainIdx] = CYCLE_NEXT[cur] || 'glass';
+    const cur = (typesObj[phase] || [])[chainIdx] || 'glass';
+    if (!typesObj[phase]) typesObj[phase] = [];
+    typesObj[phase][chainIdx] = CYCLE_NEXT[cur] || 'glass';
     // أي انتقال لمادة جديدة (بلاستك أو خزف أو زجاج جديد) يصفّر عوازل هذي السلسلة (تُعتبر مادة جديدة كاملة)
     for (let r=0; r<rows; r++) { stateObj[phase][chainIdx*rows+r] = false; cycleObj[phase][chainIdx*rows+r] = 0; }
     onRebuild();
@@ -3245,7 +3280,7 @@ function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuil
   return btn;
 }
 
-function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState2, savedCycle2, savedChainTypes) {
+function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState2, savedCycle2, savedChainTypes, savedChainTypes2) {
   const sec = document.getElementById('insulatorSection');
   const wrap = document.getElementById('phasesWrap');
   sec.style.display = 'block';
@@ -3271,6 +3306,18 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
     }
   }
   ['R','S','T'].forEach(p => { if (!chainTypes[p]) chainTypes[p] = []; });
+
+  // نفس المنطق تماماً للدائرة الثانية، لكن بمصفوفة مستقلة
+  if (savedChainTypes2) {
+    chainTypes2 = JSON.parse(JSON.stringify(savedChainTypes2));
+  } else {
+    const towerDefault2 = getTowerMaterialDefault(lineName, towerNum);
+    chainTypes2 = { R: [], S: [], T: [] };
+    if (towerDefault2 && towerDefault2 !== 'glass') {
+      ['R','S','T'].forEach(p => { chainTypes2[p] = Array(chainsPerPhase).fill(towerDefault2); });
+    }
+  }
+  ['R','S','T'].forEach(p => { if (!chainTypes2[p]) chainTypes2[p] = []; });
 
   if (savedState) {
     insulatorState = JSON.parse(JSON.stringify(savedState));
@@ -3300,9 +3347,10 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
 
   const [stA, stB] = lineName ? lineEndpoints(lineName) : ['', ''];
 
-  function rebuildUI() { buildInsulatorUI(voltage, towerType, insulatorState, insulatorCycleState, insulatorState2, insulatorCycleState2, chainTypes); }
+  function rebuildUI() { buildInsulatorUI(voltage, towerType, insulatorState, insulatorCycleState, insulatorState2, insulatorCycleState2, chainTypes, chainTypes2); }
 
-  function buildOneCircuit(targetWrap, stateObj, cycleObj) {
+  function buildOneCircuit(targetWrap, stateObj, cycleObj, typesObj) {
+    typesObj = typesObj || chainTypes;
     ['R','S','T'].forEach(phase => {
       const block = document.createElement('div');
       block.className = 'phase-block';
@@ -3316,8 +3364,8 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
         for (let ci=0; ci<2; ci++) {
           const chainWrap = document.createElement('div');
           chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
-          const material = (chainTypes[phase]||[])[ci] || 'glass';
-          const toggleBtn = buildChainToggleBtn(phase, ci, stateObj, cycleObj, rowsPerChain, rebuildUI);
+          const material = (typesObj[phase]||[])[ci] || 'glass';
+          const toggleBtn = buildChainToggleBtn(phase, ci, stateObj, cycleObj, rowsPerChain, rebuildUI, typesObj);
           chainWrap.appendChild(toggleBtn);
           if (material === 'plastic' || material === 'ceramic') {
             // حالة البلاستك/الخزف: نخزّنها في أول عازل بالسلسلة (true=متضرر)
@@ -3343,8 +3391,8 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
       } else if (mode === 'chain1_10') {
         const chainWrap = document.createElement('div');
         chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
-        const material = (chainTypes[phase]||[])[0] || 'glass';
-        const toggleBtn = buildChainToggleBtn(phase, 0, stateObj, cycleObj, rowsPerChain, rebuildUI);
+        const material = (typesObj[phase]||[])[0] || 'glass';
+        const toggleBtn = buildChainToggleBtn(phase, 0, stateObj, cycleObj, rowsPerChain, rebuildUI, typesObj);
         chainWrap.appendChild(toggleBtn);
         if (material === 'plastic' || material === 'ceramic') {
           const dmg = !!(stateObj[phase] && stateObj[phase][0]);
@@ -3362,8 +3410,8 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
         // v, straight4, chain4_12 — نبقيهن كما هم بدون تبديل (بلاستيك نادر عليهم)
         let el;
         if (mode === 'v') el = buildVShape(phase, stateObj, cycleObj);
-        else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB, 4, 32, stateObj, cycleObj, rebuildUI);
-        else if (mode === 'chain4_12') el = buildStraight4Chain(phase, stA, stB, 4, 12, stateObj, cycleObj, rebuildUI);
+        else if (mode === 'straight4') el = buildStraight4Chain(phase, stA, stB, 4, 32, stateObj, cycleObj, rebuildUI, typesObj);
+        else if (mode === 'chain4_12') el = buildStraight4Chain(phase, stA, stB, 4, 12, stateObj, cycleObj, rebuildUI, typesObj);
         else el = buildChain(phase, rowsPerChain, stateObj, cycleObj);
         block.appendChild(el);
       }
@@ -3378,7 +3426,7 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
     wrap.appendChild(title1);
     const wrap1 = document.createElement('div'); wrap1.className = 'phases-wrap-inner';
     wrap.appendChild(wrap1);
-    buildOneCircuit(wrap1, insulatorState, insulatorCycleState);
+    buildOneCircuit(wrap1, insulatorState, insulatorCycleState, chainTypes);
 
     const title2 = document.createElement('div');
     title2.style.cssText = 'font-weight:700;color:#2C5282;margin:14px 0 6px;text-align:center';
@@ -3386,9 +3434,9 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
     wrap.appendChild(title2);
     const wrap2 = document.createElement('div'); wrap2.className = 'phases-wrap-inner';
     wrap.appendChild(wrap2);
-    buildOneCircuit(wrap2, insulatorState2, insulatorCycleState2);
+    buildOneCircuit(wrap2, insulatorState2, insulatorCycleState2, chainTypes2);
   } else {
-    buildOneCircuit(wrap, insulatorState, insulatorCycleState);
+    buildOneCircuit(wrap, insulatorState, insulatorCycleState, chainTypes);
   }
 }
 
@@ -3500,9 +3548,10 @@ function buildSingleChain(phase, rows, stateObj, cycleObj) {
   return wrap;
 }
 
-function buildStraight4Chain(phase, stationA, stationB, totalCols, rows, stateObj, cycleObj, rebuildFn) {
+function buildStraight4Chain(phase, stationA, stationB, totalCols, rows, stateObj, cycleObj, rebuildFn, typesObj) {
   stateObj = stateObj || insulatorState;
   cycleObj = cycleObj || insulatorCycleState;
+  typesObj = typesObj || chainTypes;
   totalCols = totalCols || 4; rows = rows || 32;
   const colsPerGroup = totalCols / 2; // كل مجموعة نصف الأعمدة
   const outer = document.createElement('div');
@@ -3522,10 +3571,10 @@ function buildStraight4Chain(phase, stationA, stationB, totalCols, rows, stateOb
     const colsWrap = document.createElement('div'); colsWrap.style.display = 'flex'; colsWrap.style.gap = '6px';
     for (let c = 0; c < colsPerGroup; c++) {
       const col = c + colOffset;
-      const material = (chainTypes[phase]||[])[col] || 'glass';
+      const material = (typesObj[phase]||[])[col] || 'glass';
       const chainWrap = document.createElement('div');
       chainWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center';
-      if (rebuildFn) chainWrap.appendChild(buildChainToggleBtn(phase, col, stateObj, cycleObj, rows, rebuildFn));
+      if (rebuildFn) chainWrap.appendChild(buildChainToggleBtn(phase, col, stateObj, cycleObj, rows, rebuildFn, typesObj));
       if (material === 'plastic' || material === 'ceramic') {
         // حالة البلاستك/الخزف: نخزّنها بأول عازل بالسلسلة (true=متضرر)
         const dmg = !!(stateObj[phase] && stateObj[phase][col*rows]);
@@ -3835,6 +3884,7 @@ function getFormData() {
   if (isDouble) {
     d.insulator_state_2 = JSON.stringify(insulatorState2);
     d.insulator_cycle_2 = JSON.stringify(insulatorCycleState2);
+    d.insulator_chain_types_2 = JSON.stringify(chainTypes2);
   }
   FIELDS.forEach(f => d[f] = document.getElementById('f_'+f).value.trim());
   return d;
@@ -3866,7 +3916,8 @@ function setFormData(d) {
     const saved2 = d.insulator_state_2 ? safeParseJSON(d.insulator_state_2) : null;
     const savedCycle2 = d.insulator_cycle_2 ? safeParseJSON(d.insulator_cycle_2) : null;
     const savedChainTypes = d.insulator_chain_types ? safeParseJSON(d.insulator_chain_types) : null;
-    buildInsulatorUI(currentVoltage, d.tower_type, saved, savedCycle || null, saved2, savedCycle2, savedChainTypes);
+    const savedChainTypes2 = d.insulator_chain_types_2 ? safeParseJSON(d.insulator_chain_types_2) : null;
+    buildInsulatorUI(currentVoltage, d.tower_type, saved, savedCycle || null, saved2, savedCycle2, savedChainTypes, savedChainTypes2);
     updateWiresGroundUI();
   }, 60);
 }
@@ -3919,12 +3970,22 @@ async function saveRecord() {
     // تعديل سجل موجود — نحاول أونلاين أولاً، لو فشل نحفظ في قائمة انتظار الـPATCH
     const patchData = { ...d };
     delete patchData.client_uuid; // لا نرسل client_uuid في التعديل
+    // تحديث الكاشات المحلية فوراً بغض النظر عن نجاح الشبكة — بدون هذا كان التعديل الناجح أونلاين
+    // يبقى غير ظاهر بالمغادرات/حالة الخطوط/التقارير (لأنها تقرأ fullRecordsCache) لحد ما ينتهي عمر الكاش
+    function applyEditLocally() {
+      const idx = fullRecordsCache.findIndex(r => r.id === editId);
+      if (idx !== -1) fullRecordsCache[idx] = { ...fullRecordsCache[idx], ...patchData };
+      const idx2 = records.findIndex(r => r.id === editId);
+      if (idx2 !== -1) records[idx2] = { ...records[idx2], ...patchData };
+    }
     try {
       const res = await sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(patchData) });
       if (res.ok) {
+        applyEditLocally();
         showToast('✅ تم تحديث السجل');
         document.getElementById('towerInspectionModal').classList.remove('show');
         cancelEdit(); loadRecords();
+        if (currentGridLine) renderTowersGrid(currentGridLine);
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -3934,9 +3995,7 @@ async function saveRecord() {
       showToast('📦 تعذّر التحديث، حُفظ محلياً وسيُرسل عند الاتصال');
       document.getElementById('towerInspectionModal').classList.remove('show');
       cancelEdit();
-      // تحديث الكاش المحلي فوراً بالبيانات الجديدة
-      const idx = fullRecordsCache.findIndex(r => r.id === editId);
-      if (idx !== -1) fullRecordsCache[idx] = { ...fullRecordsCache[idx], ...patchData };
+      applyEditLocally();
       if (currentGridLine) renderTowersGrid(currentGridLine);
     }
   } else {
@@ -3946,7 +4005,7 @@ async function saveRecord() {
       const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=representation'}, body: JSON.stringify(d) });
       if (res.ok) {
         let savedRow = d;
-        try { const arr = await res.json(); if (Array.isArray(arr) && arr.length && arr[0].id) savedRow = arr[0]; } catch(e) {}
+        try { const arr = await res.json(); if (Array.isArray(arr) && arr.length && arr[0].id) savedRow = arr[0]; } catch(e) { console.warn('[tower-app] فشل تحليل رد الحفظ — سيُستخدم السجل المحلي بدون id حقيقي من السيرفر', e); }
         showToast('✅ تم حفظ الكشف بنجاح'); afterGridSaveSuccess(savedRow);
       } else {
         throw new Error(`HTTP ${res.status}`);
@@ -4042,7 +4101,7 @@ async function syncQueue() {
         delete rec._lastError;
       } else {
         let bodyText = '';
-        try { bodyText = await res.text(); } catch(e) {}
+        try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة الكشف', e); }
         rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
         // 4xx = خطأ دائم في البيانات (عمود ناقص, إلخ) — يبقى في القائمة ليراه المستخدم
         // 5xx = خطأ مؤقت في السيرفر — يُعاد المحاولة
@@ -4304,15 +4363,18 @@ async function bulkDeleteRecords() {
   if (!confirm(`🗑️ تأكيد حذف ${n} سجل مطابق للفلتر الحالي؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.`)) return;
   showToast('⏳ جاري الحذف...');
   const ids = filteredRecords.map(r => r.id);
-  let success = 0;
+  const succeededIds = [];
   for (const id of ids) {
     try {
       const res = await sbFetch(`inspections?id=eq.${id}`, { method: 'DELETE' });
-      if (res.ok) success++;
-    } catch (e) {}
+      if (res.ok) succeededIds.push(id);
+      else console.warn('[tower-app] فشل حذف سجل كشف', id, 'HTTP', res.status);
+    } catch (e) { console.warn('[tower-app] فشل حذف سجل كشف', id, e); }
   }
-  fullRecordsCache = fullRecordsCache.filter(r => !ids.includes(r.id));
-  showToast(`🗑️ تم حذف ${success} من ${n} سجل`);
+  // نحذف من الكاش بس اللي فعلاً انحذف من قاعدة البيانات — قبل كذا كان يُحذف الكل من الكاش حتى لو فشل الحذف الحقيقي
+  fullRecordsCache = fullRecordsCache.filter(r => !succeededIds.includes(r.id));
+  const success = succeededIds.length;
+  showToast(success === n ? `🗑️ تم حذف ${success} من ${n} سجل` : `⚠️ تم حذف ${success} من ${n} سجل فقط — راجع سجل المتصفح (console) لمعرفة سبب فشل الباقي`, success === n ? undefined : 'error');
   loadRecords();
 }
 
@@ -4345,12 +4407,13 @@ function getExportFilteredRecords() {
   const line = document.getElementById('exportFilterLine').value;
   const from = document.getElementById('exportFilterFrom').value;
   const to = document.getElementById('exportFilterTo').value;
-  return records.filter(r => {
+  const rows = records.filter(r => {
     const mLine = !line || r.line_name === line;
     const mFrom = !from || (r.inspection_date||'') >= from;
     const mTo = !to || (r.inspection_date||'') <= to;
     return mLine && mFrom && mTo;
   });
+  return sortByLineThenTower(rows, 'tower_number');
 }
 function updateExportResultCount() {
   const n = getExportFilteredRecords().length;
@@ -4496,7 +4559,7 @@ async function confirmExportPDF() {
 
       const infoImg = drawArabicTextPNG(items, 760, { border: true });
       // رسم العوازل بالطريقة المثبتة (Canvas 2D مباشرة) — بديل foreignObject الذي يُنتج صوراً فارغة على iOS Safari
-      const insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number);
+      const insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number, r.insulator_chain_types, r.insulator_chain_types_2);
 
       const infoH = infoImg ? usableW * (infoImg.h / infoImg.w) : 0;
       const insH = insImg ? usableW * (insImg.h / insImg.w) : 0;
@@ -4583,7 +4646,7 @@ function getDepLogExportFiltered() {
   const rows = getDepLogExportFilteredByLineDate();
   const selectedTowers = getDepLogExportSelectedTowers();
   if (!selectedTowers.size) return [];
-  return rows.filter(t => selectedTowers.has(String(t.tower_number)));
+  return sortByLineThenTower(rows.filter(t => selectedTowers.has(String(t.tower_number))), 'tower_number');
 }
 function updateDepLogExportResultCount() {
   const n = getDepLogExportFiltered().length;
@@ -4759,7 +4822,7 @@ async function buildTreatLogRecordCanvas(t) {
       const ratio = res.w && res.h ? (res.w / res.h) : 1;
       const imgW = Math.min(IMG_H * ratio, 150) || 100;
       x -= imgW;
-      try { ctx.drawImage(res.img, x, y, imgW, IMG_H); } catch(e) {}
+      try { ctx.drawImage(res.img, x, y, imgW, IMG_H); } catch(e) { console.warn('[tower-app] فشل رسم صورة عازل بسجل المعالجات', e); }
       ctx.font = '11px Tahoma, Arial, sans-serif';
       ctx.fillStyle = '#718096';
       ctx.textAlign = 'center';
@@ -4952,7 +5015,7 @@ let officialFormRows = [];
 let tfTensionTowerOptions = []; // أرقام أبراج الشد المتاحة للخط المختار
 
 function getWireTypeForLine(lineName) {
-  const li = LINES_INFO.find(l => lineName.startsWith(l.name));
+  const li = linesInfoCache.find(l => lineName.startsWith(l.name));
   return li ? (li.wire_type || '') : '';
 }
 
@@ -5070,7 +5133,7 @@ function placeOfficialFormStampLive() {
     img.style.width = stampSize + 'px';
     img.style.height = stampSize + 'px';
     img.style.visibility = 'visible';
-  } catch (e) {}
+  } catch (e) { console.warn('[tower-app] فشل تموضع ختم الاستمارة (شاشة التعبئة المباشرة)', e); }
 }
 
 function renderOfficialFormTable() {
@@ -5274,7 +5337,7 @@ function placeOfficialFormStampInDoc(doc) {
     img.style.height = stampSize + 'px';
     img.style.visibility = 'visible';
     wrap.style.marginTop = overflow + 'px';
-  } catch (e) {}
+  } catch (e) { console.warn('[tower-app] فشل تموضع ختم الاستمارة (وثيقة الطباعة)', e); }
 }
 
 function printOfficialForm() {
@@ -5445,7 +5508,7 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
       ctx.fillStyle = op.fill; ctx.fillRect(op.x, op.y, op.w, op.h);
       ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(op.x, op.y, op.w, op.h);
     } else if (op.type === 'image') {
-      try { ctx.drawImage(op.img, op.x, op.y, op.w, op.h); } catch (e) {}
+      try { ctx.drawImage(op.img, op.x, op.y, op.w, op.h); } catch (e) { console.warn('[tower-app] فشل رسم عنصر صورة بكانفاس الاستمارة الرسمية', e); }
     } else {
       ctx.font = op.font;
       ctx.textAlign = op.align === 'right' ? 'right' : op.align === 'center' ? 'center' : 'left';
@@ -5892,7 +5955,7 @@ async function syncLineEntryQueue() {
       if (res.ok) synced++;
       else {
         let bodyText = '';
-        try { bodyText = await res.text(); } catch(e) {}
+        try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة قيد خط', e); }
         rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
         remaining.push(rec);
       }
@@ -5932,7 +5995,7 @@ async function syncThermalQueue() {
       if (res.ok) synced++;
       else {
         let bodyText = '';
-        try { bodyText = await res.text(); } catch(e) {}
+        try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة الكشف الحراري', e); }
         rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
         remaining.push(rec);
       }
@@ -5961,9 +6024,10 @@ async function bulkDeleteThermal() {
     try {
       const res = await sbFetch(`thermal_inspections?id=eq.${r.id}`, { method: 'DELETE' });
       if (res.ok) success++;
-    } catch (e) {}
+      else console.warn('[tower-app] فشل حذف قياس حراري', r.id, 'HTTP', res.status);
+    } catch (e) { console.warn('[tower-app] فشل حذف قياس حراري', r.id, e); }
   }
-  showToast(`🗑️ تم حذف ${success} من ${n} نشاط`);
+  showToast(success === n ? `🗑️ تم حذف ${success} من ${n} نشاط` : `⚠️ تم حذف ${success} من ${n} نشاط فقط — راجع سجل المتصفح لمعرفة السبب`, success === n ? undefined : 'error');
   await loadThermalArchive();
   // تحقق من برقيات عمل غير منفذة لنفس الخطوط المتأثرة
   for (const lineName of lines) {
@@ -5974,7 +6038,7 @@ async function bulkDeleteThermal() {
         await Promise.all(telegrams.map(t => sbFetch(`work_telegrams?id=eq.${t.id}`, { method: 'DELETE' })));
         showToast('🗑️ تم حذف برقيات العمل المرتبطة بخط ' + lineName);
       }
-    } catch (e) {}
+    } catch (e) { console.warn('[tower-app] فشل التحقق من برقيات العمل لخط', lineName, e); }
   }
 }
 
@@ -6163,18 +6227,47 @@ async function updateUsername() {
 }
 
 async function changeAccountPassword() {
+  const curpass = document.getElementById('acc_curpass').value;
   const newpass = document.getElementById('acc_newpass').value.trim();
+  if (!curpass) { showToast('⚠️ أدخل كلمة المرور الحالية للتأكيد', 'error'); return; }
   if (!newpass) { showToast('⚠️ أدخل كلمة مرور جديدة أولاً', 'error'); return; }
-  if (newpass.length < 4) { showToast('⚠️ كلمة المرور قصيرة جداً', 'error'); return; }
+  if (newpass.length < 8) { showToast('⚠️ كلمة المرور لازم 8 أحرف على الأقل', 'error'); return; }
   try {
     const res = await sbFetch('rpc/set_user_password', {
       method: 'POST',
-      body: JSON.stringify({ p_user_id: String(currentUser.id), p_new_password: newpass })
+      body: JSON.stringify({
+        p_user_id: String(currentUser.id),
+        p_new_password: newpass,
+        p_actor_username: currentUser.username,
+        p_actor_password: curpass
+      })
     });
-    if (!res.ok) throw new Error();
+    const out = await res.json();
+    const row = Array.isArray(out) ? out[0] : out;
+    if (!res.ok || !row || !row.success) { showToast('❌ ' + passwordRpcMessage(row && row.message), 'error'); return; }
+    document.getElementById('acc_curpass').value = '';
     document.getElementById('acc_newpass').value = '';
     showToast('✅ تم تحديث كلمة المرور');
   } catch { showToast('❌ تعذر التحديث، حاول مرة أخرى', 'error'); }
+}
+
+// ترجمة رسائل دالة تغيير كلمة المرور المحصّنة لرسالة مفهومة للمستخدم
+function passwordRpcMessage(code) {
+  switch (code) {
+    case 'weak_password': return 'كلمة المرور ضعيفة (8 أحرف على الأقل)';
+    case 'bad_actor': return 'كلمة المرور الحالية غير صحيحة';
+    case 'actor_locked': return 'الحساب مقفول مؤقتاً بسبب محاولات فاشلة';
+    case 'actor_inactive': return 'الحساب معطّل';
+    case 'not_allowed': return 'ما عندك صلاحية لتغيير كلمة مرور هذا الحساب';
+    case 'target_not_found': return 'الحساب المطلوب غير موجود';
+    default: return 'تعذر التحديث';
+  }
+}
+
+// يطلب من المدير تأكيد كلمة مروره قبل أي إجراء حساس على حسابات الآخرين
+function promptAdminPassword() {
+  const p = prompt('🔐 لتأكيد هويتك، أدخل كلمة مرورك:');
+  return p ? p : null;
 }
 
 
@@ -6962,13 +7055,13 @@ function findLineInfo(lineName) {
   if (!lineName) return null;
   const clean = lineName.trim().replace(/\s+/g, ' ');
   // مطابقة تامة أولاً
-  let found = LINES_INFO.find(l => l.name === clean);
+  let found = linesInfoCache.find(l => l.name === clean);
   if (found) return found;
   // مطابقة مرنة: تجاهل الفروق البسيطة بالمسافات
-  found = LINES_INFO.find(l => l.name.trim().replace(/\s+/g, ' ') === clean);
+  found = linesInfoCache.find(l => l.name.trim().replace(/\s+/g, ' ') === clean);
   if (found) return found;
   // مطابقة جزئية: يحتوي على نفس الكلمات
-  found = LINES_INFO.find(l => l.name.replace(/\s+/g,' ').includes(clean) || clean.includes(l.name.replace(/\s+/g,' ')));
+  found = linesInfoCache.find(l => l.name.replace(/\s+/g,' ').includes(clean) || clean.includes(l.name.replace(/\s+/g,' ')));
   return found || null;
 }
 
@@ -7181,7 +7274,7 @@ function populateAddLineSelect() {
     .map(([key, g]) => `<option value="${key}">📦 ${g.label} (${g.lines.length} خطوط)</option>`).join('');
   sel.innerHTML = '<option value="">-- اختر خط أو مجموعة لإضافتها --</option>' +
     `<optgroup label="إضافة جماعية">${bulkOptions}</optgroup>` +
-    `<optgroup label="خط منفرد">${LINES_INFO.map(l => `<option value="${l.name}">${l.name} (${l.voltage} ك.ف)</option>`).join('')}</optgroup>`;
+    `<optgroup label="خط منفرد">${linesInfoCache.map(l => `<option value="${l.name}">${l.name} (${l.voltage} ك.ف)</option>`).join('')}</optgroup>`;
 }
 
 function addBulkDailyReportLines(key) {
@@ -7609,7 +7702,7 @@ async function fetchStaffRosterFromServer() {
       saveStaffRosterMembersCache(members);
       return true;
     }
-  } catch(e) {}
+  } catch(e) { console.warn('[tower-app] فشل تحميل كشف الأسماء:', e); }
   return false;
 }
 
@@ -8093,7 +8186,7 @@ async function loadMembers() {
   if (!tbody) return;
   tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
-    const res = await sbFetch('users?select=*&order=created_at.desc');
+    const res = await sbFetch('users?select=id,username,full_name,role,department,phone,can_manage_inventory,is_active,created_at,last_login&order=created_at.desc');
     allUsers = await res.json();
     renderMembers();
     document.getElementById('totalMembers').textContent = allUsers.length;
@@ -8146,14 +8239,24 @@ function closeAccountActionsModal() { document.getElementById('accountActionsMod
 async function resetUserPassword(id) {
   const u = allUsers.find(x => x.id === id);
   if (!u) return;
+  if (currentUser.role !== 'admin') { showToast('⛔ هذا الإجراء للمدير فقط', 'error'); return; }
   if (!confirm(`إعادة تعيين كلمة مرور جديدة لـ${u.full_name || 'هذا الحساب'}؟ كلمة المرور القديمة تتوقف عن العمل فوراً.`)) return;
+  const actorPass = promptAdminPassword();
+  if (!actorPass) return;
   const newPassword = genPassword();
   try {
     const res = await sbFetch('rpc/set_user_password', {
       method: 'POST',
-      body: JSON.stringify({ p_user_id: String(id), p_new_password: newPassword })
+      body: JSON.stringify({
+        p_user_id: String(id),
+        p_new_password: newPassword,
+        p_actor_username: currentUser.username,
+        p_actor_password: actorPass
+      })
     });
-    if (!res.ok) throw new Error();
+    const out = await res.json();
+    const row = Array.isArray(out) ? out[0] : out;
+    if (!res.ok || !row || !row.success) { showToast('❌ ' + passwordRpcMessage(row && row.message), 'error'); return; }
     document.getElementById('vp_name').textContent = u.full_name || '—';
     document.getElementById('vp_username').textContent = u.username || '—';
     document.getElementById('vp_password').textContent = newPassword;
@@ -8223,6 +8326,10 @@ async function createMember() {
   const canManageInventory = document.getElementById('newMemberInvPerm').checked;
 
   if (!fullName) { showToast('⚠️ أدخل اسم العضو', 'error'); return; }
+  if (currentUser.role !== 'admin') { showToast('⛔ هذا الإجراء للمدير فقط', 'error'); return; }
+
+  const actorPass = promptAdminPassword();
+  if (!actorPass) return;
 
   const username = genUsername(fullName);
   const password = genPassword();
@@ -8239,9 +8346,20 @@ async function createMember() {
 
     const passRes = await sbFetch('rpc/set_user_password', {
       method: 'POST',
-      body: JSON.stringify({ p_user_id: String(newId), p_new_password: password })
+      body: JSON.stringify({
+        p_user_id: String(newId),
+        p_new_password: password,
+        p_actor_username: currentUser.username,
+        p_actor_password: actorPass
+      })
     });
-    if (!passRes.ok) throw new Error();
+    const passOut = await passRes.json();
+    const passRow = Array.isArray(passOut) ? passOut[0] : passOut;
+    if (!passRes.ok || !passRow || !passRow.success) {
+      showToast('❌ أُنشئ الحساب لكن تعذّر تعيين كلمة المرور: ' + passwordRpcMessage(passRow && passRow.message), 'error');
+      loadMembers();
+      return;
+    }
 
     document.getElementById('resultUsername').textContent = username;
     document.getElementById('resultPassword').textContent = password;
@@ -8273,7 +8391,7 @@ async function confirmDeleteUser() {
       const errText = await res.text().catch(() => '');
       console.error('Delete user failed:', res.status, errText);
       let detail = errText;
-      try { const j = JSON.parse(errText); detail = j.message || j.hint || j.code || errText; } catch {}
+      try { const j = JSON.parse(errText); detail = j.message || j.hint || j.code || errText; } catch(e) { console.warn('[tower-app] رد خطأ حذف المستخدم ليس JSON صالح — استُخدم النص الخام', e); }
       showToast('❌ تعذر الحذف: ' + (detail || ('خطأ ' + res.status)), 'error');
       closeDeleteUserModal();
       return;
@@ -8304,18 +8422,40 @@ if ('serviceWorker' in navigator) {
 
 // ==================== LINES DATA PAGE ====================
 
-const LINES_INFO_KEY = 'lines_info_custom';
+// معلومات الخطوط: كانت تُحفظ بالمتصفح المحلي فقط (localStorage) — أي تعديل ما ينتشر لباقي الأجهزة
+// ويضيع لو انمسحت بيانات المتصفح. الحين المصدر الوحيد هو جدول lines_info بقاعدة البيانات.
+// linesInfoCache نسخة بالذاكرة تُحمَّل عند فتح التطبيق وتُستخدم بكل الأماكن (بدل الثابت LINES_INFO مباشرة)
+let linesInfoCache = JSON.parse(JSON.stringify(LINES_INFO)); // احتياط أولي لحد ما يوصل تحميل قاعدة البيانات
 
-function getLinesInfoData() {
+async function loadLinesInfoFromDB() {
   try {
-    const s = localStorage.getItem(LINES_INFO_KEY);
-    if (s) return JSON.parse(s);
-  } catch(e) {}
-  return JSON.parse(JSON.stringify(LINES_INFO));
+    const res = await sbFetch('lines_info?select=*&order=idx.asc');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    if (Array.isArray(rows) && rows.length) linesInfoCache = rows;
+  } catch (e) {
+    // فشل الاتصال: نبقى على القيم الاحتياطية الموجودة بالذاكرة (لا نكسر التطبيق أوف لاين)
+  }
 }
 
-function saveLinesInfoData(data) {
-  localStorage.setItem(LINES_INFO_KEY, JSON.stringify(data));
+function getLinesInfoData() {
+  return JSON.parse(JSON.stringify(linesInfoCache));
+}
+
+// يستبدل كل بيانات الجدول دفعة وحدة (أبسط وأضمن من محاولة استنتاج أي صف تغيّر أو انحذف أو انضاف)
+async function saveLinesInfoData(data) {
+  linesInfoCache = data; // تحديث فوري للواجهة الحالية
+  try {
+    const delRes = await sbFetch('lines_info?idx=gte.0', { method: 'DELETE' });
+    if (!delRes.ok) throw new Error('HTTP ' + delRes.status);
+    if (data.length) {
+      const insRes = await sbFetch('lines_info', { method: 'POST', body: JSON.stringify(data) });
+      if (!insRes.ok) throw new Error('HTTP ' + insRes.status);
+    }
+    showToast('✅ تم حفظ معلومات الخطوط لكل الأجهزة');
+  } catch (e) {
+    showToast('⚠️ تعذّر حفظ التعديل بقاعدة البيانات — التعديل ظاهر هنا بس مو منتشر لباقي الأجهزة', 'error');
+  }
 }
 
 function showLinesHome() {
@@ -9334,29 +9474,93 @@ function drawVShapeCanvas(ctx, originX, originY, state, treatedIdx, cycleArr) {
   return { w: svgW, h: svgH };
 }
 
-function drawChainCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, cols, rows) {
+// رسم عمود بلاستك على الكانفاس مباشرة — مطابق لشكل plasticColumnSVGString المستخدم بسجل المعالجات
+function drawPlasticColumnCanvas(ctx, colX, colW, h, justReplaced) {
+  const metal = '#5A5F63';
+  const rodColor = justReplaced ? '#276749' : '#8A949C';
+  const shedColor = justReplaced ? '#48BB78' : '#9AA4AC';
+  const cx = colX + colW/2, capH = Math.max(5, h*0.08);
+  ctx.fillStyle = metal;
+  ctx.beginPath(); ctx.arc(cx, capH*0.4, 2.4, 0, Math.PI*2); ctx.fill();
+  ctx.fillRect(cx-2.2, 0, 4.4, capH);
+  const bodyTop = capH, bodyBottom = h - capH, bodyH = bodyBottom - bodyTop;
+  ctx.fillStyle = rodColor; ctx.fillRect(cx-1.5, bodyTop, 3, bodyH);
+  const nPairs = Math.max(2, Math.round(h/28));
+  const step = bodyH/(nPairs*2);
+  ctx.fillStyle = shedColor;
+  for (let i=0; i<nPairs*2; i++) {
+    const y = bodyTop + step*(i+0.5);
+    const sw = (i%2===0) ? 11 : 7.5;
+    ctx.beginPath();
+    ctx.moveTo(cx-1.2, y-2);
+    ctx.bezierCurveTo(cx-sw/2, y-1.2, cx-sw/2, y+1.2, cx-1.3, y+2.4);
+    ctx.lineTo(cx+1.3, y+2.4);
+    ctx.bezierCurveTo(cx+sw/2, y+1.2, cx+sw/2, y-1.2, cx+1.2, y-2);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = metal;
+  ctx.beginPath(); ctx.arc(cx, h-capH*0.4, 2.4, 0, Math.PI*2); ctx.fill();
+  ctx.fillRect(cx-2.2, bodyBottom, 4.4, capH);
+}
+
+// رسم عمود خزف على الكانفاس مباشرة — مطابق لشكل ceramicColumnSVGString
+function drawCeramicColumnCanvas(ctx, colX, colW, h) {
+  const metal = '#7A7A7A', rodColor = '#5C2A21', shedColor = '#6B3025';
+  const cx = colX + colW/2, capH = Math.max(5, h*0.09);
+  ctx.fillStyle = metal; ctx.fillRect(cx-3.2, 0, 6.4, capH);
+  const bodyTop = capH, bodyBottom = h - capH, bodyH = bodyBottom - bodyTop;
+  ctx.fillStyle = rodColor; ctx.fillRect(cx-2, bodyTop, 4, bodyH);
+  const nSheds = Math.max(3, Math.round(h/26));
+  const step = bodyH/nSheds, shedW = 16;
+  ctx.fillStyle = shedColor;
+  for (let i=0; i<nSheds; i++) {
+    const y = bodyTop + step*(i+0.5);
+    ctx.beginPath();
+    ctx.moveTo(cx-1.6, y-2.4);
+    ctx.bezierCurveTo(cx-shedW/2, y-1.6, cx-shedW/2, y+1.6, cx-1.8, y+3.4);
+    ctx.lineTo(cx+1.8, y+3.4);
+    ctx.bezierCurveTo(cx+shedW/2, y+1.6, cx+shedW/2, y-1.6, cx+1.6, y-2.4);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = metal; ctx.fillRect(cx-3.2, bodyBottom, 6.4, capH);
+}
+
+function drawChainCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, cols, rows, chainTypesArr) {
   const treatedSet = new Set(treatedIdx||[]);
   const isQuad = cols >= 4;
   const w = isQuad?11:18, h = isQuad?8:14, gap = isQuad?1.2:2, colGap = isQuad?3.5:6;
+  const colH = rows*(h+gap)-gap;
   for (let col=0; col<cols; col++) {
+    const material = (chainTypesArr && chainTypesArr[col]) || 'glass';
+    const colX = originX + col*(w+colGap);
+    if (material === 'plastic' || material === 'ceramic') {
+      let justReplaced = false;
+      for (let r=0; r<rows; r++) { if (treatedSet.has(col*rows+r)) { justReplaced = true; break; } }
+      ctx.save(); ctx.translate(colX, originY);
+      if (material === 'ceramic') drawCeramicColumnCanvas(ctx, 0, w, colH);
+      else drawPlasticColumnCanvas(ctx, 0, w, colH, justReplaced);
+      ctx.restore();
+      continue;
+    }
     for (let row=0; row<rows; row++) {
       const idx = col*rows+row;
-      const x = originX + col*(w+colGap), y = originY + row*(h+gap);
+      const x = colX, y = originY + row*(h+gap);
       const [fill, stroke] = rectColor((state||[])[idx], treatedSet.has(idx), (cycleArr&&cycleArr[idx])||0);
       ctx.fillStyle = fill; ctx.fillRect(x,y,w,h);
       ctx.strokeStyle = stroke; ctx.lineWidth = isQuad?1:1.5; ctx.strokeRect(x,y,w,h);
     }
   }
-  return { w: cols*w+(cols-1)*colGap, h: rows*(h+gap)-gap };
+  return { w: cols*w+(cols-1)*colGap, h: colH };
 }
 
-function drawGroupedCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, totalCols, rows, stA, stB) {
+function drawGroupedCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, totalCols, rows, stA, stB, chainTypesArr) {
   const treatedSet = new Set(treatedIdx||[]);
   const colsPerGroup = totalCols/2;
   const isQuad = totalCols >= 4;
   const w = isQuad?11:18, h = isQuad?8:14, gap = isQuad?1.2:2, colGap = isQuad?3.5:6;
   const groupW = colsPerGroup*w + (colsPerGroup-1)*colGap;
   const interGroupGap = 14;
+  const colH = rows*(h+gap)-gap;
   ctx.font = '9px Tahoma, Arial';
   ctx.fillStyle = '#4A5568';
   ctx.textAlign = 'center';
@@ -9367,20 +9571,31 @@ function drawGroupedCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, t
     const gx = originX + g*(groupW+interGroupGap);
     for (let c=0; c<colsPerGroup; c++) {
       const col = c + g*colsPerGroup;
+      const material = (chainTypesArr && chainTypesArr[col]) || 'glass';
+      const colX = gx + c*(w+colGap);
+      if (material === 'plastic' || material === 'ceramic') {
+        let justReplaced = false;
+        for (let r=0; r<rows; r++) { if (treatedSet.has(col*rows+r)) { justReplaced = true; break; } }
+        ctx.save(); ctx.translate(colX, gy);
+        if (material === 'ceramic') drawCeramicColumnCanvas(ctx, 0, w, colH);
+        else drawPlasticColumnCanvas(ctx, 0, w, colH, justReplaced);
+        ctx.restore();
+        continue;
+      }
       for (let row=0; row<rows; row++) {
         const idx = col*rows+row;
-        const x = gx + c*(w+colGap), y = gy + row*(h+gap);
+        const x = colX, y = gy + row*(h+gap);
         const [fill, stroke] = rectColor((state||[])[idx], treatedSet.has(idx), (cycleArr&&cycleArr[idx])||0);
         ctx.fillStyle = fill; ctx.fillRect(x,y,w,h);
         ctx.strokeStyle = stroke; ctx.lineWidth = isQuad?1:1.5; ctx.strokeRect(x,y,w,h);
       }
     }
   }
-  return { w: groupW*2+interGroupGap, h: 14 + rows*(h+gap) - gap };
+  return { w: groupW*2+interGroupGap, h: 14 + colH };
 }
 
 // يبني صورة PNG واحدة فيها الفيزات R/S/T جنب بعض — بالرسم المباشر فقط، بدون أي تحويل HTML/SVG وسيط
-function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineName, insulatorCycleJSON, insulatorStateJSON2, insulatorCycleJSON2, towerNumber) {
+function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineName, insulatorCycleJSON, insulatorStateJSON2, insulatorCycleJSON2, towerNumber, chainTypesJSON, chainTypesJSON2) {
   const state = safeParseJSON(insulatorStateJSON);
   if (!state) return null;
   const isDouble = isDoubleCircuitLine(lineName);
@@ -9394,6 +9609,9 @@ function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineNam
   const treatedAll = getInsulatorTreatedIdx(state, cycleAll);
   const cycleAll2 = isDouble ? (safeParseJSON(insulatorCycleJSON2) || {R:[],S:[],T:[]}) : null;
   const treatedAll2 = isDouble && state2 ? getInsulatorTreatedIdx(state2, cycleAll2) : null;
+  // مادة كل سلسلة — بدونها كانت كل السلاسل تُرسم زجاجاً بالـPDF حتى لو بلاستك أو خزف
+  const cTypes = (chainTypesJSON && safeParseJSON(chainTypesJSON)) || {R:[],S:[],T:[]};
+  const cTypes2 = (chainTypesJSON2 && safeParseJSON(chainTypesJSON2)) || {R:[],S:[],T:[]};
 
   const scale = 2;
   const phaseW = 170, phaseH = 320; // مساحة ثابتة كافية لأي شكل (V أو سلاسل أو مجمّعة)
@@ -9412,7 +9630,7 @@ function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineNam
   ctx.fillStyle = '#fff'; ctx.fillRect(0,0,totalW,totalH);
   ctx.direction = 'rtl'; ctx.textBaseline = 'alphabetic';
 
-  function drawCircuit(stateObj, cycleObj, treatedObj, yStart) {
+  function drawCircuit(stateObj, cycleObj, treatedObj, yStart, typesObj) {
     ['R','S','T'].forEach((phase, pi) => {
       const originX = 8 + pi*(phaseW+gapBetweenPhases);
       let y = yStart;
@@ -9424,12 +9642,13 @@ function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineNam
       const cyc = cycleObj[phase] || [];
       const treated = treatedObj[phase] || [];
       const st = stateObj[phase] || [];
+      const tps = (typesObj && typesObj[phase]) || [];
       if (mode === 'v') drawVShapeCanvas(ctx, originX + (phaseW-140)/2, y, st, treated, cyc);
-      else if (mode === 'straight4') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 4, 32, stA, stB);
-      else if (mode === 'chain4_12') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 4, 12, stA, stB);
-      else if (mode === 'chain2_12') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 2, 12, stA, stB);
-      else if (mode === 'chain1_10') drawChainCanvas(ctx, originX, y, st, treated, cyc, 1, 10);
-      else drawChainCanvas(ctx, originX, y, st, treated, cyc, 2, mode==='chain2_10'?10:12);
+      else if (mode === 'straight4') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 4, 32, stA, stB, tps);
+      else if (mode === 'chain4_12') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 4, 12, stA, stB, tps);
+      else if (mode === 'chain2_12') drawGroupedCanvas(ctx, originX, y, st, treated, cyc, 2, 12, stA, stB, tps);
+      else if (mode === 'chain1_10') drawChainCanvas(ctx, originX, y, st, treated, cyc, 1, 10, tps);
+      else drawChainCanvas(ctx, originX, y, st, treated, cyc, 2, mode==='chain2_10'?10:12, tps);
     });
   }
 
@@ -9439,12 +9658,12 @@ function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineNam
     ctx.fillText('⚡ عوازل الدائرة الأولى', totalW/2, y + 12);
     y += circuitTitleH;
   }
-  if (hasDamage1) { drawCircuit(state, cycleAll, treatedAll, y); y += oneCircuitH + (isDouble && hasDamage2 ? 20 : 0); }
+  if (hasDamage1) { drawCircuit(state, cycleAll, treatedAll, y, cTypes); y += oneCircuitH + (isDouble && hasDamage2 ? 20 : 0); }
   if (isDouble && hasDamage2) {
     ctx.font = 'bold 13px Tahoma, Arial'; ctx.fillStyle = '#2C5282'; ctx.textAlign = 'center';
     ctx.fillText('⚡ عوازل الدائرة الثانية', totalW/2, y + 12);
     y += circuitTitleH;
-    drawCircuit(state2, cycleAll2, treatedAll2, y);
+    drawCircuit(state2, cycleAll2, treatedAll2, y, cTypes2);
   }
 
   return { dataUrl: canvas.toDataURL('image/png'), w: totalW, h: totalH };
@@ -9499,14 +9718,18 @@ async function deleteLine(idx) {
   const line = data[idx];
   if (!line) return;
   if (!confirm(`حذف الخط "${line.name}"؟\nسيُحذف معه قائمة أبراجه وإعداداته الفنية.\nملاحظة: الكشوفات والمغادرات المسجّلة سابقاً لا تُحذف.`)) return;
-  data.splice(idx,1); saveLinesInfoData(data); renderLinesInfo();
+  data.splice(idx,1); await saveLinesInfoData(data); renderLinesInfo();
   // حذف البيانات المتزامنة المرتبطة (أبراج + إعدادات) حتى لا تبقى يتيمة بالسيرفر وتُطبَّق على خط جديد بنفس الاسم
   try {
-    await sbFetch(`line_towers_custom?line_name=eq.${encodeURIComponent(line.name)}`, { method: 'DELETE' });
+    const res = await sbFetch(`line_towers_custom?line_name=eq.${encodeURIComponent(line.name)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     delete lineTowersCache[line.name];
     delete lineSettingsCache[line.name];
-  } catch(e) {}
-  showToast('🗑️ تم حذف الخط');
+    showToast('🗑️ تم حذف الخط');
+  } catch (e) {
+    console.warn('[tower-app] فشل حذف بيانات الأبراج/الإعدادات المرتبطة بالخط', line.name, e);
+    showToast('⚠️ انحذف الخط، بس تعذّر حذف بيانات أبراجه وإعداداته — قد تظهر بالغلط لو أنشأت خط جديد بنفس الاسم', 'error');
+  }
 }
 
 // ==================== أبراج الخطوط: تخزين متزامن يحل محل LINES_DATA المدمجة بالكود ====================
@@ -9517,7 +9740,11 @@ let lineSettingsCache = {}; // { line_name: { circuit_count: 1|2, chain_mode: 's
 
 async function loadLineTowersCache() {
   try {
-    const rows = await sbFetch('line_towers_custom?select=line_name,towers,circuit_count,chain_mode');
+    // ملاحظة: sbFetch يرجّع كائن Response لا بيانات جاهزة — بدون res.json() كان الشرط يفشل دائماً
+    // بصمت، فتبقى قوائم الأبراج المخصّصة وإعدادات الدوائر غير محمّلة ويرجع التطبيق للقيم الثابتة
+    const res = await sbFetch('line_towers_custom?select=line_name,towers,circuit_count,chain_mode');
+    if (!res.ok) return;
+    const rows = await res.json();
     if (Array.isArray(rows)) {
       lineTowersCache = {};
       lineSettingsCache = {};
@@ -9528,7 +9755,7 @@ async function loadLineTowersCache() {
         }
       });
     }
-  } catch (e) {}
+  } catch (e) { console.warn('[tower-app] فشل تحميل أبراج/إعدادات الخطوط:', e); }
 }
 
 // المصدر الموحّد لأبراج أي خط بكل أنحاء التطبيق — يستبدل الوصول المباشر لـ LINES_DATA[lineName]
@@ -9622,7 +9849,7 @@ async function saveLineTowersToServer(lineName) {
 
 function closeLineModal() { document.getElementById('lineModal').style.display = 'none'; }
 
-function saveLineModal() {
+async function saveLineModal() {
   const name = document.getElementById('lm_name').value.trim();
   if (!name) { alert('يرجى إدخال اسم الخط'); return; }
   const data = getLinesInfoData();
@@ -9642,7 +9869,7 @@ function saveLineModal() {
     notes: document.getElementById('lm_notes').value.trim()
   };
   if (editingLineIdx !== null) data[editingLineIdx] = entry; else data.push(entry);
-  saveLinesInfoData(data);
+  await saveLinesInfoData(data);
   saveLineTowersToServer(name); // يحفظ قائمة الأبراج (رقم + نوع) بجدول متزامن، متاح لكل الأجهزة فوراً
   closeLineModal(); renderLinesInfo();
   showToast('تم حفظ بيانات الخط' + (_editingLineTowersList.length ? ` (${_editingLineTowersList.length} برج)` : ''));
@@ -9663,7 +9890,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
 
   // مهم: نستخدم نفس المصدر الموحّد (fullRecordsCache) المستخدم بالمغادرات وحالة الخطوط تماماً —
   // هذا يضمن نفس النتيجة بكل مكان دائماً (بما فيها أي تحديث فوري بعد معالجة بنفس الجلسة)
-  if (navigator.onLine) { try { await loadFullRecordsCache(true); } catch(e) {} }
+  if (navigator.onLine) { try { await loadFullRecordsCache(true); } catch(e) { console.warn('[tower-app] فشل تحديث الكاش الموحّد قبل فحص الكشف السابق — سيُستخدم الكاش القديم إن وُجد', e); } }
 
   let last = null;
   let fromCache = false;
@@ -10019,7 +10246,7 @@ async function exportOpenDeparturesPDF() {
           const hasOpenInsulatorDep = openDeps.some(d => d.type === 'insulator' || d.type === 'insulator2');
           let insImg = null;
           if (hasOpenInsulatorDep && r.insulator_state) {
-            insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number);
+            insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number, r.insulator_chain_types, r.insulator_chain_types_2);
           }
 
           // حساب الارتفاع الكلي للكتلة (تفاصيل المغادرات + صورة العوازل معاً)
@@ -10483,28 +10710,6 @@ function onTreatTowerChange() {
   otherDepTreatState = {};
   card.style.display = 'block';
   renderTreatItems();
-  showInsulatorDebugBtn();
-}
-
-// زر تشخيص مؤقت — يطلع البيانات الخام المحفوظة فعلياً بقاعدة البيانات لهذا البرج، بدون أي معالجة أو حساب،
-// لمعرفة الحقيقة مباشرة بدون أي تخمين أو وسيط
-function showInsulatorDebugBtn() {
-  let btn = document.getElementById('insDebugBtn');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'insDebugBtn';
-    btn.textContent = '🔍 عرض البيانات الخام (تشخيص)';
-    btn.className = 'btn btn-secondary btn-sm';
-    btn.style.cssText = 'display:block;margin:10px auto;width:90%';
-    btn.onclick = () => {
-      const r = currentTreatRecord;
-      if (!r) return;
-      const msg = `id: ${r.id}\ninspection_date: ${r.inspection_date}\ncreated_at: ${r.created_at}\n\ninsulator_state:\n${typeof r.insulator_state==='object'?JSON.stringify(r.insulator_state):r.insulator_state}\n\ninsulator_cycle:\n${typeof r.insulator_cycle==='object'?JSON.stringify(r.insulator_cycle):r.insulator_cycle}`;
-      alert(msg);
-    };
-    const card = document.getElementById('treatItemsCard');
-    if (card) card.insertBefore(btn, card.firstChild);
-  }
 }
 
 function extractDepsFromRecord(r) {
@@ -10516,7 +10721,7 @@ function extractDepsFromRecord(r) {
         const cnt = (state[phase]||[]).filter(Boolean).length;
         if (cnt > 0) deps.push({ type:'insulator', label:`عوازل الفيز ${phase} — ${cnt} متضرر`, key:`ins_${phase}` });
       });
-    } catch(e) {}
+    } catch(e) { console.warn('[tower-app] فشل تحليل حالة عوازل الدائرة الأولى للسجل', r.id, e); }
   }
   const isDouble = isDoubleCircuitLine(r.line_name);
   if (isDouble && r.insulator_state_2) {
@@ -10526,7 +10731,7 @@ function extractDepsFromRecord(r) {
         const cnt = (state2[phase]||[]).filter(Boolean).length;
         if (cnt > 0) deps.push({ type:'insulator2', label:`عوازل الفيز ${phase} (الدائرة الثانية) — ${cnt} متضرر`, key:`ins2_${phase}` });
       });
-    } catch(e) {}
+    } catch(e) { console.warn('[tower-app] فشل تحليل حالة عوازل الدائرة الثانية للسجل', r.id, e); }
   }
   if (r.iron_intersections && r.iron_intersections.trim() && r.iron_intersections.trim()!=='سليم') deps.push({ type:'iron', label:'تقاطعات الحديد: '+r.iron_intersections, key:'iron' });
   if (r.tower_foundations && r.tower_foundations.trim() && r.tower_foundations.trim()!=='سليم') deps.push({ type:'foundation', label:'قواعد البرج: '+r.tower_foundations, key:'foundation' });
@@ -10559,7 +10764,7 @@ function extractDepsFromRecord(r) {
         });
       });
     }
-  } catch(e) {}
+  } catch(e) { console.warn('[tower-app] فشل تحليل مادة سلاسل العوازل للسجل', r.id, e); }
   // الطريق لا يُعدّ مغادرة — يُعالج كتنبيه منفصل أسفل قسم المغادرات
   return deps;
 }
@@ -10592,7 +10797,7 @@ function renderTreatItems() {
     try {
       const cyc = safeParseJSON(r.insulator_cycle);
       ['R','S','T'].forEach(phase => { if (cyc[phase]) treatCycleState[phase] = cyc[phase]; });
-    } catch(e) {}
+    } catch(e) { console.warn('[tower-app] فشل تحليل مستوى دورة المعالجة (الدائرة الأولى) للسجل', r.id, e); }
   }
 
   const isDouble = isDoubleCircuitLine(r.line_name);
@@ -10605,7 +10810,7 @@ function renderTreatItems() {
       try {
         const cyc2 = safeParseJSON(r.insulator_cycle_2);
         ['R','S','T'].forEach(phase => { if (cyc2[phase]) treatCycleState2[phase] = cyc2[phase]; });
-      } catch(e) {}
+      } catch(e) { console.warn('[tower-app] فشل تحليل مستوى دورة المعالجة (الدائرة الثانية) للسجل', r.id, e); }
     }
   }
 
@@ -11240,7 +11445,7 @@ async function syncInspectionPatchQueue() {
       if (res.ok) synced++;
       else {
         let bodyText = '';
-        try { bodyText = await res.text(); } catch(e) {}
+        try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة تعديل الكشف', e); }
         remaining.push({ ...item, _lastError: `HTTP ${res.status}: ${bodyText.slice(0,200)}` });
       }
     } catch(e) {
@@ -11273,7 +11478,7 @@ async function syncTreatmentQueue() {
       if (res.ok) synced++;
       else {
         let bodyText = '';
-        try { bodyText = await res.text(); } catch(e) {}
+        try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة المعالجة', e); }
         rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
         remaining.push(rec);
       }
@@ -11302,9 +11507,10 @@ async function bulkDeleteTreatments() {
     try {
       const res = await sbFetch(`treatments?id=eq.${t.id}`, { method: 'DELETE' });
       if (res.ok) success++;
-    } catch (e) {}
+      else console.warn('[tower-app] فشل حذف معالجة', t.id, 'HTTP', res.status);
+    } catch (e) { console.warn('[tower-app] فشل حذف معالجة', t.id, e); }
   }
-  showToast(`🗑️ تم حذف ${success} من ${n} معالجة`);
+  showToast(success === n ? `🗑️ تم حذف ${success} من ${n} معالجة` : `⚠️ تم حذف ${success} من ${n} معالجة فقط — راجع سجل المتصفح لمعرفة السبب`, success === n ? undefined : 'error');
   renderDepLog();
 }
 
@@ -11924,11 +12130,20 @@ function showInventoryHome() {
 const BACKUP_TABLES = [
   'inspections', 'treatments', 'memos', 'daily_reports', 'emergency_departures',
   'inventory_tools', 'inventory_materials', 'inventory_borrowed',
-  'line_entry_thermal', 'line_towers_custom',
+  'line_entry_thermal', 'line_towers_custom', 'lines_info',
   'staff_roster_columns', 'staff_roster_members',
   'thermal_inspections', 'thermal_official_forms',
   'users', 'work_telegrams'
 ];
+// جدول users ما نقدر نسحبه بـ select=* بعد التحصين الأمني (عمود password_hash صار محجوباً عن anon)،
+// فنحدد أعمدته صراحة. ملاحظة مهمة: كلمات المرور نفسها لا تُنسخ إطلاقاً (وهذا مقصود أمنياً).
+const BACKUP_TABLE_SELECT = {
+  users: 'id,username,full_name,role,department,phone,can_manage_inventory,is_active,created_at,last_login'
+};
+// مفاتيح البيانات المحفوظة محلياً بالمتصفح فقط (مو بقاعدة البيانات) — بدونها النسخة ناقصة
+const BACKUP_LOCAL_KEYS = ['active_inspection_lines', 'active_thermal_sessions'];
+// طوابير الإرسال المؤجل: بيانات مكتوبة فعلياً لكن لسه ما وصلت قاعدة البيانات
+const BACKUP_PENDING_KEYS = ['tower_queue', 'thermal_queue', 'treatment_queue', 'line_entry_queue', 'staff_roster_queue', 'inspection_patch_queue'];
 
 let pendingRestoreData = null;
 
@@ -11937,38 +12152,71 @@ function backupLog(msg) {
   if (el) el.textContent += (el.textContent ? '\n' : '') + msg;
 }
 
+// يسحب كل صفوف جدول على دفعات — بدون هذا كان ممكن يقتصر على أول دفعة بصمت فتطلع نسخة ناقصة
+async function fetchAllRows(table, statusEl) {
+  const select = BACKUP_TABLE_SELECT[table] || '*';
+  const PAGE = 1000;
+  let offset = 0, all = [];
+  while (true) {
+    const res = await sbFetch(`${table}?select=${select}&order=id.asc&limit=${PAGE}&offset=${offset}`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const chunk = await res.json();
+    if (!Array.isArray(chunk)) throw new Error('bad response');
+    all = all.concat(chunk);
+    if (statusEl) statusEl.textContent = `⏳ ${table}: ${all.length} صف...`;
+    if (chunk.length < PAGE) break;
+    offset += PAGE;
+  }
+  return all;
+}
+
 async function downloadFullBackup() {
   if (currentUser.role !== 'admin') { showToast('⛔ هذي الميزة للأدمن فقط', 'error'); return; }
   const btn = document.getElementById('backupDownloadBtn');
   const statusEl = document.getElementById('backupDownloadStatus');
   btn.disabled = true;
-  const backup = { meta: { exported_at: new Date().toISOString(), app: 'tower-app', tables: BACKUP_TABLES }, tables: {} };
-  let ok = true;
-  for (const table of BACKUP_TABLES) {
-    statusEl.textContent = `⏳ جاري تنزيل جدول: ${table}...`;
-    try {
-      const res = await sbFetch(`${table}?select=*`);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      backup.tables[table] = await res.json();
-    } catch (e) {
-      ok = false;
-      statusEl.textContent = `❌ فشل تحميل جدول "${table}": ${e.message}`;
-      btn.disabled = false;
-      return;
+
+  const backup = {
+    meta: { exported_at: new Date().toISOString(), app: 'tower-app', version: 2, tables: BACKUP_TABLES, taken_by: currentUser.full_name || '' },
+    tables: {}, local: {}, pending: {}, counts: {}
+  };
+
+  try {
+    for (const table of BACKUP_TABLES) {
+      const rows = await fetchAllRows(table, statusEl);
+      backup.tables[table] = rows;
+      backup.counts[table] = rows.length;
     }
+  } catch (e) {
+    statusEl.textContent = `❌ فشل التنزيل: ${e.message} — لم يُحفظ أي ملف (نسخة ناقصة أسوأ من لا شيء)`;
+    btn.disabled = false;
+    return;
   }
-  const totalRows = Object.values(backup.tables).reduce((s, rows) => s + rows.length, 0);
+
+  // البيانات المحلية (تبويبات الخطوط المفتوحة وجلسة الكشف الحراري الجارية — خاصة بكل جهاز، مالها وجود بقاعدة البيانات)
+  BACKUP_LOCAL_KEYS.forEach(k => { const v = localStorage.getItem(k); if (v) backup.local[k] = v; });
+  let pendingCount = 0;
+  BACKUP_PENDING_KEYS.forEach(k => {
+    const v = localStorage.getItem(k);
+    if (!v) return;
+    backup.pending[k] = v;
+    try { const arr = JSON.parse(v); if (Array.isArray(arr)) pendingCount += arr.length; } catch(e) { console.warn('[tower-app] فشل حساب عدد السجلات المعلّقة بقائمة', k, e); }
+  });
+
+  const totalRows = Object.values(backup.counts).reduce((s, n) => s + n, 0);
   const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const dateStr = new Date().toISOString().split('T')[0];
   a.href = url;
-  a.download = `tower-app-backup-${dateStr}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  a.download = `tower-app-backup-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
-  statusEl.textContent = ok ? `✅ تم تنزيل النسخة الاحتياطية (${totalRows} صف بمجموع ${BACKUP_TABLES.length} جدول)` : statusEl.textContent;
+
+  let msg = `✅ تم تنزيل النسخة (${totalRows} صف / ${BACKUP_TABLES.length} جدول)`;
+  msg += `\n🔑 تنبيه: كلمات المرور غير مشمولة بالنسخة (محجوبة أمنياً) — بعد أي استعادة لازم تُعاد للأعضاء.`;
+  if (pendingCount) msg += `\n📦 يوجد ${pendingCount} سجل بانتظار الإرسال لم يصل قاعدة البيانات بعد — حُفظ بالملف لكنه لا يُستعاد تلقائياً.`;
+  statusEl.style.whiteSpace = 'pre-wrap';
+  statusEl.textContent = msg;
   btn.disabled = false;
 }
 
@@ -11997,7 +12245,13 @@ function handleBackupFileSelected(input) {
     }
     const lines = Object.keys(parsed.tables).map(t => `• ${t}: ${(parsed.tables[t]||[]).length} صف`);
     const exportedAt = parsed.meta && parsed.meta.exported_at ? new Date(parsed.meta.exported_at).toLocaleString('ar-IQ') : 'غير معروف';
-    summaryEl.textContent = `📅 تاريخ أخذ النسخة: ${exportedAt}\n${lines.join('\n')}\n\nسيتم دمج (تحديث/إضافة) هذي البيانات مع الموجود حالياً — بدون حذف أي شيء.`;
+    let extra = '';
+    const localKeys = parsed.local ? Object.keys(parsed.local) : [];
+    if (localKeys.length) extra += `\n📁 بيانات محلية مشمولة (معلومات الخطوط وغيرها): ${localKeys.length} عنصر — ستُستعاد لهذا الجهاز.`;
+    const pendingKeys = parsed.pending ? Object.keys(parsed.pending) : [];
+    if (pendingKeys.length) extra += `\n📦 يحتوي سجلات كانت بانتظار الإرسال وقت أخذ النسخة — لا تُستعاد تلقائياً.`;
+    extra += `\n🔑 كلمات المرور غير مشمولة (محجوبة أمنياً) — أي حساب جديد يُستعاد يحتاج تعيين كلمة مرور له.`;
+    summaryEl.textContent = `📅 تاريخ أخذ النسخة: ${exportedAt}\n${lines.join('\n')}\n\nسيتم دمج (تحديث/إضافة) هذي البيانات مع الموجود حالياً — بدون حذف أي شيء.${extra}`;
     pendingRestoreData = parsed;
     preview.style.display = '';
   };
@@ -12017,7 +12271,15 @@ async function startBackupRestore() {
   document.getElementById('backupRestoreLog').textContent = '';
   const CHUNK_SIZE = 200;
   let totalOk = 0, totalFail = 0;
-  for (const table of Object.keys(pendingRestoreData.tables)) {
+
+  // مهم: نستعيد بترتيب BACKUP_TABLES الثابت لا بترتيب مفاتيح الملف — لأن جداول مثل treatments
+  // مرتبطة بـ inspections، فلو انستعادت قبلها تُرفض صفوفها كلها بسبب المفتاح الأجنبي.
+  // أي جدول موجود بالملف وغير مذكور بالقائمة نضيفه بالآخر حتى لا نفقده.
+  const fileTables = Object.keys(pendingRestoreData.tables);
+  const orderedTables = BACKUP_TABLES.filter(t => fileTables.includes(t))
+    .concat(fileTables.filter(t => !BACKUP_TABLES.includes(t)));
+
+  for (const table of orderedTables) {
     const rows = pendingRestoreData.tables[table] || [];
     if (!rows.length) { backupLog(`⏭️ ${table}: فاضي، تم تخطيه`); continue; }
     let tableOk = 0, tableFail = 0;
@@ -12031,7 +12293,9 @@ async function startBackupRestore() {
         });
         if (res.ok) { tableOk += chunk.length; } else {
           tableFail += chunk.length;
-          backupLog(`⚠️ ${table}: فشل جزء من الدفعة (HTTP ${res.status})`);
+          let detail = '';
+          try { const err = await res.json(); detail = err && (err.message || err.details) ? ` — ${err.message || err.details}` : ''; } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ دفعة استعادة النسخة الاحتياطية', e); }
+          backupLog(`⚠️ ${table}: فشل جزء من الدفعة (HTTP ${res.status})${detail}`);
         }
       } catch (e) {
         tableFail += chunk.length;
@@ -12041,7 +12305,18 @@ async function startBackupRestore() {
     totalOk += tableOk; totalFail += tableFail;
     backupLog(`✅ ${table}: ${tableOk} صف تم دمجها${tableFail ? `، ⚠️ ${tableFail} صف فشلت` : ''}`);
   }
+
+  // استعادة البيانات المحلية (تبويبات الخطوط المفتوحة وجلسة الكشف الحراري الجارية — خاصة بكل جهاز)
+  if (pendingRestoreData.local) {
+    let localCount = 0;
+    Object.entries(pendingRestoreData.local).forEach(([k, v]) => {
+      try { localStorage.setItem(k, v); localCount++; } catch(e) { console.warn('[tower-app] فشل استعادة المفتاح المحلي', k, e); }
+    });
+    if (localCount) backupLog(`📁 تمت استعادة ${localCount} عنصر من البيانات المحلية (تحتاج إعادة فتح التطبيق لتظهر)`);
+  }
+
   backupLog(`\n${totalFail ? '⚠️' : '✅'} انتهت الاستعادة: ${totalOk} صف نجحت${totalFail ? `، ${totalFail} صف فشلت` : ''}.`);
+  backupLog(`🔑 تذكير: كلمات المرور لا تُستعاد — أي حساب مُستعاد يحتاج المدير يعيّن له كلمة مرور جديدة.`);
   showToast(totalFail ? '⚠️ انتهت الاستعادة مع بعض الأخطاء — راجع السجل بالأسفل' : '✅ تمت الاستعادة بنجاح', totalFail ? 'error' : undefined);
   btn.disabled = false;
   pendingRestoreData = null;
@@ -12065,7 +12340,7 @@ const REPORT_CATEGORY_TREATMENT_PREFIXES = {
   foundation: ['foundation'],
   insulator: ['ins_', 'ins2_', 'chainreplace_'],
   wires: ['wire_'],
-  iron: ['iron'],
+  iron: ['iron', 'attachment'],
   ground: ['ground_'],
   fire: ['fire'],
   road: ['road']
@@ -12212,12 +12487,38 @@ function onReportFilterChange() {
 const isIssueSev = s => !!(s && s !== 'ok');
 
 // هل سجل كشف فيه فعلاً ضرر بأي من التصنيفات المطلوبة؟ (categories=null يعني بدون تصفية = مطابق دائماً)
+// حقول النص الفعلية لكل تصنيف — نفحصها بجانب درجة الخطورة، لأن بعض العناصر (ملحقات البرج مثلاً)
+// ما إلها حقل درجة خطورة أصلاً، فالاعتماد على الدرجة وحدها كان يُسقطها من التقرير رغم وجود ضرر مسجّل
+const REPORT_CATEGORY_TEXT_FIELDS = {
+  foundation: ['tower_foundations'],
+  iron: ['iron_intersections', 'tower_attachments'],
+  wires: ['wires_r1','wires_s1','wires_t1','wires_r1_c2','wires_s1_c2','wires_t1_c2'],
+  ground: ['ground_1','ground_2'],
+  fire: ['fire_causes','fire_causes_notes'],
+  road: ['road_access_notes']
+};
+function hasTextIssue(r, cat) {
+  const fields = REPORT_CATEGORY_TEXT_FIELDS[cat] || [];
+  return fields.some(f => {
+    const v = r[f];
+    return v && String(v).trim() && String(v).trim() !== 'سليم' && String(v).trim() !== 'متاح';
+  });
+}
 function inspectionMatchesCategories(r, categories) {
   if (!categories) return true;
   return categories.some(cat => {
-    if (cat === 'road') return !!(r.road_access && r.road_access !== 'متاح');
+    if (cat === 'road') return !!(r.road_access && r.road_access !== 'متاح') || hasTextIssue(r, 'road');
+    if (cat === 'insulator') {
+      const field = REPORT_CATEGORIES.insulator.sevField;
+      if (isIssueSev(r[field])) return true;
+      // احتياط: لو الدرجة غير مسجّلة، نفحص حالة العوازل الفعلية بالدائرتين
+      const st = safeParseJSON(r.insulator_state) || {};
+      const st2 = safeParseJSON(r.insulator_state_2) || {};
+      return ['R','S','T'].some(p => (st[p]||[]).some(Boolean) || (st2[p]||[]).some(Boolean));
+    }
     const field = REPORT_CATEGORIES[cat] && REPORT_CATEGORIES[cat].sevField;
-    return field ? isIssueSev(r[field]) : false;
+    if (field && isIssueSev(r[field])) return true;
+    return hasTextIssue(r, cat);
   });
 }
 function treatmentMatchesCategories(t, categories) {
@@ -12229,31 +12530,42 @@ function treatmentMatchesCategories(t, categories) {
   });
 }
 
+// ترتيب موحّد: اسم الخط أبجدياً، وداخل كل خط الأبراج تصاعدياً حسب الرقم — يضمن تسلسل صحيح بكل تصدير
+function sortByLineThenTower(rows, towerField) {
+  return rows.slice().sort((a, b) => {
+    const lineCompare = (a.line_name||'').localeCompare(b.line_name||'', 'ar');
+    if (lineCompare !== 0) return lineCompare;
+    return (parseInt(a[towerField])||0) - (parseInt(b[towerField])||0);
+  });
+}
+
 function getReportFilteredInspections() {
   const line = document.getElementById('repFilterLine').value;
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const categories = getReportSelectedCategories();
-  return (fullRecordsCache||[]).filter(r =>
+  const rows = (fullRecordsCache||[]).filter(r =>
     (!line || r.line_name === line) &&
     (!from || (r.inspection_date||'') >= from) &&
     (!to || (r.inspection_date||'') <= to) &&
     reportTowerPasses(r.tower_number) &&
     inspectionMatchesCategories(r, categories)
   );
+  return sortByLineThenTower(rows, 'tower_number');
 }
 function getReportFilteredTreatments() {
   const line = document.getElementById('repFilterLine').value;
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const categories = getReportSelectedCategories();
-  return (treatmentsCache||[]).filter(t =>
+  const rows = (treatmentsCache||[]).filter(t =>
     (!line || t.line_name === line) &&
     (!from || (t.treatment_date||'') >= from) &&
     (!to || (t.treatment_date||'') <= to) &&
     reportTowerPasses(t.tower_number) &&
     treatmentMatchesCategories(t, categories)
   );
+  return sortByLineThenTower(rows, 'tower_number');
 }
 function getReportFilteredThermalForms() {
   const line = document.getElementById('repFilterLine').value;
@@ -12263,7 +12575,12 @@ function getReportFilteredThermalForms() {
   // فلتر الأبراج يُطبَّق على مستوى الصفوف داخل كل استمارة (استمارة واحدة تغطي عدة أبراج)
   return (reportThermalFormsCache||[])
     .filter(f => (!line || f.line_name === line) && (!from || (f.inspection_date||'') >= from) && (!to || (f.inspection_date||'') <= to))
-    .map(f => ({ ...f, rows: (Array.isArray(f.rows) ? f.rows : []).filter(row => row.tower_number && reportTowerPasses(row.tower_number)) }))
+    .map(f => ({
+      ...f,
+      rows: (Array.isArray(f.rows) ? f.rows : [])
+        .filter(row => row.tower_number && reportTowerPasses(row.tower_number))
+        .sort((a,b) => (parseInt(a.tower_number)||0) - (parseInt(b.tower_number)||0))
+    }))
     .filter(f => f.rows.length);
 }
 
@@ -12277,20 +12594,40 @@ function updateReportResultCount() {
 }
 
 // بطاقة كشف واحدة (كانفاس) — تعرض بس التصنيفات المختارة (أو كل شي لو "الكل")
+// يحمّل صورة (Image) من data URL جاهز — بديل بسيط لا يحتاج تحويل SVG (svgStringToImageEl مخصصة لنصوص SVG فقط)
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve) => {
+    if (!dataUrl) { resolve(null); return; }
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 async function buildReportInspectionCardCanvas(r, categories) {
   const CARD_W = 760, PAD = 18;
   const lines = [];
   const addCat = (label, text) => { if (text && String(text).trim()) lines.push(`${label}: ${text}`); };
 
   const showAll = !categories;
+  const showInsulator = showAll || categories.includes('insulator');
+
   if (showAll || categories.includes('foundation')) addCat('🧱 قواعد البرج', r.tower_foundations);
   if (showAll || categories.includes('iron')) { addCat('🔩 تقاطعات الحديد', r.iron_intersections); addCat('🔩 ملحقات البرج', r.tower_attachments); }
-  if (showAll || categories.includes('insulator')) addCat('⚡ العوازل', insulatorStateToText(r.insulator_state));
   if (showAll || categories.includes('wires')) { addCat('〰️ أسلاك R', r.wires_r1); addCat('〰️ أسلاك S', r.wires_s1); addCat('〰️ أسلاك T', r.wires_t1); }
   if (showAll || categories.includes('ground')) { addCat('🌍 الأرضي 1', r.ground_1); addCat('🌍 الأرضي 2', r.ground_2); }
   if (showAll || categories.includes('fire')) { addCat('🔥 مسببات الحرائق', r.fire_causes); addCat('🔥 ملاحظات', r.fire_causes_notes); }
   if (showAll || categories.includes('road')) { addCat('🛣️ الطريق', r.road_access); addCat('🛣️ ملاحظات الطريق', r.road_access_notes); }
-  if (!lines.length) lines.push('لا توجد بيانات لهذا التصنيف بهذا الكشف');
+
+  // صورة العوازل الحقيقية (شكل + تدرّج حسب الحالة) — نفس الدالة المستخدمة بتصدير الكشف الأصلي؛ null يعني كلها سليمة
+  let insImg = null, insImgEl = null;
+  if (showInsulator) {
+    insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number, r.insulator_chain_types, r.insulator_chain_types_2);
+    if (insImg) insImgEl = await loadImageFromDataUrl(insImg.dataUrl);
+    if (!insImgEl) lines.push('⚡ العوازل: سليمة (لا يوجد ضرر مسجّل)');
+  }
+  if (!lines.length && !insImgEl) lines.push('لا توجد بيانات لهذا التصنيف بهذا الكشف');
 
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
@@ -12299,8 +12636,10 @@ async function buildReportInspectionCardCanvas(r, categories) {
   lines.forEach(line => wrapArabicText(mctx, line, CARD_W - PAD*2).forEach(l => wrapped.push(l)));
 
   const headerH = 40;
-  const bodyH = wrapped.length * 18 + 10;
-  const totalH = headerH + bodyH + PAD;
+  const bodyH = wrapped.length ? (wrapped.length * 18 + 10) : 0;
+  const insDrawW = insImgEl ? Math.min(CARD_W - PAD*2, 340) : 0;
+  const insDrawH = insImgEl ? insDrawW * (insImg.h / insImg.w) : 0;
+  const totalH = headerH + bodyH + (insImgEl ? insDrawH + 10 : 0) + PAD;
   const scale = 1.3;
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(CARD_W * scale);
@@ -12319,9 +12658,18 @@ async function buildReportInspectionCardCanvas(r, categories) {
   ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
   y += 20;
 
-  ctx.font = '13px Tahoma, Arial, sans-serif';
-  ctx.fillStyle = '#3C3C3C';
-  wrapped.forEach(line => { ctx.fillText(line, CARD_W - PAD, y); y += 18; });
+  if (wrapped.length) {
+    ctx.font = '13px Tahoma, Arial, sans-serif';
+    ctx.fillStyle = '#3C3C3C';
+    wrapped.forEach(line => { ctx.fillText(line, CARD_W - PAD, y); y += 18; });
+    y += 4;
+  }
+
+  if (insImgEl) {
+    const insX = CARD_W - PAD - insDrawW; // محاذاة يمين مثل باقي المحتوى
+    try { ctx.drawImage(insImgEl, insX, y, insDrawW, insDrawH); } catch(e) { console.warn('[tower-app] فشل رسم صورة العازل ببطاقة التقرير', e); }
+    y += insDrawH;
+  }
 
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
 }
@@ -12716,6 +13064,7 @@ async function hubDeleteSingleInspection(id) {
     const res = await sbFetch(`inspections?id=eq.${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error();
     fullRecordsCache = fullRecordsCache.filter(r => r.id !== id);
+    records = records.filter(r => r.id !== id); // مزامنة كاش شاشة السجلات أيضاً
     showToast('🗑️ تم الحذف');
     renderHubDetail();
   } catch (e) { showToast('❌ تعذر الحذف', 'error'); }
@@ -12750,13 +13099,22 @@ async function deleteWholeHubDate() {
   showToast('⏳ جاري الحذف...');
   const table = hubBrowseType === 'visual' ? 'inspections' : 'treatments';
   const ids = g.items.map(x => x.id);
-  let success = 0;
+  const succeededIds = [];
   for (const id of ids) {
-    try { const res = await sbFetch(`${table}?id=eq.${id}`, { method: 'DELETE' }); if (res.ok) success++; } catch (e) {}
+    try {
+      const res = await sbFetch(`${table}?id=eq.${id}`, { method: 'DELETE' });
+      if (res.ok) succeededIds.push(id);
+      else console.warn('[tower-app] فشل حذف', table, id, 'HTTP', res.status);
+    } catch (e) { console.warn('[tower-app] فشل حذف', table, id, e); }
   }
-  if (hubBrowseType === 'visual') fullRecordsCache = fullRecordsCache.filter(r => !ids.includes(r.id));
-  else treatmentsCache = treatmentsCache.filter(t => !ids.includes(t.id));
-  showToast(`🗑️ تم حذف ${success} من ${n}`);
+  // نمسح من الكاش بس اللي فعلاً انحذف — قبل كذا كان يُمسح الكل من الكاش حتى لو فشل الحذف الحقيقي بالسيرفر
+  if (hubBrowseType === 'visual') {
+    fullRecordsCache = fullRecordsCache.filter(r => !succeededIds.includes(r.id));
+    records = records.filter(r => !succeededIds.includes(r.id));
+  }
+  else treatmentsCache = treatmentsCache.filter(t => !succeededIds.includes(t.id));
+  const success = succeededIds.length;
+  showToast(success === n ? `🗑️ تم حذف ${success} من ${n}` : `⚠️ تم حذف ${success} من ${n} فقط — راجع سجل المتصفح لمعرفة السبب`, success === n ? undefined : 'error');
   goBackFromOperation(); // نرجع لقائمة التواريخ لأن هذا التاريخ ما عاد موجود
 }
 
