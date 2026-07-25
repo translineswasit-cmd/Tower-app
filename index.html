@@ -12539,6 +12539,18 @@ function sortByLineThenTower(rows, towerField) {
   });
 }
 
+// لو نفس البرج انسجّل أكثر من مرة بنفس التاريخ (تعديل متكرر أثناء نفس جلسة الكشف مثلاً)، نبقي آخر
+// تسجيل فقط (الأحدث حسب created_at) — بدون هذا كان يظهر نفس البرج مكرر بالتقرير عدة مرات
+function dedupeLatestPerTowerDate(rows, dateField) {
+  const map = new Map();
+  rows.forEach(r => {
+    const key = r.line_name + '||' + r.tower_number + '||' + (r[dateField] || '');
+    const existing = map.get(key);
+    if (!existing || (r.created_at || '') > (existing.created_at || '')) map.set(key, r);
+  });
+  return [...map.values()];
+}
+
 function getReportFilteredInspections() {
   const line = document.getElementById('repFilterLine').value;
   const from = document.getElementById('repFrom').value;
@@ -12551,7 +12563,7 @@ function getReportFilteredInspections() {
     reportTowerPasses(r.tower_number) &&
     inspectionMatchesCategories(r, categories)
   );
-  return sortByLineThenTower(rows, 'tower_number');
+  return sortByLineThenTower(dedupeLatestPerTowerDate(rows, 'inspection_date'), 'tower_number');
 }
 function getReportFilteredTreatments() {
   const line = document.getElementById('repFilterLine').value;
@@ -12565,7 +12577,7 @@ function getReportFilteredTreatments() {
     reportTowerPasses(t.tower_number) &&
     treatmentMatchesCategories(t, categories)
   );
-  return sortByLineThenTower(rows, 'tower_number');
+  return sortByLineThenTower(dedupeLatestPerTowerDate(rows, 'treatment_date'), 'tower_number');
 }
 function getReportFilteredThermalForms() {
   const line = document.getElementById('repFilterLine').value;
