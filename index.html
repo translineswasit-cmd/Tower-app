@@ -4272,6 +4272,9 @@ function renderPagination() {
 }
 
 function renderTable() {
+  // حماية من سباق زمني: لو انتهت الجلسة (خروج/انتهاء صلاحية) أثناء تحميل السجلات،
+  // يصل التنفيذ هنا وcurrentUser صار null فينهار السطر التالي — نخرج بهدوء بدل الانهيار
+  if (!currentUser) return;
   const tbody = document.getElementById('recordsBody');
   if (!filteredRecords.length) {
     tbody.innerHTML = '<tr><td colspan="24" class="empty-state">لا توجد سجلات</td></tr>';
@@ -9677,12 +9680,36 @@ function openAddLineModal() {
   ['lm_name','lm_length','lm_towers','lm_tension','lm_capacity','lm_wire','lm_ground','lm_year','lm_notes','lm_tw_from','lm_tw_to'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('lm_voltage').value = '132';
   document.getElementById('lm_status').value = 'بالعمل';
+  // تخمين مبدئي فقط (يُعاد ضبطه تلقائياً بمجرد كتابة اسم الخط — انظر lm_name's oninput أدناه)
   document.getElementById('lm_circuit_count').value = '1';
   document.getElementById('lm_chain_mode').value = 'double';
   _editingLineTowersList = [];
   renderLineTowersEditor();
   document.getElementById('lineModal').style.display = '';
 }
+
+// تخمين ذكي لعدد الدوائر حسب اسم الخط — بدون هذا، أي خط مزدوج الدائرة (اسمه فيه "1+2" أو موجود
+// بقائمة الخطوط المزدوجة) كان يُحفظ افتراضياً بدائرة وحدة لو استُخدمت شاشة "إضافة خط جديد" بالغلط
+// بدل "تعديل" — وهذا بالضبط السبب اللي خفى الدائرة الثانية عن كل أبراج خط "دبوني - جصان" سابقاً
+function guessCircuitCountFromName(name) {
+  if (!name) return null;
+  if (DOUBLE_CIRCUIT_LINES.includes(name)) return 2;
+  if (/\(\s*1\s*\+\s*2\s*\)/.test(name)) return 2;
+  return null;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const nameInput = document.getElementById('lm_name');
+  if (nameInput) {
+    nameInput.addEventListener('input', () => {
+      if (editingLineIdx !== null) return; // ما نغيّر شي وقت التعديل، بس وقت إضافة خط جديد
+      const guess = guessCircuitCountFromName(nameInput.value.trim());
+      if (guess) {
+        document.getElementById('lm_circuit_count').value = String(guess);
+        document.getElementById('lm_chain_mode').value = 'double';
+      }
+    });
+  }
+});
 
 function editLine(idx) {
   const data = getLinesInfoData(); const l = data[idx]; if(!l) return;
@@ -9852,6 +9879,17 @@ function closeLineModal() { document.getElementById('lineModal').style.display =
 async function saveLineModal() {
   const name = document.getElementById('lm_name').value.trim();
   if (!name) { alert('يرجى إدخال اسم الخط'); return; }
+
+  // تحذير أمان: لو اسم الخط يدل على إنه مزدوج الدائرة (فيه "1+2" أو من القائمة المعروفة) بس المحدد
+  // بالنموذج "دائرة وحدة" — هذا بالضبط الخطأ اللي أخفى الدائرة الثانية عن خط "دبوني - جصان" سابقاً
+  const circuitCountChosen = parseInt(document.getElementById('lm_circuit_count').value) || 1;
+  const guess = guessCircuitCountFromName(name);
+  if (guess === 2 && circuitCountChosen !== 2) {
+    if (!confirm(`⚠️ اسم الخط "${name}" يدل على إنه مزدوج الدائرة (1+2)، بس محدد حالياً "دائرة وحدة" — هذا يخفي كشف الدائرة الثانية عن كل أبراج الخط.\n\nمتأكد تبي تكمل بـ"دائرة وحدة"؟`)) {
+      return;
+    }
+  }
+
   const data = getLinesInfoData();
   const entry = {
     idx: editingLineIdx !== null ? data[editingLineIdx].idx : Date.now(),
@@ -12359,13 +12397,15 @@ async function openReportsPage() {
   await Promise.all([
     loadFullRecordsCache(true).catch(()=>{}),
     loadTreatments().catch(()=>{}),
-    loadReportThermalForms().catch(()=>{})
+    loadReportThermalForms().catch(()=>{}),
+    loadThermalArchive().catch(()=>{})
   ]);
 
   const lineSet = new Set();
   (fullRecordsCache||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); });
   (treatmentsCache||[]).forEach(t => { if (t.line_name) lineSet.add(t.line_name); });
   (reportThermalFormsCache||[]).forEach(f => { if (f.line_name) lineSet.add(f.line_name); });
+  (thermalRecords||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); }); // القراءات الخام أيضاً
   const uniqueLines = [...lineSet].sort();
   const sel = document.getElementById('repFilterLine');
   sel.innerHTML = '<option value="">-- كل الخطوط --</option>' + uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
@@ -12377,6 +12417,9 @@ async function openReportsPage() {
   document.getElementById('repTowerTo').value = '';
   document.getElementById('repCategoryAll').checked = true;
   document.querySelectorAll('.repCatChk').forEach(cb => { cb.checked = false; cb.disabled = true; });
+  // حماية: لو تغيّرت بنية أزرار اختيار الأبراج مستقبلاً، لا نُسقط تهيئة الصفحة كلها
+  const allTowersRadio = document.querySelector('input[name="repTowersMode"][value="all"]');
+  if (allTowersRadio) allTowersRadio.checked = true;
   onReportTowersModeChange();
 }
 
@@ -12438,6 +12481,14 @@ function getReportAvailableTowers() {
       if (from && (f.inspection_date||'') < from) return;
       if (to && (f.inspection_date||'') > to) return;
       (Array.isArray(f.rows) ? f.rows : []).forEach(row => { if (row.tower_number) towers.add(String(row.tower_number)); });
+    });
+    // القراءات الخام أيضاً — بدونها ما تظهر بقائمة الاختيار الأبراج اللي إلها قراءة ميدانية بس
+    (thermalRecords||[]).forEach(r => {
+      if (r.point_type !== 'tower') return;
+      if (line && r.line_name !== line) return;
+      if (from && (r.inspection_date||'') < from) return;
+      if (to && (r.inspection_date||'') > to) return;
+      if (r.tower_number != null) towers.add(String(r.tower_number));
     });
   }
   return [...towers].sort((a,b) => (parseInt(a)||0) - (parseInt(b)||0) || a.localeCompare(b));
@@ -12556,28 +12607,31 @@ function getReportFilteredInspections() {
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const categories = getReportSelectedCategories();
-  const rows = (fullRecordsCache||[]).filter(r =>
+  // مهم: إزالة التكرار تجري **قبل** فلترة التصنيف، لا بعدها.
+  // لو انعكس الترتيب، برج سُجّل أولاً بضرر ثم صُحّح بنفس اليوم (صار سليم) كان يظهر بتقرير
+  // ذاك التصنيف اعتماداً على السجل القديم الملغى — أي التقرير يعرض حالة لم تعد قائمة.
+  const base = (fullRecordsCache||[]).filter(r =>
     (!line || r.line_name === line) &&
     (!from || (r.inspection_date||'') >= from) &&
     (!to || (r.inspection_date||'') <= to) &&
-    reportTowerPasses(r.tower_number) &&
-    inspectionMatchesCategories(r, categories)
+    reportTowerPasses(r.tower_number)
   );
-  return sortByLineThenTower(dedupeLatestPerTowerDate(rows, 'inspection_date'), 'tower_number');
+  const latest = dedupeLatestPerTowerDate(base, 'inspection_date');
+  return sortByLineThenTower(latest.filter(r => inspectionMatchesCategories(r, categories)), 'tower_number');
 }
 function getReportFilteredTreatments() {
   const line = document.getElementById('repFilterLine').value;
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const categories = getReportSelectedCategories();
-  const rows = (treatmentsCache||[]).filter(t =>
+  const base = (treatmentsCache||[]).filter(t =>
     (!line || t.line_name === line) &&
     (!from || (t.treatment_date||'') >= from) &&
     (!to || (t.treatment_date||'') <= to) &&
-    reportTowerPasses(t.tower_number) &&
-    treatmentMatchesCategories(t, categories)
+    reportTowerPasses(t.tower_number)
   );
-  return sortByLineThenTower(dedupeLatestPerTowerDate(rows, 'treatment_date'), 'tower_number');
+  const latest = dedupeLatestPerTowerDate(base, 'treatment_date');
+  return sortByLineThenTower(latest.filter(t => treatmentMatchesCategories(t, categories)), 'tower_number');
 }
 function getReportFilteredThermalForms() {
   const line = document.getElementById('repFilterLine').value;
@@ -12596,12 +12650,107 @@ function getReportFilteredThermalForms() {
     .filter(f => f.rows.length);
 }
 
+// القراءات الحرارية الخام (من شاشة "كشف حراري ← جديد") — مصدر منفصل عن الاستمارات الرسمية
+function getReportFilteredThermalRaw() {
+  const line = document.getElementById('repFilterLine').value;
+  const from = document.getElementById('repFrom').value;
+  const to = document.getElementById('repTo').value;
+  return (thermalRecords||[]).filter(r =>
+    r.point_type === 'tower' &&
+    (!line || r.line_name === line) &&
+    (!from || (r.inspection_date||'') >= from) &&
+    (!to || (r.inspection_date||'') <= to) &&
+    reportTowerPasses(r.tower_number)
+  );
+}
+
+// حد الحرارة المرتفعة الخاص بملاحظات هذا التقرير (منفصل عمداً عن HOT_THRESHOLD العام المستخدم بشاشة أرشيف الكشف الحراري)
+const REPORT_HOT_THRESHOLD = 80;
+const IRAQI_MONTH_NAMES = ['كانون الثاني','شباط','آذار','نيسان','أيار','حزيران','تموز','آب','أيلول','تشرين الأول','تشرين الثاني','كانون الأول'];
+function monthNameFromDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return IRAQI_MONTH_NAMES[d.getMonth()] + ' ' + d.getFullYear();
+}
+
+// يبني كل ملاحظات الكشف الحراري الخاصة ببرج معيّن (من القراءات الخام + صفوف الاستمارات الرسمية)
+function getThermalNotesForTower(lineName, towerNumber, thermalRaw, thermalForms) {
+  const notes = [];
+  thermalRaw.forEach(r => {
+    if (r.line_name !== lineName || String(r.tower_number) !== String(towerNumber)) return;
+    const phases = [['R', [r.r1, r.r2]], ['S', [r.s1, r.s2]], ['T', [r.t1, r.t2]]];
+    let hot = [];
+    phases.forEach(([p, vals]) => {
+      vals.forEach(v => { if (v != null && parseFloat(v) >= REPORT_HOT_THRESHOLD) hot.push(`⚠️ بتاريخ ${r.inspection_date}، وجود ارتفاع حرارة على الفيز ${p} بمقدار ${v}°`); });
+    });
+    if (hot.length) notes.push(...hot);
+    else notes.push(`✅ هذا البرج تم كشفه حرارياً بتاريخ ${r.inspection_date} والنتيجة سليم`);
+  });
+  thermalForms.forEach(f => {
+    if (f.line_name !== lineName) return;
+    (f.rows||[]).forEach(row => {
+      if (String(row.tower_number) !== String(towerNumber)) return;
+      const phases = [['R', row.r], ['S', row.s], ['T', row.t]];
+      let hot = [];
+      phases.forEach(([p, v]) => { if (v != null && parseFloat(v) >= REPORT_HOT_THRESHOLD) hot.push(`⚠️ بتاريخ ${f.inspection_date}، وجود ارتفاع حرارة على الفيز ${p} بمقدار ${v}°`); });
+      if (hot.length) notes.push(...hot);
+      else notes.push(`📄 هذا البرج مذكور باستمارة الكشف الحراري الرسمية لشهر ${monthNameFromDate(f.inspection_date)}`);
+    });
+  });
+  return notes;
+}
+
+// بطاقة ملاحظات الكشف الحراري لبرج معيّن — نص فقط، بنفس أسلوب باقي بطاقات التقرير
+async function buildThermalNotesCardCanvas(lineName, towerNumber, notes) {
+  const CARD_W = 760, PAD = 18;
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+  mctx.font = '13px Tahoma, Arial, sans-serif';
+  const wrapped = [];
+  notes.forEach(line => wrapArabicText(mctx, line, CARD_W - PAD*2).forEach(l => wrapped.push(l)));
+
+  const headerH = 40;
+  const bodyH = wrapped.length * 18 + 10;
+  const totalH = headerH + bodyH + PAD;
+  const scale = 1.3;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(CARD_W * scale);
+  canvas.height = Math.ceil(totalH * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, totalH);
+  ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+
+  let y = PAD + 12;
+  ctx.fillStyle = '#1A2A46';
+  ctx.font = 'bold 14px Tahoma, Arial, sans-serif';
+  ctx.fillText(`الخط: ${lineName||'-'}   |   برج: ${towerNumber||'-'}   |   🌡️ الكشف الحراري`, CARD_W - PAD, y);
+  y += 18;
+  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
+  y += 20;
+
+  ctx.font = '13px Tahoma, Arial, sans-serif';
+  ctx.fillStyle = '#3C3C3C';
+  wrapped.forEach(line => { ctx.fillText(line, CARD_W - PAD, y); y += 18; });
+
+  return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
+}
+
 function updateReportResultCount() {
   const types = getReportSelectedTypes();
   let parts = [];
   if (types.includes('inspection')) parts.push(`📋 كشف: ${getReportFilteredInspections().length}`);
   if (types.includes('treatment')) parts.push(`🔧 معالجة: ${getReportFilteredTreatments().length}`);
-  if (types.includes('thermal')) parts.push(`🌡️ كشف حراري: ${getReportFilteredThermalForms().length}`);
+  if (types.includes('thermal')) {
+    // نحسب عدد الأبراج المشمولة (من المصدرين معاً: القراءات الخام + صفوف الاستمارات الرسمية)
+    // بدل عدد الاستمارات — لأن التقرير صار يعرض ملاحظة لكل برج لا جدول لكل استمارة
+    const towers = new Set();
+    getReportFilteredThermalRaw().forEach(r => towers.add(r.line_name + '||' + r.tower_number));
+    getReportFilteredThermalForms().forEach(f => (f.rows||[]).forEach(row => towers.add(f.line_name + '||' + row.tower_number)));
+    parts.push(`🌡️ كشف حراري: ${towers.size} برج`);
+  }
   document.getElementById('repResultCount').textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
 }
 
@@ -12685,68 +12834,6 @@ async function buildReportInspectionCardCanvas(r, categories) {
 
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
 }
-
-// جدول كشف حراري واحد (استمارة) — الخط + التاريخ + كل الأبراج ودرجات حرارتها
-async function buildThermalFormTableCanvas(f) {
-  const CARD_W = 760, PAD = 18, ROW_H = 20;
-  const rows = Array.isArray(f.rows) ? f.rows.filter(row => row.tower_number) : [];
-  const headerH = 46, tableHeaderH = 22;
-  const totalH = headerH + tableHeaderH + rows.length * ROW_H + PAD;
-  const scale = 1.3;
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(CARD_W * scale);
-  canvas.height = Math.ceil(Math.max(totalH, 90) * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, Math.max(totalH, 90));
-  ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
-
-  let y = PAD + 12;
-  ctx.fillStyle = '#1A2A46';
-  ctx.font = 'bold 14px Tahoma, Arial, sans-serif';
-  ctx.fillText(`الخط: ${f.line_name||'-'}   |   التاريخ: ${f.inspection_date||'-'}   |   الفني: ${f.created_by||'-'}`, CARD_W - PAD, y);
-  y += 18;
-  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
-  y += 18;
-
-  if (!rows.length) {
-    ctx.font = '13px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#718096';
-    ctx.fillText('لا توجد قراءات مسجّلة بهذي الاستمارة', CARD_W - PAD, y);
-    return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: Math.max(totalH, 90) };
-  }
-
-  // رؤوس الأعمدة (من اليمين لليسار: برج | R | S | T | الحمل | الحرارة المحيطة | ملاحظات)
-  const cols = [
-    { key: 'tower_number', label: 'برج', w: 60 },
-    { key: 'r', label: 'R°', w: 55 },
-    { key: 's', label: 'S°', w: 55 },
-    { key: 't', label: 'T°', w: 55 },
-    { key: 'load_mw', label: 'الحمل MW', w: 80 },
-    { key: 'ambient', label: 'الحرارة المحيطة', w: 90 },
-    { key: 'notes', label: 'ملاحظات', w: CARD_W - PAD*2 - (60+55+55+55+80+90) }
-  ];
-  ctx.font = 'bold 12px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#4A5568';
-  let x = CARD_W - PAD;
-  cols.forEach(c => { ctx.fillText(c.label, x, y); x -= c.w; });
-  y += 6;
-  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
-  y += 16;
-
-  ctx.font = '12px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#2D3748';
-  rows.forEach(row => {
-    x = CARD_W - PAD;
-    cols.forEach(c => {
-      const val = c.key === 'notes' ? (row.notes || '') : (row[c.key] != null ? String(row[c.key]) : '');
-      ctx.fillText(val, x, y);
-      x -= c.w;
-    });
-    y += ROW_H;
-  });
-
-  return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: Math.max(totalH, 90) };
-}
-
 // تحويل تصنيفات التقرير إلى أعمدة Excel مطابقة (من نفس تعريف EXPORT_COLUMNS الموحّد أصلاً)
 const REPORT_CATEGORY_EXPORT_COLUMN_LABELS = {
   foundation: ['قواعد البرج'],
@@ -12774,8 +12861,9 @@ function exportUnifiedReportExcel() {
   const inspections = types.includes('inspection') ? getReportFilteredInspections() : [];
   const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
   const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
+  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
 
-  if (!inspections.length && !treatments.length && !thermalForms.length) {
+  if (!inspections.length && !treatments.length && !thermalForms.length && !thermalRaw.length) {
     showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
     return;
   }
@@ -12797,13 +12885,29 @@ function exportUnifiedReportExcel() {
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'معالجات');
   }
-  if (thermalForms.length) {
+  if (thermalForms.length || thermalRaw.length) {
     const data = [];
+    // المصدر الأول: القراءات الخام (شاشة "كشف حراري ← جديد")
+    thermalRaw.forEach(r => {
+      data.push({
+        'اسم الخط': r.line_name,
+        'تاريخ الكشف': r.inspection_date,
+        'المصدر': 'قراءة ميدانية',
+        'الفني': r.created_by_name || '',
+        'رقم البرج': r.tower_number,
+        'R': r.r1, 'S': r.s1, 'T': r.t1,
+        'الحمل (MW)': '',
+        'الحرارة المحيطة': r.ambient_temp,
+        'ملاحظات': ''
+      });
+    });
+    // المصدر الثاني: صفوف الاستمارات الرسمية
     thermalForms.forEach(f => {
       (f.rows||[]).forEach(row => {
         data.push({
           'اسم الخط': f.line_name,
           'تاريخ الكشف': f.inspection_date,
+          'المصدر': 'استمارة رسمية',
           'الفني': f.created_by || '',
           'رقم البرج': row.tower_number,
           'R': row.r, 'S': row.s, 'T': row.t,
@@ -12813,6 +12917,7 @@ function exportUnifiedReportExcel() {
         });
       });
     });
+    data.sort((a,b) => (a['اسم الخط']||'').localeCompare(b['اسم الخط']||'', 'ar') || (parseInt(a['رقم البرج'])||0) - (parseInt(b['رقم البرج'])||0));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'كشف حراري');
   }
 
@@ -12827,14 +12932,29 @@ async function generateUnifiedReportPDF() {
 
   const inspections = types.includes('inspection') ? getReportFilteredInspections() : [];
   const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
+  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
   const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
 
-  if (!inspections.length && !treatments.length && !thermalForms.length) {
+  if (!inspections.length && !treatments.length && !thermalRaw.length && !thermalForms.length) {
     showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
     return;
   }
 
   showToast('⏳ جاري تحضير التقرير...');
+
+  // قائمة موحّدة لكل (خط، برج) مذكور بأي من الأنواع المختارة — بدل أقسام منفصلة، كل برج يطلع
+  // مرة وحدة وتحته كل بياناته بالترتيب: كشف ← معالجة ← ملاحظات الكشف الحراري (لو وُجدت)
+  const towerMap = new Map();
+  function addTower(line_name, tower_number) {
+    if (!line_name || tower_number == null || tower_number === '') return;
+    const key = line_name + '||' + tower_number;
+    if (!towerMap.has(key)) towerMap.set(key, { line_name, tower_number });
+  }
+  inspections.forEach(r => addTower(r.line_name, r.tower_number));
+  treatments.forEach(t => addTower(t.line_name, t.tower_number));
+  thermalRaw.forEach(r => addTower(r.line_name, r.tower_number));
+  thermalForms.forEach(f => (f.rows||[]).forEach(row => addTower(f.line_name, row.tower_number)));
+  const towerList = sortByLineThenTower([...towerMap.values()], 'tower_number');
 
   try {
     const { jsPDF } = window.jspdf;
@@ -12843,17 +12963,9 @@ async function generateUnifiedReportPDF() {
     const pageH = doc.internal.pageSize.getHeight();
     const marginX = 30, marginTop = 50, marginBottom = 26;
     let y = marginTop;
-    let firstSection = true;
 
     function ensureSpace(h) {
       if (y + h > pageH - marginBottom) { doc.addPage(); y = marginTop; }
-    }
-    function drawSectionTitle(title) {
-      if (!firstSection) { doc.addPage(); y = marginTop; }
-      firstSection = false;
-      doc.setFontSize(14); doc.setTextColor(20,40,70);
-      doc.text(title, pageW/2, 30, { align: 'center' });
-      y = 50;
     }
     async function drawCard(card) {
       const drawW = pageW - marginX*2;
@@ -12869,17 +12981,14 @@ async function generateUnifiedReportPDF() {
     doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, 38, { align: 'center' });
     y = 50;
 
-    if (inspections.length) {
-      drawSectionTitle('📋 قسم الكشف');
-      for (const r of inspections) await drawCard(await buildReportInspectionCardCanvas(r, categories));
-    }
-    if (treatments.length) {
-      drawSectionTitle('🔧 قسم المعالجات');
-      for (const t of treatments) await drawCard(await buildTreatLogRecordCanvas(t));
-    }
-    if (thermalForms.length) {
-      drawSectionTitle('🌡️ قسم الكشف الحراري');
-      for (const f of thermalForms) await drawCard(await buildThermalFormTableCanvas(f));
+    for (const { line_name, tower_number } of towerList) {
+      const insForTower = inspections.filter(r => r.line_name === line_name && String(r.tower_number) === String(tower_number));
+      const treatForTower = treatments.filter(t => t.line_name === line_name && String(t.tower_number) === String(tower_number));
+      const thermalNotes = types.includes('thermal') ? getThermalNotesForTower(line_name, tower_number, thermalRaw, thermalForms) : [];
+
+      for (const r of insForTower) await drawCard(await buildReportInspectionCardCanvas(r, categories));
+      for (const t of treatForTower) await drawCard(await buildTreatLogRecordCanvas(t));
+      if (thermalNotes.length) await drawCard(await buildThermalNotesCardCanvas(line_name, tower_number, thermalNotes));
     }
 
     const blob = doc.output('blob');
@@ -13136,7 +13245,11 @@ async function exportHubGroupNow() {
   document.getElementById('repFilterLine').value = hubSelectedLine;
   document.getElementById('repFrom').value = hubSelectedDate;
   document.getElementById('repTo').value = hubSelectedDate;
-  document.querySelectorAll('.repTypeChk').forEach(cb => { cb.checked = (cb.value === hubBrowseType) || (cb.value === 'inspection' && hubBrowseType === 'visual'); });
+  // ترجمة صريحة بين تسميات المركز الموحّد وتسميات قسم التصدير — بدونها كان التصدير من قسم
+  // المعالجات يفشل بصمت لأن 'treat' لا تطابق قيمة الـcheckbox 'treatment'
+  const HUB_TYPE_TO_REPORT_TYPE = { visual: 'inspection', treat: 'treatment', thermal: 'thermal' };
+  const wantedType = HUB_TYPE_TO_REPORT_TYPE[hubBrowseType];
+  document.querySelectorAll('.repTypeChk').forEach(cb => { cb.checked = (cb.value === wantedType); });
   document.querySelector('input[name="repTowersMode"][value="all"]').checked = true;
   onReportTowersModeChange();
   await generateUnifiedReportPDF();
