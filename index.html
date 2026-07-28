@@ -1963,6 +1963,20 @@ tbody tr:hover { background: #F7FAFC; }
         </div>
       </div>
       <p style="font-size:0.78rem;color:#a0aec0;margin:8px 0 0">يجمع هذا التقرير التقارير اليومية المحفوظة أصلاً بالأرشيف بين التاريخين — أي يوم بدون تقرير يومي محفوظ لا يظهر بالملخّص.</p>
+
+      <div class="field" style="margin-top:12px">
+        <label>نوع النشاط المطلوب</label>
+        <p style="font-size:0.76rem;color:#a0aec0;margin:2px 0 6px">اختر وحد أو أكثر — يطلع بس الخطوط اللي فيها النشاط المحدد، وتظهر بس تفاصيل النشاط المختار.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;background:#EBF0F5;padding:4px 10px;border-radius:14px"><input type="checkbox" id="drpActivityAll" checked onchange="onDrpActivityAllToggle()"> الكل</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="drpActivityChk" value="visual" onchange="onDrpActivityPick()"> 🔍 كشف بصري</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="drpActivityChk" value="thermal" onchange="onDrpActivityPick()"> 🌡️ كشف حراري</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="drpActivityChk" value="maint_outage" onchange="onDrpActivityPick()"> 🔧 صيانة بإطفاء</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="drpActivityChk" value="maint_no_outage" onchange="onDrpActivityPick()"> 🔧 صيانة بدون إطفاء</label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem"><input type="checkbox" class="drpActivityChk" value="fire" onchange="onDrpActivityPick()"> 🔥 إزالة مسببات حرائق</label>
+        </div>
+      </div>
+
       <button class="btn btn-primary" style="margin-top:10px" onclick="generatePeriodSummaryReport()">🔍 توليد الملخّص</button>
     </div>
 
@@ -7099,7 +7113,23 @@ function findLineInfo(lineName) {
 // ========================
 // تقرير الفترة (ملخّص التقارير اليومية المحفوظة بين تاريخين)
 // ========================
-let periodSummaryData = []; // [{ line_name, activities:Set, visualDates:[], thermalEntries:[{date,towers}], maintEntries:[{date,detail}], fireDates:[] }]
+let periodSummaryData = []; // [{ line_name, activities:Set, visualDates:[], thermalEntries:[{date,towers}], outageEntries:[{date,detail}], noOutageEntries:[{date,detail}], fireDates:[] }]
+
+function onDrpActivityAllToggle() {
+  const allChecked = document.getElementById('drpActivityAll').checked;
+  document.querySelectorAll('.drpActivityChk').forEach(cb => { cb.disabled = allChecked; if (allChecked) cb.checked = false; });
+}
+function onDrpActivityPick() {
+  const anyChecked = Array.from(document.querySelectorAll('.drpActivityChk')).some(cb => cb.checked);
+  document.getElementById('drpActivityAll').checked = !anyChecked;
+  document.querySelectorAll('.drpActivityChk').forEach(cb => cb.disabled = !anyChecked && document.getElementById('drpActivityAll').checked);
+}
+// null = بدون تصفية (كل الأنواع)
+function getDrpSelectedActivities() {
+  if (document.getElementById('drpActivityAll').checked) return null;
+  const picked = Array.from(document.querySelectorAll('.drpActivityChk:checked')).map(cb => cb.value);
+  return picked.length ? picked : null;
+}
 
 async function generatePeriodSummaryReport() {
   const from = document.getElementById('drp_from').value;
@@ -7112,10 +7142,11 @@ async function generatePeriodSummaryReport() {
     const res = await sbFetch(`daily_reports?select=report_date,rows&report_date=gte.${from}&report_date=lte.${to}&order=report_date.asc`);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const days = await res.json();
+    const selected = getDrpSelectedActivities(); // null = الكل
 
     const byLine = {};
     function ensure(name) {
-      if (!byLine[name]) byLine[name] = { line_name: name, activities: new Set(), visualDates: [], thermalEntries: [], maintEntries: [], fireDates: [] };
+      if (!byLine[name]) byLine[name] = { line_name: name, activities: new Set(), visualDates: [], thermalEntries: [], outageEntries: [], noOutageEntries: [], fireDates: [] };
       return byLine[name];
     }
 
@@ -7123,31 +7154,35 @@ async function generatePeriodSummaryReport() {
       const rows = Array.isArray(day.rows) ? day.rows : [];
       rows.forEach(r => {
         if (!r.line_name) return;
+        const want = (key) => !selected || selected.includes(key);
+        // نتحقق أول إذا هذا الصف فيه أي نشاط من المطلوب أصلاً، قبل لا ننشئ سجل للخط (حتى لا تظهر خطوط ما إلها علاقة بالفلتر)
+        const hasAny = (r.visual && want('visual')) || (r.thermal && want('thermal')) ||
+                       (r.sched_outage && want('maint_outage')) || (r.sched_no_outage && want('maint_no_outage')) ||
+                       (r.fire_removal && want('fire'));
+        if (!hasAny) return;
         const e = ensure(r.line_name);
-        if (r.visual) { e.activities.add('visual'); e.visualDates.push(day.report_date); }
-        if (r.thermal) { e.activities.add('thermal'); e.thermalEntries.push({ date: day.report_date, towers: r.thermal_towers || '' }); }
-        if (r.sched_outage || r.sched_no_outage) {
-          e.activities.add('maint');
-          e.maintEntries.push({ date: day.report_date, detail: r.work_details || '' });
-        }
-        if (r.fire_removal) { e.activities.add('fire'); e.fireDates.push(day.report_date); }
+        if (r.visual && want('visual')) { e.activities.add('visual'); e.visualDates.push(day.report_date); }
+        if (r.thermal && want('thermal')) { e.activities.add('thermal'); e.thermalEntries.push({ date: day.report_date, towers: r.thermal_towers || '' }); }
+        if (r.sched_outage && want('maint_outage')) { e.activities.add('maint_outage'); e.outageEntries.push({ date: day.report_date, detail: r.work_details || '' }); }
+        if (r.sched_no_outage && want('maint_no_outage')) { e.activities.add('maint_no_outage'); e.noOutageEntries.push({ date: day.report_date, detail: r.work_details || '' }); }
+        if (r.fire_removal && want('fire')) { e.activities.add('fire'); e.fireDates.push(day.report_date); }
       });
     });
 
     periodSummaryData = Object.values(byLine).sort((a,b) => a.line_name.localeCompare(b.line_name, 'ar'));
     renderPeriodSummary();
-    document.getElementById('drpResultCount').textContent = `📅 عدد التقارير اليومية المشمولة: ${days.length} | عدد الخطوط: ${periodSummaryData.length}`;
+    document.getElementById('drpResultCount').textContent = `📅 عدد التقارير اليومية المشمولة: ${days.length} | عدد الخطوط المطابقة: ${periodSummaryData.length}`;
     document.getElementById('drPeriodActions').style.display = periodSummaryData.length ? 'flex' : 'none';
   } catch (e) {
     document.getElementById('drPeriodRowsWrap').innerHTML = '<div class="empty-state">❌ تعذر توليد الملخّص</div>';
   }
 }
 
-const ACTIVITY_LABELS = { visual: '🔍 كشف بصري', thermal: '🌡️ كشف حراري', maint: '🔧 صيانة', fire: '🔥 إزالة مسببات حرائق' };
+const ACTIVITY_LABELS = { visual: '🔍 كشف بصري', thermal: '🌡️ كشف حراري', maint_outage: '🔧 صيانة بإطفاء', maint_no_outage: '🔧 صيانة بدون إطفاء', fire: '🔥 إزالة مسببات حرائق' };
 
 function renderPeriodSummary() {
   const wrap = document.getElementById('drPeriodRowsWrap');
-  if (!periodSummaryData.length) { wrap.innerHTML = '<div class="empty-state">لا توجد تقارير يومية محفوظة بهذي الفترة</div>'; return; }
+  if (!periodSummaryData.length) { wrap.innerHTML = '<div class="empty-state">لا توجد تقارير يومية محفوظة مطابقة لهذي الفترة/النشاط المختار</div>'; return; }
   wrap.innerHTML = periodSummaryData.map(e => {
     const activityLine = [...e.activities].map(a => ACTIVITY_LABELS[a]).join(' + ') || '—';
     let html = `<div class="dep-card"><div class="dep-card-header"><div class="dep-card-title">${e.line_name}</div></div>`;
@@ -7158,9 +7193,14 @@ function renderPeriodSummary() {
       e.thermalEntries.forEach(t => html += `<li>${t.date} — ${t.towers || '—'} برج</li>`);
       html += `</ul>`;
     }
-    if (e.maintEntries.length) {
-      html += `<p style="font-size:0.8rem;margin-top:6px">🔧 صيانة:</p><ul style="margin:2px 0 0 0;padding-right:18px;font-size:0.78rem">`;
-      e.maintEntries.forEach(m => html += `<li>${m.date} — ${m.detail || '—'}</li>`);
+    if (e.outageEntries.length) {
+      html += `<p style="font-size:0.8rem;margin-top:6px">🔧 صيانة بإطفاء:</p><ul style="margin:2px 0 0 0;padding-right:18px;font-size:0.78rem">`;
+      e.outageEntries.forEach(m => html += `<li>${m.date} — ${m.detail || '—'}</li>`);
+      html += `</ul>`;
+    }
+    if (e.noOutageEntries.length) {
+      html += `<p style="font-size:0.8rem;margin-top:6px">🔧 صيانة بدون إطفاء:</p><ul style="margin:2px 0 0 0;padding-right:18px;font-size:0.78rem">`;
+      e.noOutageEntries.forEach(m => html += `<li>${m.date} — ${m.detail || '—'}</li>`);
       html += `</ul>`;
     }
     if (e.fireDates.length) html += `<p style="font-size:0.8rem;margin-top:6px">🔥 إزالة مسببات حرائق: بتاريخ ${e.fireDates.join('، ')}</p>`;
@@ -7177,7 +7217,8 @@ function exportPeriodSummaryExcel() {
     'عدد أيام الكشف البصري': e.visualDates.length,
     'تواريخ الكشف البصري': e.visualDates.join('، '),
     'كشف حراري (تاريخ — عدد الأبراج)': e.thermalEntries.map(t => `${t.date}: ${t.towers||'-'}`).join(' | '),
-    'صيانة (تاريخ — التفاصيل)': e.maintEntries.map(m => `${m.date}: ${m.detail||'-'}`).join(' | '),
+    'صيانة بإطفاء (تاريخ — التفاصيل)': e.outageEntries.map(m => `${m.date}: ${m.detail||'-'}`).join(' | '),
+    'صيانة بدون إطفاء (تاريخ — التفاصيل)': e.noOutageEntries.map(m => `${m.date}: ${m.detail||'-'}`).join(' | '),
     'إزالة مسببات حرائق': e.fireDates.join('، ')
   }));
   const wb = XLSX.utils.book_new();
@@ -7194,7 +7235,8 @@ async function buildPeriodSummaryCardCanvas(e) {
   lines.push(`النشاط: ${activityLine}`);
   if (e.visualDates.length) lines.push(`🔍 كشف بصري: ${e.visualDates.length} مرة — بتاريخ ${e.visualDates.join('، ')}`);
   e.thermalEntries.forEach(t => lines.push(`🌡️ كشف حراري: ${t.date} — ${t.towers || '—'} برج`));
-  e.maintEntries.forEach(m => lines.push(`🔧 صيانة: ${m.date} — ${m.detail || '—'}`));
+  e.outageEntries.forEach(m => lines.push(`🔧 صيانة بإطفاء: ${m.date} — ${m.detail || '—'}`));
+  e.noOutageEntries.forEach(m => lines.push(`🔧 صيانة بدون إطفاء: ${m.date} — ${m.detail || '—'}`));
   if (e.fireDates.length) lines.push(`🔥 إزالة مسببات حرائق: بتاريخ ${e.fireDates.join('، ')}`);
 
   const measureCanvas = document.createElement('canvas');
