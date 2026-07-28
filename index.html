@@ -5214,6 +5214,9 @@ function addOfficialFormRow() {
 }
 function removeOfficialFormRow(idx) {
   officialFormRows.splice(idx, 1);
+  // نعيد التعبئة للعدد الثابت المتفق عليه (23) — بدون هذا، حذف أي صف يدوياً يكسر ثبات شكل
+  // الاستمارة نهائياً لهذا الملف (يبقى ناقص حتى لو انحفظ وطُبع لاحقاً)
+  padOfficialFormRowsToMinimum();
   renderOfficialFormTable();
 }
 
