@@ -1475,9 +1475,31 @@ tbody tr:hover { background: #F7FAFC; }
         <button class="btn btn-secondary btn-sm" onclick="generateLineTowersRange()">🔄 توليد (الكل تعليق افتراضياً)</button>
       </div>
       <p style="color:#a0aec0;font-size:0.76rem;margin-top:4px">التوليد يستبدل القائمة الحالية بالكامل. بعده حدد يدوياً فقط الأبراج الاستثنائية (شد/عبور/نهائي/خاص) من القائمة تحت.</p>
+
+      <div style="margin-top:12px;padding:10px;background:#F7FAFC;border-radius:8px;border:1.5px dashed #CBD5E0">
+        <label style="font-weight:700;color:#1a2e4a;display:block;margin-bottom:6px;font-size:0.85rem">➕ إدراج برج جديد بمنتصف التسلسل</label>
+        <p style="color:#a0aec0;font-size:0.74rem;margin-bottom:6px">يدرج البرج مباشرة بعد الرقم المحدد، ويعيد ترقيم كل الأبراج بعده تلقائياً (+1) — يستخدم لحالة "أضفنا برج فعلياً بين برجين موجودين".</p>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div class="field" style="flex:1;min-width:100px"><label>يُدرَج بعد برج رقم</label><input id="lm_insert_after" type="number" placeholder="36"></div>
+          <div class="field" style="flex:1.3;min-width:130px">
+            <label>نوع البرج الجديد</label>
+            <select id="lm_insert_type">
+              <option>برج تعليق</option>
+              <option>برج شد</option>
+              <option>برج عبور</option>
+              <option>برج عبور اسفل الخط</option>
+              <option>برج نهائي</option>
+              <option>برج خاص</option>
+            </select>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="insertLineTowerAndRenumber()">➕ إدراج وإعادة ترقيم</button>
+        </div>
+      </div>
+
       <p id="lmTowersCount" style="font-size:0.8rem;color:#4a5568;margin-top:6px;font-weight:700"></p>
       <div id="lmTowersListWrap" style="max-height:260px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px;margin-top:6px"></div>
     </div>
+    <p style="color:#a0aec0;font-size:0.74rem;margin-top:8px">ملاحظة: هذا التعديل يخص هذا الخط فقط ولحد ما تضغط "حفظ" بأسفل الشاشة ما ينحفظ فعلياً.</p>
     <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="closeLineModal()">إلغاء</button>
       <button class="btn btn-primary" onclick="saveLineModal()">💾 حفظ</button>
@@ -10065,6 +10087,24 @@ function generateLineTowersRange() {
 }
 
 const LINE_TOWER_TYPE_OPTIONS = ['برج تعليق', 'برج شد', 'برج عبور', 'برج عبور اسفل الخط', 'برج نهائي', 'برج خاص'];
+
+// يدرج برجاً جديداً مباشرة بعد رقم برج محدد، ويزيح كل الأبراج بعده رقماً واحداً — بدون هذا كانت
+// الطريقة الوحيدة "تصفير القائمة وإعادة توليدها" اللي تمسح كل التخصيصات (نوع/مادة/استثناء) الموجودة
+function insertLineTowerAndRenumber() {
+  const afterNum = parseInt(document.getElementById('lm_insert_after').value);
+  const newType = document.getElementById('lm_insert_type').value;
+  if (!afterNum) { showToast('⚠️ أدخل رقم البرج اللي يُدرَج بعده', 'error'); return; }
+  const idx = _editingLineTowersList.findIndex(t => t.num === afterNum);
+  if (idx === -1) { showToast(`⚠️ ما لقيت برج رقم ${afterNum} بالقائمة الحالية`, 'error'); return; }
+  // نزيح كل الأبراج اللي رقمها أكبر من afterNum رقماً واحداً للأمام (نبدأ من الآخر حتى لا يتصادم الترقيم بالمنتصف)
+  for (let i = _editingLineTowersList.length - 1; i > idx; i--) {
+    _editingLineTowersList[i].num += 1;
+  }
+  _editingLineTowersList.splice(idx + 1, 0, { num: afterNum + 1, type: newType });
+  document.getElementById('lm_insert_after').value = '';
+  renderLineTowersEditor();
+  showToast(`✅ انضاف برج ${afterNum + 1} — وانزاحت كل الأبراج بعده رقماً واحداً. اضغط "حفظ" حتى يثبت التغيير`);
+}
 
 function renderLineTowersEditor() {
   const wrap = document.getElementById('lmTowersListWrap');
