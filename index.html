@@ -2877,6 +2877,7 @@ function getTowerCriticalityLevel(rec) {
       });
     } catch(e) { console.warn('[tower-app] فشل تحليل حالة العوازل بحساب صحة الخط للسجل', rec.id, e); }
   }
+  const foundationsCritical = /كامل/.test(rec.tower_foundations||'');
   const attachmentsCritical = /كامل/.test(rec.tower_attachments||'');
   let ironNum = 0;
   const m = (rec.iron_intersections||'').match(/\d+/);
@@ -2935,31 +2936,47 @@ async function renderTowersGrid(lineName) {
   section.style.display = '';
   titleEl.textContent = '🗼 أبراج خط: ' + lineName;
   grid.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات الأبراج...</div>';
-  await loadFullRecordsCache();
-  const towers = getLineTowers(lineName);
-  grid.innerHTML = towers.map(t => {
-    const rec = getLatestRecordForTower(lineName, t.num);
-    const level = getTowerCriticalityLevel(rec);
-    const meta = TOWER_LEVEL_META[level];
-    const complete = rec ? isInspectionComplete(rec) : null;
-    const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) : 'لم يُكشف بعد';
-    const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
-    let staleLine = '';
-    if (rec && rec.inspection_date) {
-      const monthsSince = (Date.now() - new Date(rec.inspection_date).getTime()) / (1000*60*60*24*30.44);
-      if (monthsSince >= 6) staleLine = `⏰ لم يُكشف منذ ${Math.floor(monthsSince)} شهر تقريباً`;
-    }
-    const catIconsHTML = buildCategoryIconsHTML(rec);
-    return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
-      <div class="tower-box-num">${t.num}</div>
-      ${catIconsHTML}
-      <div class="tower-box-type">${t.type||''}</div>
-      <div class="tower-box-date">${dateLine}</div>
-      ${completeLine ? `<div class="tower-box-complete">${completeLine}</div>` : ''}
-      ${staleLine ? `<div class="tower-box-complete" style="color:#c0392b;font-weight:700">${staleLine}</div>` : ''}
-    </div>`;
-  }).join('');
-  renderActiveLinesTabs();
+  try {
+    await loadFullRecordsCache();
+    const towers = getLineTowers(lineName);
+    grid.innerHTML = towers.map(t => {
+      // عزل كل برج لحاله: لو سجل برج واحد تالف (تنسيق غريب جاي من قائمة إرسال مؤجل مثلاً)، يطلع
+      // بلاطة خطأ لهذا البرج بس، بدل ما ينهار رسم الشبكة كاملة ويجمّد شاشة "جاري التحميل" للأبد
+      try {
+        const rec = getLatestRecordForTower(lineName, t.num);
+        const level = getTowerCriticalityLevel(rec);
+        const meta = TOWER_LEVEL_META[level];
+        const complete = rec ? isInspectionComplete(rec) : null;
+        const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) : 'لم يُكشف بعد';
+        const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
+        let staleLine = '';
+        if (rec && rec.inspection_date) {
+          const monthsSince = (Date.now() - new Date(rec.inspection_date).getTime()) / (1000*60*60*24*30.44);
+          if (monthsSince >= 6) staleLine = `⏰ لم يُكشف منذ ${Math.floor(monthsSince)} شهر تقريباً`;
+        }
+        const catIconsHTML = buildCategoryIconsHTML(rec);
+        return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
+          <div class="tower-box-num">${t.num}</div>
+          ${catIconsHTML}
+          <div class="tower-box-type">${t.type||''}</div>
+          <div class="tower-box-date">${dateLine}</div>
+          ${completeLine ? `<div class="tower-box-complete">${completeLine}</div>` : ''}
+          ${staleLine ? `<div class="tower-box-complete" style="color:#c0392b;font-weight:700">${staleLine}</div>` : ''}
+        </div>`;
+      } catch (towerErr) {
+        console.warn('[tower-app] فشل رسم برج', t.num, 'بخط', lineName, towerErr);
+        return `<div class="tower-box" style="background:#FED7D7;border-color:#FC8181;color:#742A2A" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
+          <div class="tower-box-num">${t.num}</div>
+          <div class="tower-box-type">⚠️ خطأ بعرض هذا البرج</div>
+        </div>`;
+      }
+    }).join('');
+    renderActiveLinesTabs();
+  } catch (e) {
+    console.warn('[tower-app] فشل تحميل شبكة أبراج الخط', lineName, e);
+    grid.innerHTML = `<div class="empty-state">❌ تعذّر تحميل بيانات هذا الخط<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="renderTowersGrid('${String(lineName).replace(/'/g,"\\'")}')">🔄 إعادة المحاولة</button></div>`;
+    renderActiveLinesTabs();
+  }
 }
 
 function persistActiveLines() { safeSetItem('active_inspection_lines', JSON.stringify(activeInspectionLines)); }
