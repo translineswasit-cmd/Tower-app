@@ -1729,9 +1729,11 @@ tbody tr:hover { background: #F7FAFC; }
       <h3 style="margin-top:0">📤 تصدير تقرير</h3>
       <div class="field">
         <label>اسم الخط</label>
-        <select id="repFilterLine" onchange="onReportFilterChange()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
-          <option value="">-- كل الخطوط --</option>
-        </select>
+        <p style="font-size:0.76rem;color:#a0aec0;margin:2px 0 6px">تقدر تختار أكثر من خط بنفس التقرير.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;background:#EBF0F5;padding:4px 10px;border-radius:14px"><input type="checkbox" id="repLinesAll" checked onchange="onReportLinesAllToggle()"> الكل</label>
+        </div>
+        <div id="repLinesWrap" style="display:none;grid-template-columns:1fr 1fr;gap:2px 8px;max-height:180px;overflow-y:auto;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px"></div>
       </div>
 
       <div class="field" style="margin-top:12px">
@@ -3050,6 +3052,10 @@ function openTowerModal(lineName, towerNum) {
   onTowerChange();
   document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + towerNum;
   document.getElementById('towerInspectionModal').classList.add('show');
+  // بدون هذا، فتح البرج التالي كان يبقي نافذة الكشف بنفس موضع التمرير القديم (عادة قرب الأسفل عند
+  // زر الحفظ) بدل الرجوع لأعلاها — فتظهر الملاحظات مباشرة بدل قسم العوازل
+  const modalBox = document.querySelector('#towerInspectionModal .modal-box');
+  if (modalBox) modalBox.scrollTop = 0;
 }
 
 function closeTowerInspectionModal() {
@@ -4232,7 +4238,7 @@ async function loadRecords() {
     const data = await res.json();
     records = data;
     // كاش عرض فقط: نقلّله إلى 120 سجل ونتجاهل فشله بصمت — الأولوية المطلقة لمساحة الطوابير الميدانية
-    try { localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 120))); } catch(e) { try { localStorage.removeItem(DB_KEY); } catch(e2) {} }
+    try { localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 1000))); } catch(e) { try { localStorage.removeItem(DB_KEY); } catch(e2) {} }
   } catch {
     records = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
     showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
@@ -12706,9 +12712,15 @@ async function openReportsPage() {
   (treatmentsCache||[]).forEach(t => { if (t.line_name) lineSet.add(t.line_name); });
   (reportThermalFormsCache||[]).forEach(f => { if (f.line_name) lineSet.add(f.line_name); });
   (thermalRecords||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); }); // القراءات الخام أيضاً
-  const uniqueLines = [...lineSet].sort();
-  const sel = document.getElementById('repFilterLine');
-  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' + uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
+  const uniqueLines = [...lineSet].sort((a,b) => a.localeCompare(b, 'ar'));
+  const linesWrap = document.getElementById('repLinesWrap');
+  linesWrap.innerHTML = uniqueLines.map(n => `
+    <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
+      <input type="checkbox" class="repLineChk" value="${n.replace(/"/g,'&quot;')}" onchange="onReportLinesPick()">
+      <span>${n}</span>
+    </label>`).join('');
+  document.getElementById('repLinesAll').checked = true;
+  linesWrap.style.display = 'none';
 
   document.getElementById('repFrom').value = '';
   document.getElementById('repTo').value = '';
@@ -12742,6 +12754,24 @@ function getReportSelectedCategories() {
   return picked.length ? picked : null;
 }
 
+function onReportLinesAllToggle() {
+  const allChecked = document.getElementById('repLinesAll').checked;
+  document.getElementById('repLinesWrap').style.display = allChecked ? 'none' : 'grid';
+  if (allChecked) document.querySelectorAll('.repLineChk').forEach(cb => cb.checked = false);
+  onReportFilterChange();
+}
+function onReportLinesPick() {
+  const anyChecked = Array.from(document.querySelectorAll('.repLineChk')).some(cb => cb.checked);
+  document.getElementById('repLinesAll').checked = !anyChecked;
+  onReportFilterChange();
+}
+// null = بدون تصفية (كل الخطوط)
+function getReportSelectedLines() {
+  if (document.getElementById('repLinesAll').checked) return null;
+  const picked = Array.from(document.querySelectorAll('.repLineChk:checked')).map(cb => cb.value);
+  return picked.length ? picked : null;
+}
+
 function onReportTowersModeChange() {
   const mode = document.querySelector('input[name="repTowersMode"]:checked').value;
   document.getElementById('repTowersRangeWrap').style.display = mode === 'range' ? 'grid' : 'none';
@@ -12756,28 +12786,28 @@ function getReportSelectedTypes() {
 
 // يرجّع كل أرقام الأبراج المتاحة ضمن فلتر الخط/التاريخ/النوع الحالي (بدون فلتر الأبراج نفسه) — لبناء قائمة "أبراج معينة"
 function getReportAvailableTowers() {
-  const line = document.getElementById('repFilterLine').value;
+  const lines = getReportSelectedLines(); // null = كل الخطوط
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const types = getReportSelectedTypes();
   const towers = new Set();
   if (types.includes('inspection')) {
     (fullRecordsCache||[]).forEach(r => {
-      if ((!line || r.line_name === line) && (!from || (r.inspection_date||'') >= from) && (!to || (r.inspection_date||'') <= to) && r.tower_number != null) {
+      if ((!lines || lines.includes(r.line_name)) && (!from || (r.inspection_date||'') >= from) && (!to || (r.inspection_date||'') <= to) && r.tower_number != null) {
         towers.add(String(r.tower_number));
       }
     });
   }
   if (types.includes('treatment')) {
     (treatmentsCache||[]).forEach(t => {
-      if ((!line || t.line_name === line) && (!from || (t.treatment_date||'') >= from) && (!to || (t.treatment_date||'') <= to) && t.tower_number != null) {
+      if ((!lines || lines.includes(t.line_name)) && (!from || (t.treatment_date||'') >= from) && (!to || (t.treatment_date||'') <= to) && t.tower_number != null) {
         towers.add(String(t.tower_number));
       }
     });
   }
   if (types.includes('thermal')) {
     (reportThermalFormsCache||[]).forEach(f => {
-      if (line && f.line_name !== line) return;
+      if (lines && !lines.includes(f.line_name)) return;
       if (from && (f.inspection_date||'') < from) return;
       if (to && (f.inspection_date||'') > to) return;
       (Array.isArray(f.rows) ? f.rows : []).forEach(row => { if (row.tower_number) towers.add(String(row.tower_number)); });
@@ -12785,7 +12815,7 @@ function getReportAvailableTowers() {
     // القراءات الخام أيضاً — بدونها ما تظهر بقائمة الاختيار الأبراج اللي إلها قراءة ميدانية بس
     (thermalRecords||[]).forEach(r => {
       if (r.point_type !== 'tower') return;
-      if (line && r.line_name !== line) return;
+      if (lines && !lines.includes(r.line_name)) return;
       if (from && (r.inspection_date||'') < from) return;
       if (to && (r.inspection_date||'') > to) return;
       if (r.tower_number != null) towers.add(String(r.tower_number));
@@ -12903,7 +12933,7 @@ function dedupeLatestPerTowerDate(rows, dateField) {
 }
 
 function getReportFilteredInspections() {
-  const line = document.getElementById('repFilterLine').value;
+  const lines = getReportSelectedLines(); // null = كل الخطوط
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const categories = getReportSelectedCategories();
@@ -12911,7 +12941,7 @@ function getReportFilteredInspections() {
   // لو انعكس الترتيب، برج سُجّل أولاً بضرر ثم صُحّح بنفس اليوم (صار سليم) كان يظهر بتقرير
   // ذاك التصنيف اعتماداً على السجل القديم الملغى — أي التقرير يعرض حالة لم تعد قائمة.
   const base = (fullRecordsCache||[]).filter(r =>
-    (!line || r.line_name === line) &&
+    (!lines || lines.includes(r.line_name)) &&
     (!from || (r.inspection_date||'') >= from) &&
     (!to || (r.inspection_date||'') <= to) &&
     reportTowerPasses(r.tower_number)
@@ -12920,12 +12950,12 @@ function getReportFilteredInspections() {
   return sortByLineThenTower(latest.filter(r => inspectionMatchesCategories(r, categories)), 'tower_number');
 }
 function getReportFilteredTreatments() {
-  const line = document.getElementById('repFilterLine').value;
+  const lines = getReportSelectedLines();
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const categories = getReportSelectedCategories();
   const base = (treatmentsCache||[]).filter(t =>
-    (!line || t.line_name === line) &&
+    (!lines || lines.includes(t.line_name)) &&
     (!from || (t.treatment_date||'') >= from) &&
     (!to || (t.treatment_date||'') <= to) &&
     reportTowerPasses(t.tower_number)
@@ -12934,13 +12964,13 @@ function getReportFilteredTreatments() {
   return sortByLineThenTower(latest.filter(t => treatmentMatchesCategories(t, categories)), 'tower_number');
 }
 function getReportFilteredThermalForms() {
-  const line = document.getElementById('repFilterLine').value;
+  const lines = getReportSelectedLines();
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   // التصنيف يُتجاهل هنا (متفق عليه) — الكشف الحراري بيانات حرارة بس، ماله علاقة بقواعد/حديد/عوازل
   // فلتر الأبراج يُطبَّق على مستوى الصفوف داخل كل استمارة (استمارة واحدة تغطي عدة أبراج)
   return (reportThermalFormsCache||[])
-    .filter(f => (!line || f.line_name === line) && (!from || (f.inspection_date||'') >= from) && (!to || (f.inspection_date||'') <= to))
+    .filter(f => (!lines || lines.includes(f.line_name)) && (!from || (f.inspection_date||'') >= from) && (!to || (f.inspection_date||'') <= to))
     .map(f => ({
       ...f,
       rows: (Array.isArray(f.rows) ? f.rows : [])
@@ -12952,12 +12982,12 @@ function getReportFilteredThermalForms() {
 
 // القراءات الحرارية الخام (من شاشة "كشف حراري ← جديد") — مصدر منفصل عن الاستمارات الرسمية
 function getReportFilteredThermalRaw() {
-  const line = document.getElementById('repFilterLine').value;
+  const lines = getReportSelectedLines();
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   return (thermalRecords||[]).filter(r =>
     r.point_type === 'tower' &&
-    (!line || r.line_name === line) &&
+    (!lines || lines.includes(r.line_name)) &&
     (!from || (r.inspection_date||'') >= from) &&
     (!to || (r.inspection_date||'') <= to) &&
     reportTowerPasses(r.tower_number)
@@ -13098,7 +13128,7 @@ async function buildReportInspectionCardCanvas(r, categories) {
 
   const headerH = 40;
   const bodyH = wrapped.length ? (wrapped.length * 18 + 10) : 0;
-  const insDrawW = insImgEl ? Math.min(CARD_W - PAD*2, 340) : 0;
+  const insDrawW = insImgEl ? Math.min(CARD_W - PAD*2, 460) : 0;
   const insDrawH = insImgEl ? insDrawW * (insImg.h / insImg.w) : 0;
   const totalH = headerH + bodyH + (insImgEl ? insDrawH + 10 : 0) + PAD;
   const scale = 1.3;
@@ -13542,7 +13572,10 @@ async function deleteWholeHubDate() {
 // تصدير سريع لنفس الخط والتاريخ المعروضين حالياً — يهيّئ فلاتر قسم التصدير تلقائياً ثم يصدّر PDF
 async function exportHubGroupNow() {
   showHubView('hubHomeView');
-  document.getElementById('repFilterLine').value = hubSelectedLine;
+  // نحدد بس هذا الخط بخانات الاختيار المتعددة (نلغي "الكل" ونعلّم خانة هذا الخط تحديداً)
+  document.getElementById('repLinesAll').checked = false;
+  document.getElementById('repLinesWrap').style.display = 'grid';
+  document.querySelectorAll('.repLineChk').forEach(cb => { cb.checked = (cb.value === hubSelectedLine); });
   document.getElementById('repFrom').value = hubSelectedDate;
   document.getElementById('repTo').value = hubSelectedDate;
   // ترجمة صريحة بين تسميات المركز الموحّد وتسميات قسم التصدير — بدونها كان التصدير من قسم
