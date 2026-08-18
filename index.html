@@ -2224,6 +2224,25 @@ async function sbFetch(path, options = {}) {
   }
 }
 
+// يجلب كل صفوف استعلام عبر عدة صفحات — بدون هذا، أي جدول يتجاوز الحد الافتراضي لصفوف الاستجابة
+// الواحدة بـSupabase/PostgREST (عادة 1000 صف) كان يُقتطع بصمت تام (بدون أي خطأ أو تحذير)، فتختفي
+// بيانات قديمة من كل الميزات المعتمدة على الكاش الكامل (تقارير، مغادرات، حالة خطوط، أرشيف حراري...)
+async function fetchAllPages(baseQuery) {
+  const PAGE = 1000;
+  let offset = 0, all = [];
+  const sep = baseQuery.includes('?') ? '&' : '?';
+  while (true) {
+    const res = await sbFetch(`${baseQuery}${sep}limit=${PAGE}&offset=${offset}`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const chunk = await res.json();
+    if (!Array.isArray(chunk)) throw new Error('استجابة غير متوقعة');
+    all = all.concat(chunk);
+    if (chunk.length < PAGE) break;
+    offset += PAGE;
+  }
+  return all;
+}
+
 // ========================
 // SESSION STATE
 // ========================
@@ -4252,8 +4271,7 @@ async function loadFullRecordsCache(force) {
     return; // الكاش حديث، لا حاجة لإعادة التحميل
   }
   try {
-    const res = await sbFetch('inspections?select=*&order=created_at.desc');
-    fullRecordsCache = await res.json();
+    fullRecordsCache = await fetchAllPages('inspections?select=*&order=created_at.desc');
     fullRecordsCacheLoadedAt = now;
   } catch {
     // فشل التحميل: نستخدم الكاش الموجود أو نرجع لـ records العادية كحل بديل
@@ -4270,8 +4288,7 @@ async function loadRecords() {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const cutoffDate = sixMonthsAgo.toISOString().split('T')[0];
-    const res = await sbFetch(`inspections?select=*&inspection_date=gte.${cutoffDate}&order=created_at.desc`);
-    const data = await res.json();
+    const data = await fetchAllPages(`inspections?select=*&inspection_date=gte.${cutoffDate}&order=created_at.desc`);
     records = data;
     // كاش عرض فقط: نقلّله إلى 120 سجل ونتجاهل فشله بصمت — الأولوية المطلقة لمساحة الطوابير الميدانية
     try { localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 1000))); } catch(e) { try { localStorage.removeItem(DB_KEY); } catch(e2) {} }
@@ -5331,8 +5348,7 @@ async function renderOfficialFormArchive() {
   const body = document.getElementById('officialFormArchiveBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   try {
-    const res = await sbFetch('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
-    const list = await res.json();
+    const list = await fetchAllPages('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
     if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد استمارات محفوظة بعد</div>'; return; }
     body.innerHTML = list.map(f => {
       const n = Array.isArray(f.rows) ? f.rows.length : 0;
@@ -6203,8 +6219,7 @@ async function loadThermalArchive() {
   const body = document.getElementById('thermalArchiveBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   try {
-    const res = await sbFetch('thermal_inspections?select=*&order=inspection_date.desc,line_name.asc');
-    thermalRecords = await res.json();
+    thermalRecords = await fetchAllPages('thermal_inspections?select=*&order=inspection_date.desc,line_name.asc');
     // كاش عرض فقط: 500←200 لتقليل استهلاك المساحة، وفشله لا يجوز أن يعطّل شيئاً
     try { localStorage.setItem(THERMAL_DB_KEY, JSON.stringify(thermalRecords.slice(0, 200))); } catch(e) { try { localStorage.removeItem(THERMAL_DB_KEY); } catch(e2) {} }
   } catch {
@@ -7224,9 +7239,7 @@ async function generatePeriodSummaryReport() {
   document.getElementById('drPeriodActions').style.display = 'none';
 
   try {
-    const res = await sbFetch(`daily_reports?select=report_date,rows&report_date=gte.${from}&report_date=lte.${to}&order=report_date.asc`);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const days = await res.json();
+    const days = await fetchAllPages(`daily_reports?select=report_date,rows&report_date=gte.${from}&report_date=lte.${to}&order=report_date.asc`);
     const selected = getDrpSelectedActivities(); // null = الكل
 
     const byLine = {};
@@ -7897,16 +7910,13 @@ async function fetchPeriodActivity(fromDate, toDate) {
   const gte = `gte.${fromDate}T00:00:00`;
   const lt = `lt.${toPlus1Str}T00:00:00`;
 
-  const [inspRes, thermRes, lineThermRes, treatRes, emgRes, tgRes] = await Promise.all([
-    sbFetch(`inspections?select=created_by_name,line_name,tower_number,created_at&created_at=${gte}&created_at=${lt}`),
-    sbFetch(`thermal_inspections?select=created_by_name,line_name,tower_number,created_at&created_at=${gte}&created_at=${lt}`),
-    sbFetch(`line_entry_thermal?select=created_by_name,line_name,station_side,created_at&created_at=${gte}&created_at=${lt}`),
-    sbFetch(`treatments?select=treated_by,line_name,tower_number,items_treated,treatment_date&treatment_date=gte.${fromDate}&treatment_date=lte.${toDate}`),
-    sbFetch(`emergency_departures?select=created_by,treated_by,line_name,departure_type,created_at,treatment_date&created_at=${gte}&created_at=${lt}`),
-    sbFetch(`work_telegrams?select=created_by,line_name,status,outage_from,created_at&created_at=${gte}&created_at=${lt}`)
-  ]);
   const [insp, therm, lineTherm, treat, emg, tg] = await Promise.all([
-    inspRes.json(), thermRes.json(), lineThermRes.json(), treatRes.json(), emgRes.json(), tgRes.json()
+    fetchAllPages(`inspections?select=created_by_name,line_name,tower_number,created_at&created_at=${gte}&created_at=${lt}`),
+    fetchAllPages(`thermal_inspections?select=created_by_name,line_name,tower_number,created_at&created_at=${gte}&created_at=${lt}`),
+    fetchAllPages(`line_entry_thermal?select=created_by_name,line_name,station_side,created_at&created_at=${gte}&created_at=${lt}`),
+    fetchAllPages(`treatments?select=treated_by,line_name,tower_number,items_treated,treatment_date&treatment_date=gte.${fromDate}&treatment_date=lte.${toDate}`),
+    fetchAllPages(`emergency_departures?select=created_by,treated_by,line_name,departure_type,created_at,treatment_date&created_at=${gte}&created_at=${lt}`),
+    fetchAllPages(`work_telegrams?select=created_by,line_name,status,outage_from,created_at&created_at=${gte}&created_at=${lt}`)
   ]);
 
   const byEmp = {}; // name -> array of {sortDate, html}
@@ -8410,17 +8420,14 @@ async function loadStaffStats() {
   const wrap = document.getElementById('staffStatsList');
   wrap.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   try {
-    const [usersRes, inspRes, thermRes, lineThermRes, treatRes, emgRes, tgRes] = await Promise.all([
-      sbFetch('users?select=id,full_name,role'),
-      sbFetch('inspections?select=created_by_name,created_at'),
-      sbFetch('thermal_inspections?select=created_by_name,created_at'),
-      sbFetch('line_entry_thermal?select=created_by_name,created_at'),
-      sbFetch('treatments?select=treated_by,treatment_date'),
-      sbFetch('emergency_departures?select=created_by,treated_by,treatment_date,created_at'),
-      sbFetch('work_telegrams?select=created_by,created_at')
-    ]);
     const [users, insp, therm, lineTherm, treat, emg, tg] = await Promise.all([
-      usersRes.json(), inspRes.json(), thermRes.json(), lineThermRes.json(), treatRes.json(), emgRes.json(), tgRes.json()
+      fetchAllPages('users?select=id,full_name,role'),
+      fetchAllPages('inspections?select=created_by_name,created_at'),
+      fetchAllPages('thermal_inspections?select=created_by_name,created_at'),
+      fetchAllPages('line_entry_thermal?select=created_by_name,created_at'),
+      fetchAllPages('treatments?select=treated_by,treatment_date'),
+      fetchAllPages('emergency_departures?select=created_by,treated_by,treatment_date,created_at'),
+      fetchAllPages('work_telegrams?select=created_by,created_at')
     ]);
 
     const stats = {}; // name -> { inspections, thermal, lineThermal, treatments, emergencyReported, emergencyResolved, telegrams, lastActivity }
@@ -8765,9 +8772,7 @@ let linesInfoCache = JSON.parse(JSON.stringify(LINES_INFO)); // احتياط أ�
 
 async function loadLinesInfoFromDB() {
   try {
-    const res = await sbFetch('lines_info?select=*&order=idx.asc');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const rows = await res.json();
+    const rows = await fetchAllPages('lines_info?select=*&order=idx.asc');
     if (Array.isArray(rows) && rows.length) linesInfoCache = rows;
   } catch (e) {
     // فشل الاتصال: نبقى على القيم الاحتياطية الموجودة بالذاكرة (لا نكسر التطبيق أوف لاين)
@@ -10411,8 +10416,7 @@ let otherDepTreatState = {};
 
 async function loadTreatments() {
   try {
-    const res = await sbFetch('treatments?select=*&order=created_at.desc');
-    treatmentsCache = await res.json();
+    treatmentsCache = await fetchAllPages('treatments?select=*&order=created_at.desc');
   } catch { treatmentsCache = []; }
 }
 
@@ -12452,8 +12456,7 @@ async function renderTelegramLog() {
   const lineFilter = document.getElementById('tgFilterLine').value;
 
   try {
-    const res = await sbFetch('work_telegrams?select=*&order=created_at.desc');
-    let data = await res.json();
+    let data = await fetchAllPages('work_telegrams?select=*&order=created_at.desc');
 
     if (statusFilter) data = data.filter(r => r.status === statusFilter);
     if (lineFilter) data = data.filter(r => r.line_name === lineFilter);
@@ -12715,19 +12718,10 @@ async function startBackupRestore() {
 // ========================
 // التقارير الموحّدة
 // ========================
-const REPORT_CATEGORIES = {
-  foundation: { label: '🧱 قواعد', sevField: 'sev_foundation' },
-  insulator:  { label: '⚡ عوازل', sevField: 'sev_insulator' },
-  wires:      { label: '〰️ أسلاك', sevField: 'sev_wires' },
-  iron:       { label: '🔩 حديد', sevField: 'sev_iron' },
-  ground:     { label: '🌍 أرضي', sevField: 'sev_ground' },
-  fire:       { label: '🔥 مسببات حرائق', sevField: 'sev_fire' },
-  road:       { label: '🛣️ الطريق', sevField: null }
-};
 // بادئات مفاتيح "items_treated" بسجل المعالجات، لكل تصنيف — تُستخدم لفلترة تقرير المعالجات بالتصنيف
 const REPORT_CATEGORY_TREATMENT_PREFIXES = {
   foundation: ['foundation'],
-  insulator: ['ins_', 'ins2_', 'chainreplace_'],
+  insulator: ['ins_', 'ins2_', 'chainreplace_', 'plastic_', 'ceramic_', 'washing'],
   wires: ['wire_'],
   iron: ['iron', 'attachment'],
   ground: ['ground_'],
@@ -12739,8 +12733,7 @@ const REPORT_CATEGORY_TREATMENT_PREFIXES = {
 let reportThermalFormsCache = [];
 async function loadReportThermalForms() {
   try {
-    const res = await sbFetch('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
-    reportThermalFormsCache = await res.json();
+    reportThermalFormsCache = await fetchAllPages('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
   } catch (e) { reportThermalFormsCache = []; }
 }
 
@@ -12913,38 +12906,16 @@ function onReportFilterChange() {
 const isIssueSev = s => !!(s && s !== 'ok');
 
 // هل سجل كشف فيه فعلاً ضرر بأي من التصنيفات المطلوبة؟ (categories=null يعني بدون تصفية = مطابق دائماً)
-// حقول النص الفعلية لكل تصنيف — نفحصها بجانب درجة الخطورة، لأن بعض العناصر (ملحقات البرج مثلاً)
-// ما إلها حقل درجة خطورة أصلاً، فالاعتماد على الدرجة وحدها كان يُسقطها من التقرير رغم وجود ضرر مسجّل
-const REPORT_CATEGORY_TEXT_FIELDS = {
-  foundation: ['tower_foundations'],
-  iron: ['iron_intersections', 'tower_attachments'],
-  wires: ['wires_r1','wires_s1','wires_t1','wires_r1_c2','wires_s1_c2','wires_t1_c2'],
-  ground: ['ground_1','ground_2'],
-  fire: ['fire_causes','fire_causes_notes'],
-  road: ['road_access_notes']
-};
-function hasTextIssue(r, cat) {
-  const fields = REPORT_CATEGORY_TEXT_FIELDS[cat] || [];
-  return fields.some(f => {
-    const v = r[f];
-    return v && String(v).trim() && String(v).trim() !== 'سليم' && String(v).trim() !== 'متاح';
-  });
-}
+// تستخدم نفس آلية اكتشاف المغادرات المستخدمة بشاشة "المغادرات" بالضبط (extractDepsFromRecord) —
+// بدون هذا التوحيد كان عندنا نسختين منفصلتين لتحديد "هل فيه ضرر" تفترقان بحالات مثل عوازل
+// البلاستك/الخزف المتضررة وحاجة الغسل، فتظهر نتائج مختلفة بين المغادرات والتقارير لنفس البيانات
 function inspectionMatchesCategories(r, categories) {
   if (!categories) return true;
+  const deps = extractDepsFromRecord(r);
   return categories.some(cat => {
-    if (cat === 'road') return !!(r.road_access && r.road_access !== 'متاح') || hasTextIssue(r, 'road');
-    if (cat === 'insulator') {
-      const field = REPORT_CATEGORIES.insulator.sevField;
-      if (isIssueSev(r[field])) return true;
-      // احتياط: لو الدرجة غير مسجّلة، نفحص حالة العوازل الفعلية بالدائرتين
-      const st = safeParseJSON(r.insulator_state) || {};
-      const st2 = safeParseJSON(r.insulator_state_2) || {};
-      return ['R','S','T'].some(p => (st[p]||[]).some(Boolean) || (st2[p]||[]).some(Boolean));
-    }
-    const field = REPORT_CATEGORIES[cat] && REPORT_CATEGORIES[cat].sevField;
-    if (field && isIssueSev(r[field])) return true;
-    return hasTextIssue(r, cat);
+    if (cat === 'road') return !!(r.road_access && r.road_access !== 'متاح');
+    const prefixes = REPORT_CATEGORY_TREATMENT_PREFIXES[cat] || [];
+    return deps.some(d => prefixes.some(p => (d.key||'').startsWith(p)));
   });
 }
 function treatmentMatchesCategories(t, categories) {
@@ -13740,9 +13711,7 @@ async function loadInventoryTools() {
   const tbody = document.getElementById('toolsBody');
   tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
-    const res = await sbFetch('inventory_tools?select=*&order=name.asc');
-    if (!res.ok) throw new Error();
-    allTools = await res.json();
+    allTools = await fetchAllPages('inventory_tools?select=*&order=name.asc');
     renderTools();
   } catch {
     tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
@@ -13777,9 +13746,7 @@ async function loadBorrowedItems() {
   const tbody = document.getElementById('borrowedBody');
   tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
-    const res = await sbFetch('inventory_borrowed?select=*&order=created_at.desc');
-    if (!res.ok) throw new Error();
-    allBorrowed = await res.json();
+    allBorrowed = await fetchAllPages('inventory_borrowed?select=*&order=created_at.desc');
     renderBorrowedItems();
   } catch {
     tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
@@ -13990,9 +13957,7 @@ async function loadInventoryMaterials() {
   const tbody = document.getElementById('materialsBody');
   tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⏳ جاري التحميل...</td></tr>';
   try {
-    const res = await sbFetch('inventory_materials?select=*&order=name.asc');
-    if (!res.ok) throw new Error();
-    allMaterials = await res.json();
+    allMaterials = await fetchAllPages('inventory_materials?select=*&order=name.asc');
     renderMaterials();
   } catch {
     tbody.innerHTML = '<tr><td colspan="8" class="empty-state">⚠️ تعذر تحميل البيانات (تحقق من الاتصال)</td></tr>';
