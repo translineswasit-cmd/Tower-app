@@ -494,7 +494,7 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page active" id="page-home">
   <div class="home-hero"><h2>مرحباً بك بنظام كشف الأبراج</h2><p>النسخة الخفيفة — مخصّصة لتسجيل الكشوفات الميدانية بسرعة</p></div>
   <div class="cards-grid">
-    <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
+    <div class="card" onclick="showPage('form');clearForm();"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" id="homePendingCard" onclick="renderLitePendingInline()"><span class="icon">⏳</span><span class="label">المعلّقة</span><span class="sublabel">بانتظار الرفع</span></div>
   </div>
   <div id="litePendingInline" style="margin-top:16px"></div>
@@ -2194,8 +2194,13 @@ function endLineInspection(lineName) {
 
 function openTowerModal(lineName, towerNum) {
   document.getElementById('f_line_name').value = lineName;
-  if (!document.getElementById('f_inspection_date').value) {
-    document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
+  // لو التاريخ فاضي، أو لو تغيّر اليوم الفعلي عن المكتوب بالحقل (مثلاً التطبيق ضل مفتوح بالخلفية
+  // من يوم سابق)، نحدّثه لتاريخ اليوم الحقيقي تلقائياً — بدون ما يأثر على استمرار نفس جلسة العمل
+  // بنفس اليوم (ما يلمس الحقل لو التاريخ مطابق أصلاً)
+  const dateField = document.getElementById('f_inspection_date');
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (!dateField.value || dateField.value !== todayStr) {
+    dateField.value = todayStr;
   }
   const tSel = document.getElementById('f_tower_number');
   if (tSel.dataset.loadedFor !== lineName) {

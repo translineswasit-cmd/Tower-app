@@ -495,7 +495,7 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page active" id="page-home">
   <div class="home-hero"><h2>مرحباً بك في نظام كشف الأبراج</h2><p>سجّل بيانات الكشف، تصفح السجلات، وصدّر التقارير</p></div>
   <div class="cards-grid">
-    <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
+    <div class="card" onclick="showPage('form');clearForm();"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" id="homePendingCard" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span><span class="sublabel">بانتظار الرفع</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
@@ -508,7 +508,7 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page" id="page-services">
   <div class="page-title">🧰 الخدمات</div>
   <div class="cards-grid cards-grid-3col">
-    <div class="card" onclick="showPage('form')"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
+    <div class="card" onclick="showPage('form');clearForm();"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
     <div class="card" id="svcHubCard" onclick="showPage('recordsHub');openRecordsHub()"><span class="icon">📚</span><span class="label">السجلات والتقارير</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span></div>
@@ -2929,17 +2929,17 @@ function getLatestRecordForTower(lineName, towerNum) {
   return recs[0];
 }
 
-async function renderTowersGrid(lineName) {
-  currentGridLine = lineName;
+// رسم شبكة الأبراج من الذاكرة المحلية مباشرة — بدون أي طلب شبكة. تُستخدم بعد الحفظ الناجح
+// (فوري، ما يحتاج ننتظر السيرفر لأننا أصلاً حدّثنا fullRecordsCache محلياً بالسجل الجديد)
+function renderTowersGridFromCache(lineName) {
   const section = document.getElementById('towersGridSection');
   const grid = document.getElementById('towersGrid');
   const titleEl = document.getElementById('towersGridTitle');
   if (!lineName) { section.style.display = 'none'; renderActiveLinesTabs(); return; }
+  currentGridLine = lineName;
   section.style.display = '';
   titleEl.textContent = '🗼 أبراج خط: ' + lineName;
-  grid.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات الأبراج...</div>';
   try {
-    await loadFullRecordsCache();
     const towers = getLineTowers(lineName);
     grid.innerHTML = towers.map(t => {
       // عزل كل برج لحاله: لو سجل برج واحد تالف (تنسيق غريب جاي من قائمة إرسال مؤجل مثلاً)، يطلع
@@ -2974,6 +2974,25 @@ async function renderTowersGrid(lineName) {
       }
     }).join('');
     renderActiveLinesTabs();
+  } catch (e) {
+    console.warn('[tower-app] فشل رسم شبكة أبراج الخط', lineName, e);
+    grid.innerHTML = `<div class="empty-state">❌ تعذّر عرض بيانات هذا الخط<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="renderTowersGrid('${String(lineName).replace(/'/g,"\\'")}')">🔄 إعادة المحاولة</button></div>`;
+    renderActiveLinesTabs();
+  }
+}
+
+// فتح خط لأول مرة: يتأكد الكاش محدَّث من السيرفر أولاً، بعدين يرسم. بدون هذا الفحص لأول فتحة،
+// كان يحتمل نرسم ببيانات قديمة لو دخلت على الخط أول مرة بنفس الجلسة
+async function renderTowersGrid(lineName) {
+  const section = document.getElementById('towersGridSection');
+  const grid = document.getElementById('towersGrid');
+  if (!lineName) { section.style.display = 'none'; renderActiveLinesTabs(); return; }
+  section.style.display = '';
+  document.getElementById('towersGridTitle').textContent = '🗼 أبراج خط: ' + lineName;
+  grid.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات الأبراج...</div>';
+  try {
+    await loadFullRecordsCache();
+    renderTowersGridFromCache(lineName);
   } catch (e) {
     console.warn('[tower-app] فشل تحميل شبكة أبراج الخط', lineName, e);
     grid.innerHTML = `<div class="empty-state">❌ تعذّر تحميل بيانات هذا الخط<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="renderTowersGrid('${String(lineName).replace(/'/g,"\\'")}')">🔄 إعادة المحاولة</button></div>`;
@@ -3032,8 +3051,13 @@ function endLineInspection(lineName) {
 
 function openTowerModal(lineName, towerNum) {
   document.getElementById('f_line_name').value = lineName;
-  if (!document.getElementById('f_inspection_date').value) {
-    document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
+  // لو التاريخ فاضي، أو لو تغيّر اليوم الفعلي عن المكتوب بالحقل (مثلاً التطبيق ضل مفتوح بالخلفية
+  // من يوم سابق)، نحدّثه لتاريخ اليوم الحقيقي تلقائياً — بدون ما يأثر على استمرار نفس جلسة العمل
+  // بنفس اليوم (ما يلمس الحقل لو التاريخ مطابق أصلاً)
+  const dateField = document.getElementById('f_inspection_date');
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (!dateField.value || dateField.value !== todayStr) {
+    dateField.value = todayStr;
   }
   const tSel = document.getElementById('f_tower_number');
   if (tSel.dataset.loadedFor !== lineName) {
@@ -4029,6 +4053,16 @@ function cancelEdit() {
   document.getElementById('cancelEditBtn').style.display='none';
 }
 
+// مهلة قصوى "ناعمة": توقف انتظار الواجهة لهذا الطلب بعد المدة المحددة، بدون ما تلغي الطلب نفسه
+// (يستمر بالخلفية وقد ينجح لاحقاً — آمن لأن كل حفظ جديد له client_uuid يمنع التكرار بقاعدة البيانات).
+// بدون هذا، النت الضعيف (مو المنقطع) كان يخلي زر الحفظ يعلّق لدقائق بدون أي حد أقصى.
+function withSoftTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('SOFT_TIMEOUT')), ms);
+    promise.then(v => { clearTimeout(timer); resolve(v); }, e => { clearTimeout(timer); reject(e); });
+  });
+}
+
 async function saveRecord() {
   const d = getFormData();
   if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
@@ -4064,13 +4098,13 @@ async function saveRecord() {
       if (idx2 !== -1) records[idx2] = { ...records[idx2], ...patchData };
     }
     try {
-      const res = await sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(patchData) });
+      const res = await withSoftTimeout(sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(patchData) }), 8000);
       if (res.ok) {
         applyEditLocally();
         showToast('✅ تم تحديث السجل');
         document.getElementById('towerInspectionModal').classList.remove('show');
         cancelEdit(); loadRecords();
-        if (currentGridLine) renderTowersGrid(currentGridLine);
+        if (currentGridLine) renderTowersGridFromCache(currentGridLine);
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -4081,13 +4115,13 @@ async function saveRecord() {
       document.getElementById('towerInspectionModal').classList.remove('show');
       cancelEdit();
       applyEditLocally();
-      if (currentGridLine) renderTowersGrid(currentGridLine);
+      if (currentGridLine) renderTowersGridFromCache(currentGridLine);
     }
   } else {
     // كشف جديد — دائماً نولّد client_uuid لمنع التكرار عند إعادة الإرسال
     d.client_uuid = d.client_uuid || genUUID();
     try {
-      const res = await sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=representation'}, body: JSON.stringify(d) });
+      const res = await withSoftTimeout(sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=representation'}, body: JSON.stringify(d) }), 8000);
       if (res.ok) {
         let savedRow = d;
         try { const arr = await res.json(); if (Array.isArray(arr) && arr.length && arr[0].id) savedRow = arr[0]; } catch(e) { console.warn('[tower-app] فشل تحليل رد الحفظ — سيُستخدم السجل المحلي بدون id حقيقي من السيرفر', e); }
@@ -4114,7 +4148,9 @@ function afterGridSaveSuccess(d) {
   fullRecordsCache.unshift({ ...d, created_at: d.created_at || new Date().toISOString() });
   document.getElementById('towerInspectionModal').classList.remove('show');
   resetTowerFieldsOnly();
-  if (currentGridLine) renderTowersGrid(currentGridLine);
+  // فوري من الذاكرة المحلية — بدون هذا كان يعيد تحميل كل الكشوفات من السيرفر بعد كل حفظ، وهذا
+  // بالضبط اللي يسبب "تحميل" بطيء بعد كل برج على نت ضعيف رغم إن البيانات محدَّثة أصلاً محلياً
+  if (currentGridLine) renderTowersGridFromCache(currentGridLine);
 }
 
 // ==================== حماية بيانات الأوف لاين (كتابة آمنة + منع سباق المزامنة) ====================
@@ -7361,6 +7397,13 @@ async function exportPeriodSummaryPDF() {
 async function generateDailyReport() {
   const date = document.getElementById('dr_date').value;
   if (!date) { showToast('⚠️ اختر التاريخ أولاً', 'error'); return; }
+  // تحذير مهم: التقرير يقرأ من السيرفر مباشرة — لو فيه بيانات لسا بجهازك ما وصلت (أوف لاين أو نت
+  // ضعيف)، التقرير يطلع ناقص بصمت (مثلاً كشفت 30 برج ووصل السيرفر منهم 1-2 بس وقت التوليد)
+  const pending = getTotalPendingCount();
+  if (pending > 0) {
+    const proceed = confirm(`⚠️ عندك ${pending} عنصر بجهازك لسا ما وصل السيرفر (بانتظار الرفع).\n\nلو تولّد التقرير الحين، ممكن يطلع ناقص (ما يشمل هذي البيانات لحد ما توصل).\n\nتأكد من اتصال النت وانتظر لين يوصل صفر بالشارة، وبعدها ولّد التقرير.\n\nتبي تكمل التوليد الحين على أي حال؟`);
+    if (!proceed) return;
+  }
   editingDailyReportId = null;
 
   document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">⏳ جاري التوليد...</div>';
@@ -13132,7 +13175,7 @@ async function buildReportInspectionCardCanvas(r, categories) {
   const bodyH = wrapped.length ? (wrapped.length * 18 + 10) : 0;
   const insDrawW = insImgEl ? Math.min(CARD_W - PAD*2, 680) : 0;
   const insDrawH = insImgEl ? insDrawW * (insImg.h / insImg.w) : 0;
-  const totalH = headerH + bodyH + (insImgEl ? insDrawH + 10 : 0) + PAD;
+  const totalH = headerH + bodyH + (insImgEl ? insDrawH + 10 : 0) + PAD*2;
   const scale = 1.3;
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(CARD_W * scale);
