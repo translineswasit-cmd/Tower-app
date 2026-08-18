@@ -13161,7 +13161,18 @@ async function buildReportInspectionCardCanvas(r, categories) {
   if (showInsulator) {
     insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number, r.insulator_chain_types, r.insulator_chain_types_2);
     if (insImg) insImgEl = await loadImageFromDataUrl(insImg.dataUrl);
-    if (!insImgEl) lines.push('⚡ العوازل: سليمة (لا يوجد ضرر مسجّل)');
+    // خط مزدوج: كل دائرة تُذكر لحالها صراحة (سليمة/متضررة) — بدل جملة عامة واحدة تخفي حالة الدائرة الثانية
+    if (isDoubleCircuitLine(r.line_name)) {
+      const circuitHasDamage = (stateJSON) => {
+        const st = safeParseJSON(stateJSON) || {};
+        return ['R','S','T'].some(p => (st[p]||[]).some(Boolean));
+      };
+      if (!circuitHasDamage(r.insulator_state)) lines.push('⚡ عوازل الدائرة الأولى: سليمة (لا يوجد ضرر مسجّل)');
+      if (!circuitHasDamage(r.insulator_state_2)) lines.push('⚡ عوازل الدائرة الثانية: سليمة (لا يوجد ضرر مسجّل)');
+      // الدائرة اللي فيها ضرر (لو وُجدت) تظهر بالصورة أدناه — بعنوانها الخاص، لا داعي لتكرار ذكرها بالنص
+    } else if (!insImgEl) {
+      lines.push('⚡ العوازل: سليمة (لا يوجد ضرر مسجّل)');
+    }
   }
   if (!lines.length && !insImgEl) lines.push('لا توجد بيانات لهذا التصنيف بهذا الكشف');
 
