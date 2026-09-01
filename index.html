@@ -4598,8 +4598,7 @@ const EXPORT_COLUMNS = [
   { label: 'أسلاك T',                 get: r => r.wires_t1 },
   { label: 'الأرضي 1',                get: r => r.ground_1 },
   { label: 'الأرضي 2',                get: r => r.ground_2 },
-  { label: 'مسببات الحرائق',          get: r => r.fire_causes },
-  { label: 'ملاحظات مسببات الحرائق',  get: r => r.fire_causes_notes },
+  { label: 'مسببات الحرائق',          get: r => r.fire_causes_notes },
   { label: 'وجود طريق',               get: r => r.road_access },
   { label: 'ملاحظات الطريق',          get: r => r.road_access_notes },
   { label: 'ملاحظات',                 get: r => r.notes }
@@ -12905,19 +12904,6 @@ function onReportFilterChange() {
 
 const isIssueSev = s => !!(s && s !== 'ok');
 
-// هل سجل كشف فيه فعلاً ضرر بأي من التصنيفات المطلوبة؟ (categories=null يعني بدون تصفية = مطابق دائماً)
-// تستخدم نفس آلية اكتشاف المغادرات المستخدمة بشاشة "المغادرات" بالضبط (extractDepsFromRecord) —
-// بدون هذا التوحيد كان عندنا نسختين منفصلتين لتحديد "هل فيه ضرر" تفترقان بحالات مثل عوازل
-// البلاستك/الخزف المتضررة وحاجة الغسل، فتظهر نتائج مختلفة بين المغادرات والتقارير لنفس البيانات
-function inspectionMatchesCategories(r, categories) {
-  if (!categories) return true;
-  const deps = extractDepsFromRecord(r);
-  return categories.some(cat => {
-    if (cat === 'road') return !!(r.road_access && r.road_access !== 'متاح');
-    const prefixes = REPORT_CATEGORY_TREATMENT_PREFIXES[cat] || [];
-    return deps.some(d => prefixes.some(p => (d.key||'').startsWith(p)));
-  });
-}
 function treatmentMatchesCategories(t, categories) {
   if (!categories) return true;
   const items = t.items_treated || [];
@@ -12952,18 +12938,15 @@ function getReportFilteredInspections() {
   const lines = getReportSelectedLines(); // null = كل الخطوط
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
-  const categories = getReportSelectedCategories();
-  // مهم: إزالة التكرار تجري **قبل** فلترة التصنيف، لا بعدها.
-  // لو انعكس الترتيب، برج سُجّل أولاً بضرر ثم صُحّح بنفس اليوم (صار سليم) كان يظهر بتقرير
-  // ذاك التصنيف اعتماداً على السجل القديم الملغى — أي التقرير يعرض حالة لم تعد قائمة.
   const base = (fullRecordsCache||[]).filter(r =>
     (!lines || lines.includes(r.line_name)) &&
     (!from || (r.inspection_date||'') >= from) &&
     (!to || (r.inspection_date||'') <= to) &&
     reportTowerPasses(r.tower_number)
   );
-  const latest = dedupeLatestPerTowerDate(base, 'inspection_date');
-  return sortByLineThenTower(latest.filter(r => inspectionMatchesCategories(r, categories)), 'tower_number');
+  // ملاحظة مهمة: لا نفلتر بالتصنيف هنا — كل برج مطابق للخط/التاريخ/نطاق الأبراج يظهر بالتقرير دائماً،
+  // والتصنيف المختار يتحكم بس بشنو المعلومات تُعرض بكل بطاقة (سليم أو تفاصيل الضرر) — راجع buildReportInspectionCardCanvas
+  return sortByLineThenTower(dedupeLatestPerTowerDate(base, 'inspection_date'), 'tower_number');
 }
 function getReportFilteredTreatments() {
   const lines = getReportSelectedLines();
@@ -13115,17 +13098,36 @@ function loadImageFromDataUrl(dataUrl) {
 async function buildReportInspectionCardCanvas(r, categories) {
   const CARD_W = 760, PAD = 18;
   const lines = [];
-  const addCat = (label, text) => { if (text && String(text).trim()) lines.push(`${label}: ${text}`); };
+  // نفس تسميات درجات الخطورة المستخدمة بالاستمارة بالضبط — تُذكر قرب كل عنصر متضرر
+  const SEV_LABELS = { critical: 'حرجة', moderate: 'متوسطة', simple: 'بسيطة', below_critical: 'دون الحرجة' };
+  // كل تصنيف مختار يظهر دائماً — لو ما فيه ضرر يكتب "سليم"، لو فيه يكتب التفاصيل + درجة الخطورة.
+  // بدون هذا، كان البرج السليم يختفي كلياً من التقرير المصنَّف بدل ما يظهر ويوضَّح إنه سليم.
+  const addCat = (label, text, sevCode) => {
+    if (text && String(text).trim() && String(text).trim() !== 'سليم') {
+      const sevText = (sevCode && SEV_LABELS[sevCode]) ? ` — (${SEV_LABELS[sevCode]})` : '';
+      lines.push(`${label}: ${text}${sevText}`);
+    } else {
+      lines.push(`${label}: سليم`);
+    }
+  };
 
   const showAll = !categories;
   const showInsulator = showAll || categories.includes('insulator');
 
-  if (showAll || categories.includes('foundation')) addCat('🧱 قواعد البرج', r.tower_foundations);
-  if (showAll || categories.includes('iron')) { addCat('🔩 تقاطعات الحديد', r.iron_intersections); addCat('🔩 ملحقات البرج', r.tower_attachments); }
-  if (showAll || categories.includes('wires')) { addCat('〰️ أسلاك R', r.wires_r1); addCat('〰️ أسلاك S', r.wires_s1); addCat('〰️ أسلاك T', r.wires_t1); }
-  if (showAll || categories.includes('ground')) { addCat('🌍 الأرضي 1', r.ground_1); addCat('🌍 الأرضي 2', r.ground_2); }
-  if (showAll || categories.includes('fire')) { addCat('🔥 مسببات الحرائق', r.fire_causes); addCat('🔥 ملاحظات', r.fire_causes_notes); }
-  if (showAll || categories.includes('road')) { addCat('🛣️ الطريق', r.road_access); addCat('🛣️ ملاحظات الطريق', r.road_access_notes); }
+  if (showAll || categories.includes('foundation')) addCat('🧱 قواعد البرج', r.tower_foundations, r.sev_foundation);
+  if (showAll || categories.includes('iron')) { addCat('🔩 تقاطعات الحديد', r.iron_intersections, r.sev_iron); addCat('🔩 ملحقات البرج', r.tower_attachments, r.sev_iron); }
+  if (showAll || categories.includes('wires')) { addCat('〰️ أسلاك R', r.wires_r1, r.sev_wires); addCat('〰️ أسلاك S', r.wires_s1, r.sev_wires); addCat('〰️ أسلاك T', r.wires_t1, r.sev_wires); }
+  if (showAll || categories.includes('ground')) { addCat('🌍 الأرضي 1', r.ground_1, r.sev_ground); addCat('🌍 الأرضي 2', r.ground_2, r.sev_ground); }
+  // ملاحظة: لا يوجد حقل fire_causes منفصل محفوظ فعلياً بقاعدة البيانات (fire_causes_notes هو الحقل الحقيقي الوحيد) —
+  // الإشارة القديمة لـr.fire_causes كانت دائماً فارغة (مرجع لحقل غير موجود)، فما كانت تظهر أي قيمة إطلاقاً
+  if (showAll || categories.includes('fire')) addCat('🔥 مسببات الحرائق', r.fire_causes_notes, r.sev_fire);
+  if (showAll || categories.includes('road')) {
+    lines.push(`🛣️ الطريق: ${r.road_access || 'لم يُسجَّل'}`);
+    if (r.road_access_notes && r.road_access_notes.trim()) lines.push(`🛣️ ملاحظات الطريق: ${r.road_access_notes.trim()}`);
+  }
+
+  // الملاحظات العامة لآخر كشف — تظهر دائماً إذا كان فيها أي نص، بغض النظر عن التصنيف المختار
+  if (r.notes && String(r.notes).trim()) lines.push(`📝 ملاحظات: ${r.notes.trim()}`);
 
   // صورة العوازل الحقيقية (شكل + تدرّج حسب الحالة) — نفس الدالة المستخدمة بتصدير الكشف الأصلي؛ null يعني كلها سليمة
   let insImg = null, insImgEl = null;
@@ -13198,7 +13200,7 @@ const REPORT_CATEGORY_EXPORT_COLUMN_LABELS = {
   insulator: ['العوازل'],
   wires: ['أسلاك R', 'أسلاك S', 'أسلاك T'],
   ground: ['الأرضي 1', 'الأرضي 2'],
-  fire: ['مسببات الحرائق', 'ملاحظات مسببات الحرائق'],
+  fire: ['مسببات الحرائق'],
   road: ['وجود طريق', 'ملاحظات الطريق']
 };
 const REPORT_ALWAYS_COLUMNS = ['اسم الخط', 'تاريخ الكشف', 'رقم البرج', 'نوع البرج', 'الجهد', 'الموظف'];
