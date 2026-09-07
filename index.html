@@ -9946,10 +9946,10 @@ function drawGroupedCanvas(ctx, originX, originY, state, treatedIdx, cycleArr, t
 }
 
 // يبني صورة PNG واحدة فيها الفيزات R/S/T جنب بعض — بالرسم المباشر فقط، بدون أي تحويل HTML/SVG وسيط
-function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineName, insulatorCycleJSON, insulatorStateJSON2, insulatorCycleJSON2, towerNumber, chainTypesJSON, chainTypesJSON2) {
+function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineName, insulatorCycleJSON, insulatorStateJSON2, insulatorCycleJSON2, towerNumber, chainTypesJSON, chainTypesJSON2, forceSingleCircuit) {
   const state = safeParseJSON(insulatorStateJSON);
   if (!state) return null;
-  const isDouble = isDoubleCircuitLine(lineName, insulatorStateJSON2);
+  const isDouble = forceSingleCircuit ? false : isDoubleCircuitLine(lineName, insulatorStateJSON2);
   const state2 = isDouble ? safeParseJSON(insulatorStateJSON2) : null;
   const hasDamage1 = ['R','S','T'].some(p => (state[p]||[]).some(Boolean));
   const hasDamage2 = state2 ? ['R','S','T'].some(p => (state2[p]||[]).some(Boolean)) : false;
@@ -13140,25 +13140,38 @@ async function buildReportInspectionCardCanvas(r, categories) {
   // الملاحظات العامة لآخر كشف — تظهر دائماً إذا كان فيها أي نص، بغض النظر عن التصنيف المختار
   if (r.notes && String(r.notes).trim()) lines.push(`📝 ملاحظات: ${r.notes.trim()}`);
 
-  // صورة العوازل الحقيقية (شكل + تدرّج حسب الحالة) — نفس الدالة المستخدمة بتصدير الكشف الأصلي؛ null يعني كلها سليمة
-  let insImg = null, insImgEl = null;
+  // صور العوازل — منفصلة كلياً عن بطاقة النص، وموزَّعة كل وحدة لحالها. هذا مهم جداً: لو رسمنا
+  // الدائرتين بصورة واحدة مدمجة وكانت الاثنتان متضررتان، الصورة تتجاوز ارتفاع الصفحة بسهولة (تأكدنا
+  // رياضياً: ممكن توصل لأكثر من ضعف الارتفاع المتاح)، فتنقطع الدائرة الثانية بصمت تام بلا أي أثر.
+  // الحل: كل دائرة متضررة تُرسم كصورة PNG مستقلة، توزَّع على الصفحات بشكل مستقل بنفس آلية باقي البطاقات.
+  const insuratorImageCards = [];
   if (showInsulator) {
-    insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, r.insulator_state_2, r.insulator_cycle_2, r.tower_number, r.insulator_chain_types, r.insulator_chain_types_2);
-    if (insImg) insImgEl = await loadImageFromDataUrl(insImg.dataUrl);
-    // خط مزدوج: كل دائرة تُذكر لحالها صراحة (سليمة/متضررة) — بدل جملة عامة واحدة تخفي حالة الدائرة الثانية
-    if (isDoubleCircuitLine(r.line_name, r.insulator_state_2)) {
-      const circuitHasDamage = (stateJSON) => {
-        const st = safeParseJSON(stateJSON) || {};
-        return ['R','S','T'].some(p => (st[p]||[]).some(Boolean));
-      };
-      if (!circuitHasDamage(r.insulator_state)) lines.push('⚡ عوازل الدائرة الأولى: سليمة (لا يوجد ضرر مسجّل)');
-      if (!circuitHasDamage(r.insulator_state_2)) lines.push('⚡ عوازل الدائرة الثانية: سليمة (لا يوجد ضرر مسجّل)');
-      // الدائرة اللي فيها ضرر (لو وُجدت) تظهر بالصورة أدناه — بعنوانها الخاص، لا داعي لتكرار ذكرها بالنص
-    } else if (!insImgEl) {
-      lines.push('⚡ العوازل: سليمة (لا يوجد ضرر مسجّل)');
+    const isDouble = isDoubleCircuitLine(r.line_name, r.insulator_state_2);
+    const circuitHasDamage = (stateJSON) => {
+      const st = safeParseJSON(stateJSON) || {};
+      return ['R','S','T'].some(p => (st[p]||[]).some(Boolean));
+    };
+    if (isDouble) {
+      const dmg1 = circuitHasDamage(r.insulator_state);
+      const dmg2 = circuitHasDamage(r.insulator_state_2);
+      if (!dmg1) lines.push('⚡ عوازل الدائرة الأولى: سليمة (لا يوجد ضرر مسجّل)');
+      if (!dmg2) lines.push('⚡ عوازل الدائرة الثانية: سليمة (لا يوجد ضرر مسجّل)');
+      // كل دائرة متضررة تُبنى كصورة مستقلة (forceSingleCircuit=true) بعنوانها الخاص — بدل صورة واحدة مدمجة
+      if (dmg1) {
+        const img1 = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, null, null, r.tower_number, r.insulator_chain_types, null, true);
+        if (img1) insuratorImageCards.push(await buildInsulatorImageCard(r, img1, '⚡ عوازل الدائرة الأولى'));
+      }
+      if (dmg2) {
+        const img2 = buildInsulatorExportPNG(r.insulator_state_2, r.voltage, r.tower_type, r.line_name, r.insulator_cycle_2, null, null, r.tower_number, r.insulator_chain_types_2, null, true);
+        if (img2) insuratorImageCards.push(await buildInsulatorImageCard(r, img2, '⚡ عوازل الدائرة الثانية'));
+      }
+    } else {
+      const insImg = buildInsulatorExportPNG(r.insulator_state, r.voltage, r.tower_type, r.line_name, r.insulator_cycle, null, null, r.tower_number, r.insulator_chain_types, null, true);
+      if (insImg) insuratorImageCards.push(await buildInsulatorImageCard(r, insImg, '⚡ العوازل'));
+      else lines.push('⚡ العوازل: سليمة (لا يوجد ضرر مسجّل)');
     }
   }
-  if (!lines.length && !insImgEl) lines.push('لا توجد بيانات لهذا التصنيف بهذا الكشف');
+  if (!lines.length && !insuratorImageCards.length) lines.push('لا توجد بيانات لهذا التصنيف بهذا الكشف');
 
   const measureCanvas = document.createElement('canvas');
   const mctx = measureCanvas.getContext('2d');
@@ -13168,9 +13181,7 @@ async function buildReportInspectionCardCanvas(r, categories) {
 
   const headerH = 40;
   const bodyH = wrapped.length ? (wrapped.length * 18 + 10) : 0;
-  const insDrawW = insImgEl ? Math.min(CARD_W - PAD*2, 680) : 0;
-  const insDrawH = insImgEl ? insDrawW * (insImg.h / insImg.w) : 0;
-  const totalH = headerH + bodyH + (insImgEl ? insDrawH + 10 : 0) + PAD*2;
+  const totalH = headerH + bodyH + PAD*2;
   const scale = 1.3;
   const canvas = document.createElement('canvas');
   canvas.width = Math.ceil(CARD_W * scale);
@@ -13193,13 +13204,39 @@ async function buildReportInspectionCardCanvas(r, categories) {
     ctx.font = '13px Tahoma, Arial, sans-serif';
     ctx.fillStyle = '#3C3C3C';
     wrapped.forEach(line => { ctx.fillText(line, CARD_W - PAD, y); y += 18; });
-    y += 4;
   }
 
+  const textCard = { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
+  return [textCard, ...insuratorImageCards];
+}
+
+// بطاقة صورة عازل مستقلة (دائرة واحدة فقط) — تُستخدم بدل تضمين الصورة داخل بطاقة النص، حتى تُوزَّع
+// على الصفحات بشكل مستقل ولا تنقطع لو تجاوزت المساحة المتبقية بالصفحة الحالية
+async function buildInsulatorImageCard(r, insImg, titleLabel) {
+  const CARD_W = 760, PAD = 18;
+  const insImgEl = await loadImageFromDataUrl(insImg.dataUrl);
+  const insDrawW = Math.min(CARD_W - PAD*2, 680);
+  const insDrawH = insImgEl ? insDrawW * (insImg.h / insImg.w) : 0;
+  const headerH = 34;
+  const totalH = headerH + insDrawH + PAD*1.5;
+  const scale = 1.3;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(CARD_W * scale);
+  canvas.height = Math.ceil(totalH * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, totalH);
+  ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+
+  let y = PAD;
+  ctx.fillStyle = '#1A2A46';
+  ctx.font = 'bold 13px Tahoma, Arial, sans-serif';
+  ctx.fillText(`${titleLabel} — الخط: ${r.line_name||'-'} | برج: ${r.tower_number||'-'}`, CARD_W - PAD, y);
+  y += 16;
+
   if (insImgEl) {
-    const insX = CARD_W - PAD - insDrawW; // محاذاة يمين مثل باقي المحتوى
-    try { ctx.drawImage(insImgEl, insX, y, insDrawW, insDrawH); } catch(e) { console.warn('[tower-app] فشل رسم صورة العازل ببطاقة التقرير', e); }
-    y += insDrawH;
+    const insX = CARD_W - PAD - insDrawW;
+    try { ctx.drawImage(insImgEl, insX, y, insDrawW, insDrawH); } catch(e) { console.warn('[tower-app] فشل رسم صورة العازل المستقلة بالتقرير', e); }
   }
 
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
@@ -13358,7 +13395,7 @@ async function generateUnifiedReportPDF() {
       const treatForTower = treatments.filter(t => t.line_name === line_name && String(t.tower_number) === String(tower_number));
       const thermalNotes = types.includes('thermal') ? getThermalNotesForTower(line_name, tower_number, thermalRaw, thermalForms) : [];
 
-      for (const r of insForTower) await drawCard(await buildReportInspectionCardCanvas(r, categories));
+      for (const r of insForTower) { for (const card of await buildReportInspectionCardCanvas(r, categories)) await drawCard(card); }
       for (const t of treatForTower) await drawCard(await buildTreatLogRecordCanvas(t));
       if (thermalNotes.length) await drawCard(await buildThermalNotesCardCanvas(line_name, tower_number, thermalNotes));
     }
