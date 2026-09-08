@@ -859,6 +859,23 @@ tbody tr:hover { background: #F7FAFC; }
       <div id="depExportLinesWrap" style="max-height:130px;overflow-y:auto;border:1.5px solid #E2E8F0;border-radius:8px;padding:8px"></div>
     </div>
 
+    <!-- اختيار التصنيفات -->
+    <div style="margin-top:12px">
+      <label style="font-weight:700;font-size:0.88rem">التصنيفات</label>
+      <p style="font-size:0.74rem;color:#a0aec0;margin:2px 0 6px">يصدّر بس الأبراج والتفاصيل المطابقة للتصنيف المختار. الطريق والملاحظات تظهر دائماً بغض النظر عن الاختيار.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;background:#EBF0F5;padding:4px 10px;border-radius:14px"><input type="checkbox" id="depExportCategoryAll" checked onchange="onDepExportCategoryAllToggle()"> الكل</label>
+      </div>
+      <div id="depExportCatWrap" style="display:none;grid-template-columns:1fr 1fr;gap:2px 8px;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px">
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="foundation" onchange="onDepExportCategoryPick()"> 🧱 قواعد</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="iron" onchange="onDepExportCategoryPick()"> 🔩 حديد/ملحقات</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="insulator" onchange="onDepExportCategoryPick()"> ⚡ عوازل</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="wires" onchange="onDepExportCategoryPick()"> 〰️ أسلاك</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="ground" onchange="onDepExportCategoryPick()"> 🌍 أرضي</label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="fire" onchange="onDepExportCategoryPick()"> 🔥 حرائق</label>
+      </div>
+    </div>
+
     <!-- نطاق الأبراج -->
     <div style="margin-top:12px;padding:10px;background:#F7FAFC;border-radius:8px">
       <div style="font-weight:700;font-size:0.85rem;margin-bottom:8px">نطاق الأبراج (اختياري)</div>
@@ -3133,7 +3150,7 @@ let loadedLineCacheAt = {}; // { [lineName]: timestamp }
 // تستخدمهم لاكتشاف ضرر الدائرة الثانية وعوازل البلاستك/الخزف من نفس هذا الكاش بالضبط.
 const GRID_SELECT_FIELDS = ['id','line_name','tower_number','tower_type','voltage','inspection_date',
   'insulator_state','insulator_state_2','insulator_chain_types','insulator_washing',
-  'tower_foundations','iron_intersections','tower_attachments','ground_1','ground_2','fire_causes_notes','road_access','road_access_notes',
+  'tower_foundations','iron_intersections','tower_attachments','ground_1','ground_2','fire_causes_notes','road_access','road_access_notes','notes',
   'sev_insulator','sev_foundation','sev_iron','sev_wires','sev_ground','sev_fire'].join(',');
 
 async function loadLineRecordsCache(lineName, force) {
@@ -4446,10 +4463,10 @@ async function loadFullRecordsCache(force) {
     // مو من هذا الكاش. لو الرؤية غير موجودة بعد (قبل تنفيذ SQL المطلوب)، نرجع تلقائياً للجدول الكامل.
     let rows;
     try {
-      rows = await fetchAllPages('latest_inspections?select=*');
+      rows = await fetchAllPages(`latest_inspections?select=${GRID_SELECT_FIELDS}`);
     } catch (viewErr) {
       console.warn('[tower-app] رؤية latest_inspections غير متاحة، رجوع مؤقت للجدول الكامل (أبطأ):', viewErr);
-      rows = await fetchAllPages('inspections?select=*&order=created_at.desc');
+      rows = await fetchAllPages(`inspections?select=${GRID_SELECT_FIELDS}&order=created_at.desc`);
     }
     fullRecordsCache = rows;
     rebuildLatestRecordsIndex();
@@ -11076,6 +11093,22 @@ function getInsulatorTreatedIdx(state, cycle) {
 // ========================
 // تصدير PDF — المغادرات الحالية المفتوحة (بفلترة اسم الخط)
 // ========================
+function onDepExportCategoryAllToggle() {
+  const allChecked = document.getElementById('depExportCategoryAll').checked;
+  document.getElementById('depExportCatWrap').style.display = allChecked ? 'none' : 'grid';
+  if (allChecked) document.querySelectorAll('.depExportCatChk').forEach(cb => cb.checked = false);
+}
+function onDepExportCategoryPick() {
+  const anyChecked = Array.from(document.querySelectorAll('.depExportCatChk')).some(cb => cb.checked);
+  document.getElementById('depExportCategoryAll').checked = !anyChecked;
+}
+// null = بدون تصفية (كل التصنيفات)
+function getDepExportSelectedCategories() {
+  if (document.getElementById('depExportCategoryAll').checked) return null;
+  const picked = Array.from(document.querySelectorAll('.depExportCatChk:checked')).map(cb => cb.value);
+  return picked.length ? picked : null;
+}
+
 function openDepExportModal() {
   const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
   const linesWithOpenDeps = uniqueLines.filter(name => getActiveDepartureTowers(name).length > 0);
@@ -11092,6 +11125,9 @@ function openDepExportModal() {
   document.getElementById('depExportSelectAllBtn').textContent = 'تحديد الكل';
   document.getElementById('depExportTowerFrom').value = '';
   document.getElementById('depExportTowerTo').value = '';
+  document.getElementById('depExportCategoryAll').checked = true;
+  document.getElementById('depExportCatWrap').style.display = 'none';
+  document.querySelectorAll('.depExportCatChk').forEach(cb => cb.checked = false);
   updateDepExportTowerList();
   document.getElementById('depExportModalBg').classList.add('show');
 }
@@ -11172,6 +11208,7 @@ function getDepExportSelectedTowers() {
 async function exportOpenDeparturesPDF() {
   const selectedTowers = getDepExportSelectedTowers();
   if (!selectedTowers.length) { showToast('اختر أبراجاً للتصدير أولاً', 'error'); return; }
+  const categories = getDepExportSelectedCategories(); // null = كل التصنيفات
 
   // تجميع الأبراج حسب الخط
   const byLine = {};
@@ -11221,7 +11258,11 @@ async function exportOpenDeparturesPDF() {
         if (i > 0) await new Promise(r => setTimeout(r, 50)); // استرخاء بين الدُفعات
 
         for (const { r, deps } of batch) {
-          const openDeps = getOpenDepsOnly(r, deps);
+          const openDepsAll = getOpenDepsOnly(r, deps);
+          // نصفّي حسب التصنيف المختار — لو "الكل" ما نغيّر شي، ولو محدد نستبعد أي مغادرة لا تطابق
+          const openDeps = categories
+            ? openDepsAll.filter(d => categories.some(cat => (REPORT_CATEGORY_TREATMENT_PREFIXES[cat]||[]).some(p => (d.key||'').startsWith(p))))
+            : openDepsAll;
           if (!openDeps.length) continue;
           totalTowersExported++;
 
@@ -11387,8 +11428,10 @@ function drawArabicTextPNG(items, widthCss, opts) {
 
 
 async function loadDepartures() {
-  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
   showDepLinesList();
+  renderDepLinesList(true); // مرحلة أولى: أسماء الخطوط فوراً من البيانات المحلية، بدون انتظار الشبكة
+  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
+  renderDepLinesList(); // مرحلة ثانية: الأعداد الحقيقية بعد اكتمال التحميل
   populateTreatLines();
 }
 
@@ -11401,6 +11444,8 @@ function backToDepLinesList() {
 function backToDepLineTowers() {
   document.getElementById('depTowerDetailView').style.display = 'none';
   document.getElementById('depLineTowersView').style.display = '';
+  // نستعيد موضع التمرير المحفوظ (بعد لحظة قصيرة حتى تكتمل إعادة رسم القائمة أولاً)
+  setTimeout(() => window.scrollTo(0, depLineTowersScrollY), 0);
 }
 
 function showDepLinesList() {
@@ -11418,8 +11463,20 @@ function getActiveDepartureTowers(lineName) {
     .filter(x => x.deps.length > 0 && !isFullyTreated(x.r.id, x.deps, x.r));
 }
 
-function renderDepLinesList() {
+function renderDepLinesList(preliminary) {
   const body = document.getElementById('depLinesListBody');
+  if (preliminary) {
+    // عرض فوري بأسماء الخطوط من البيانات المحلية (بدون شبكة) — رسالة مؤقتة لحد ما تكتمل الأعداد الحقيقية
+    const names = Object.keys(LINES_DATA).sort((a,b) => a.localeCompare(b, 'ar'));
+    body.innerHTML = names.map(lineName => `
+      <div class="form-card" style="margin-bottom:10px;padding:14px;border-right:4px solid #CBD5E0">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="font-weight:700;color:#1a2e4a;font-size:0.92rem">${lineName}</div>
+          <span style="background:#EDF2F7;color:#718096;padding:3px 12px;border-radius:20px;font-size:0.78rem">⏳ جاري الحساب...</span>
+        </div>
+      </div>`).join('');
+    return;
+  }
   const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort();
 
   if (!uniqueLines.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>'; return; }
@@ -11558,7 +11615,10 @@ function renderDepLineTowers(lineName) {
   body.innerHTML = html;
 }
 
+let depLineTowersScrollY = 0;
+
 async function openDepTowerDetail(lineName, towerNum) {
+  depLineTowersScrollY = window.scrollY; // نحفظ موضع التمرير الحالي حتى نرجع له عند "رجوع"
   pushLevel(backToDepLineTowers);
   document.getElementById('depLineTowersView').style.display = 'none';
   document.getElementById('depTowerDetailView').style.display = '';
