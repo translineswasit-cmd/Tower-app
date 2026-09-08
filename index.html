@@ -2020,6 +2020,90 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="thermal-cards">
     <div class="card" id="formsDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
     <div class="card" onclick="showPage('memo');showMemoHome();"><span class="icon">📝</span><span class="label">مذكرة</span><span class="sublabel">مذكرة رسمية</span></div>
+    <div class="card" onclick="showPage('workOrders');openWorkOrdersHome();"><span class="icon">📋</span><span class="label">أوراق الواجب</span><span class="sublabel">تسجيل وأرشيف واجبات الفرق</span></div>
+  </div>
+</div>
+
+<!-- WORK ORDERS -->
+<div class="page" id="page-workOrders">
+  <div class="page-title">📋 أوراق الواجب</div>
+
+  <div class="dep-tabs" style="margin-bottom:14px">
+    <button class="dep-tab active" id="woTabNewBtn" onclick="startNewWorkOrder()">🆕 إضافة ورقة واجب</button>
+    <button class="dep-tab" id="woTabArchiveBtn" onclick="switchWorkOrderTab('archive')">📂 الأرشيف</button>
+  </div>
+
+  <div id="woNewView">
+    <div class="form-card">
+      <div class="field"><label>التاريخ</label><input type="date" id="wo_date"></div>
+
+      <div class="grid-2">
+        <div class="field">
+          <label>اسم الخط</label>
+          <select id="wo_line"><option value="">-- اختر الخط --</option></select>
+        </div>
+        <div class="field">
+          <label>نوع العمل</label>
+          <select id="wo_work_type">
+            <option value="">-- اختر --</option>
+            <option>كشف بصري</option>
+            <option>كشف حراري</option>
+            <option>صيانة دورية</option>
+            <option>تعويض حديد</option>
+            <option>غسل عوازل</option>
+            <option>إزالة مسببات حرائق</option>
+            <option>صيانة طارئة</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:10px">
+        <label>اسم السائق</label>
+        <select id="wo_driver_select" onchange="onWoDriverSelectChange()"></select>
+        <input type="text" id="wo_driver_custom" placeholder="اكتب اسم السائق" style="display:none;margin-top:6px;padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.88rem;width:100%">
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <label>👷 أفراد الطاقم</label>
+        <div id="woTeamMembersWrap" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="addWoTeamMemberRow()">➕ إضافة موظف</button>
+      </div>
+
+      <div class="field" style="margin-top:14px">
+        <label>🤝 بالاشتراك مع (من أقسام أخرى)</label>
+        <div id="woSharedMembersWrap" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="addWoSharedMemberRow()">➕ بالاشتراك مع</button>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+        <button class="btn btn-primary" style="flex:1;min-width:160px" onclick="saveWorkOrder()">💾 حفظ ورقة الواجب</button>
+        <button class="btn btn-secondary" id="woCancelEditBtn" style="display:none" onclick="startNewWorkOrder()">✖ إلغاء التعديل</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="woArchiveView" style="display:none">
+    <div class="form-card">
+      <div class="grid-2">
+        <div class="field"><label>من تاريخ</label><input type="date" id="wo_search_from"></div>
+        <div class="field"><label>إلى تاريخ</label><input type="date" id="wo_search_to"></div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label>الخط (اختياري)</label>
+        <select id="wo_search_line"><option value="">-- كل الخطوط --</option></select>
+      </div>
+      <div class="grid-2" style="margin-top:8px">
+        <div class="field"><label>اسم السائق (اختياري)</label><input type="text" id="wo_search_driver" placeholder="اسم السائق"></div>
+        <div class="field"><label>اسم موظف (اختياري)</label><input type="text" id="wo_search_member" placeholder="اسم أي فرد بالورقة"></div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:10px" onclick="searchWorkOrders()">🔍 بحث</button>
+    </div>
+
+    <p id="woSearchResultCount" style="margin-top:12px;color:#718096;font-size:0.82rem"></p>
+    <div id="woSearchResultsWrap" style="margin-top:10px"></div>
+    <div id="woArchiveActions" style="display:none;margin-top:14px">
+      <button class="btn btn-primary" style="width:100%;background:#922b21" onclick="exportWorkOrdersPDF()">📄 تصدير PDF لكل نتائج البحث</button>
+    </div>
   </div>
 </div>
 
@@ -2559,7 +2643,7 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','recordsHub'];
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','recordsHub','workOrders'];
 let pageStack = [];
 
 // مكدس المستويات الفرعية داخل نفس الصفحة (مثلاً: قائمة خطوط ← أبراج الخط ← تفاصيل برج)
@@ -6647,6 +6731,363 @@ function renderMemoAttachmentsEditor() {
       <input type="text" value="${(line||'').replace(/"/g,'&quot;')}" oninput="updateMemoAttachmentLine(${i},this.value)" style="flex:1;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.9rem">
       <button class="btn-sm btn-del" onclick="removeMemoAttachmentLine(${i})">✕</button>
     </div>`).join('');
+}
+
+// ========================
+// WORK ORDERS (أوراق الواجب)
+// ========================
+let woDriversCache = [];
+let woTeamMembers = [];        // مصفوفة أسماء (فريقنا)
+let woSharedMembers = [];      // مصفوفة {name, department} (بالاشتراك مع)
+let editingWorkOrderId = null;
+let woSearchResults = [];
+
+async function openWorkOrdersHome() {
+  showToast('⏳ جاري التحميل...');
+  await Promise.all([loadWoDrivers().catch(()=>{}), fetchStaffRosterFromServer().catch(()=>{})]);
+  populateWoLineDropdown('wo_line');
+  populateWoLineDropdown('wo_search_line', true);
+  startNewWorkOrder();
+}
+
+async function loadWoDrivers() {
+  const res = await sbFetch('work_order_drivers?select=*&order=sort_order.asc');
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  woDriversCache = await res.json();
+  const sel = document.getElementById('wo_driver_select');
+  sel.innerHTML = '<option value="">-- اختر السائق --</option>' +
+    woDriversCache.map(d => `<option value="${d.id}">${d.name} — ${d.car_type||''}</option>`).join('') +
+    '<option value="__custom__">✏️ اسم آخر (اكتبه يدوياً)</option>';
+}
+function onWoDriverSelectChange() {
+  const v = document.getElementById('wo_driver_select').value;
+  document.getElementById('wo_driver_custom').style.display = (v === '__custom__') ? 'block' : 'none';
+}
+function populateWoLineDropdown(selectId, withAllOption) {
+  const sel = document.getElementById(selectId);
+  const names = Object.keys(LINES_DATA).sort((a,b) => a.localeCompare(b, 'ar'));
+  sel.innerHTML = (withAllOption ? '<option value="">-- كل الخطوط --</option>' : '<option value="">-- اختر الخط --</option>') +
+    names.map(n => `<option value="${n.replace(/"/g,'&quot;')}">${n}</option>`).join('');
+}
+
+function switchWorkOrderTab(tab) {
+  document.getElementById('woTabNewBtn').classList.toggle('active', tab === 'new');
+  document.getElementById('woTabArchiveBtn').classList.toggle('active', tab === 'archive');
+  document.getElementById('woNewView').style.display = tab === 'new' ? '' : 'none';
+  document.getElementById('woArchiveView').style.display = tab === 'archive' ? '' : 'none';
+}
+
+function startNewWorkOrder() {
+  editingWorkOrderId = null;
+  document.getElementById('woCancelEditBtn').style.display = 'none';
+  document.getElementById('wo_date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('wo_line').value = '';
+  document.getElementById('wo_work_type').value = '';
+  document.getElementById('wo_driver_select').value = '';
+  document.getElementById('wo_driver_custom').value = '';
+  document.getElementById('wo_driver_custom').style.display = 'none';
+  woTeamMembers = [];
+  woSharedMembers = [];
+  renderWoTeamMembers();
+  renderWoSharedMembers();
+  switchWorkOrderTab('new');
+}
+
+// قائمة أسماء الاقتراح (datalist) — من كادر قسم الخطوط الموجود أصلاً بالتطبيق
+function woStaffNamesDatalistHTML() {
+  return (staffRosterMembersCache||[]).map(m => `<option value="${(m.name||'').replace(/"/g,'&quot;')}">`).join('');
+}
+function ensureWoStaffDatalist() {
+  if (document.getElementById('woStaffNamesList')) return;
+  const dl = document.createElement('datalist');
+  dl.id = 'woStaffNamesList';
+  document.body.appendChild(dl);
+}
+function refreshWoStaffDatalist() {
+  ensureWoStaffDatalist();
+  document.getElementById('woStaffNamesList').innerHTML = woStaffNamesDatalistHTML();
+}
+
+function addWoTeamMemberRow(name) {
+  woTeamMembers.push(name || '');
+  renderWoTeamMembers();
+}
+function removeWoTeamMemberRow(idx) {
+  woTeamMembers.splice(idx, 1);
+  renderWoTeamMembers();
+}
+function updateWoTeamMemberValue(idx, val) {
+  woTeamMembers[idx] = val;
+}
+function renderWoTeamMembers() {
+  refreshWoStaffDatalist();
+  const wrap = document.getElementById('woTeamMembersWrap');
+  wrap.innerHTML = woTeamMembers.map((name, i) => `
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" value="${(name||'').replace(/"/g,'&quot;')}" list="woStaffNamesList" placeholder="اسم الموظف"
+        style="flex:1;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem"
+        oninput="updateWoTeamMemberValue(${i}, this.value)">
+      <button class="btn-sm" style="background:#e74c3c;color:white;border:none;border-radius:6px;padding:6px 10px" onclick="removeWoTeamMemberRow(${i})">✖</button>
+    </div>`).join('') || '<p style="font-size:0.78rem;color:#a0aec0">لا يوجد أفراد بعد — اضغط "➕ إضافة موظف"</p>';
+}
+
+function addWoSharedMemberRow() {
+  woSharedMembers.push({ name: '', department: '' });
+  renderWoSharedMembers();
+}
+function removeWoSharedMemberRow(idx) {
+  woSharedMembers.splice(idx, 1);
+  renderWoSharedMembers();
+}
+function updateWoSharedMemberField(idx, field, val) {
+  woSharedMembers[idx][field] = val;
+}
+function renderWoSharedMembers() {
+  const wrap = document.getElementById('woSharedMembersWrap');
+  wrap.innerHTML = woSharedMembers.map((m, i) => `
+    <div style="display:flex;gap:6px;align-items:center">
+      <input type="text" value="${(m.name||'').replace(/"/g,'&quot;')}" placeholder="الاسم"
+        style="flex:1.3;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem"
+        oninput="updateWoSharedMemberField(${i}, 'name', this.value)">
+      <input type="text" value="${(m.department||'').replace(/"/g,'&quot;')}" placeholder="القسم"
+        style="flex:1;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem"
+        oninput="updateWoSharedMemberField(${i}, 'department', this.value)">
+      <button class="btn-sm" style="background:#e74c3c;color:white;border:none;border-radius:6px;padding:6px 10px" onclick="removeWoSharedMemberRow(${i})">✖</button>
+    </div>`).join('') || '<p style="font-size:0.78rem;color:#a0aec0">لا يوجد أفراد بالاشتراك بعد</p>';
+}
+
+function getWoDriverInfo() {
+  const sel = document.getElementById('wo_driver_select');
+  if (sel.value === '__custom__') {
+    return { name: document.getElementById('wo_driver_custom').value.trim(), car: '' };
+  }
+  const d = woDriversCache.find(x => String(x.id) === sel.value);
+  return d ? { name: d.name, car: d.car_type||'' } : { name: '', car: '' };
+}
+
+async function saveWorkOrder() {
+  const date = document.getElementById('wo_date').value;
+  const line = document.getElementById('wo_line').value;
+  const workType = document.getElementById('wo_work_type').value;
+  const driver = getWoDriverInfo();
+  if (!date) { showToast('⚠️ اختر التاريخ', 'error'); return; }
+  if (!line) { showToast('⚠️ اختر اسم الخط', 'error'); return; }
+  if (!driver.name) { showToast('⚠️ اختر أو اكتب اسم السائق', 'error'); return; }
+  const team = woTeamMembers.map(n => (n||'').trim()).filter(Boolean);
+  const shared = woSharedMembers.map(m => ({ name: (m.name||'').trim(), department: (m.department||'').trim() })).filter(m => m.name);
+  if (!team.length && !shared.length) { showToast('⚠️ أضف فرد واحد على الأقل بالطاقم', 'error'); return; }
+
+  const payload = {
+    work_date: date, line_name: line, work_type: workType,
+    driver_name: driver.name, driver_car: driver.car,
+    team_members: team, shared_members: shared,
+    created_by: currentUser.full_name || currentUser.username
+  };
+
+  try {
+    if (editingWorkOrderId) {
+      const res = await sbFetch(`work_orders?id=eq.${editingWorkOrderId}`, { method: 'PATCH', body: JSON.stringify({ ...payload, updated_at: new Date().toISOString() }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      showToast('✅ تم تحديث ورقة الواجب');
+    } else {
+      payload.client_uuid = genUUID();
+      const res = await sbFetch('work_orders?on_conflict=client_uuid', { method: 'POST', headers: { 'Prefer': 'resolution=ignore-duplicates' }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      showToast('✅ تم حفظ ورقة الواجب');
+    }
+    startNewWorkOrder();
+  } catch (e) {
+    showToast('❌ تعذر الحفظ، تحقق من الاتصال', 'error');
+  }
+}
+
+async function editWorkOrder(id) {
+  const wo = woSearchResults.find(w => w.id === id);
+  if (!wo) return;
+  editingWorkOrderId = id;
+  switchWorkOrderTab('new');
+  document.getElementById('woCancelEditBtn').style.display = '';
+  document.getElementById('wo_date').value = wo.work_date || '';
+  document.getElementById('wo_line').value = wo.line_name || '';
+  document.getElementById('wo_work_type').value = wo.work_type || '';
+  // نحاول نلقى السائق بالقائمة، وإلا نحطه بخانة "اسم آخر"
+  const matchDriver = woDriversCache.find(d => d.name === wo.driver_name);
+  if (matchDriver) {
+    document.getElementById('wo_driver_select').value = String(matchDriver.id);
+    document.getElementById('wo_driver_custom').style.display = 'none';
+  } else {
+    document.getElementById('wo_driver_select').value = '__custom__';
+    document.getElementById('wo_driver_custom').style.display = 'block';
+    document.getElementById('wo_driver_custom').value = wo.driver_name || '';
+  }
+  woTeamMembers = Array.isArray(wo.team_members) ? [...wo.team_members] : [];
+  woSharedMembers = Array.isArray(wo.shared_members) ? wo.shared_members.map(m => ({...m})) : [];
+  renderWoTeamMembers();
+  renderWoSharedMembers();
+  showToast('✏️ عدّل الورقة واضغط "حفظ ورقة الواجب"');
+}
+
+async function deleteWorkOrder(id) {
+  if (!confirm('🗑️ تأكيد حذف ورقة الواجب هذي؟ هذا الإجراء لا يمكن التراجع عنه.')) return;
+  try {
+    const res = await sbFetch(`work_orders?id=eq.${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error();
+    woSearchResults = woSearchResults.filter(w => w.id !== id);
+    renderWoSearchResults();
+    showToast('🗑️ تم الحذف');
+  } catch (e) { showToast('❌ تعذر الحذف', 'error'); }
+}
+
+async function searchWorkOrders() {
+  const from = document.getElementById('wo_search_from').value;
+  const to = document.getElementById('wo_search_to').value;
+  const line = document.getElementById('wo_search_line').value;
+  const driverText = document.getElementById('wo_search_driver').value.trim();
+  const memberText = document.getElementById('wo_search_member').value.trim();
+  document.getElementById('woSearchResultsWrap').innerHTML = '<div class="empty-state">⏳ جاري البحث...</div>';
+  document.getElementById('woArchiveActions').style.display = 'none';
+  try {
+    let query = 'work_orders?select=*&order=work_date.desc';
+    if (from) query += `&work_date=gte.${from}`;
+    if (to) query += `&work_date=lte.${to}`;
+    if (line) query += `&line_name=eq.${encodeURIComponent(line)}`;
+    if (driverText) query += `&driver_name=ilike.*${encodeURIComponent(driverText)}*`;
+    let rows = await fetchAllPages(query);
+    // فلترة اسم الموظف تصير محلياً (يبحث بقائمتي الطاقم والمشتركين مع بعض، ما تدعمها PostgREST مباشرة بسهولة على jsonb)
+    if (memberText) {
+      const needle = memberText.trim();
+      rows = rows.filter(w =>
+        (Array.isArray(w.team_members) && w.team_members.some(n => (n||'').includes(needle))) ||
+        (Array.isArray(w.shared_members) && w.shared_members.some(m => (m.name||'').includes(needle)))
+      );
+    }
+    woSearchResults = rows;
+    document.getElementById('woSearchResultCount').textContent = `📋 عدد أوراق الواجب المطابقة: ${rows.length}`;
+    renderWoSearchResults();
+    document.getElementById('woArchiveActions').style.display = rows.length ? 'block' : 'none';
+  } catch (e) {
+    document.getElementById('woSearchResultsWrap').innerHTML = '<div class="empty-state">❌ تعذر البحث، تحقق من الاتصال</div>';
+  }
+}
+
+function renderWoSearchResults() {
+  const wrap = document.getElementById('woSearchResultsWrap');
+  if (!woSearchResults.length) { wrap.innerHTML = '<div class="empty-state">لا توجد نتائج مطابقة</div>'; return; }
+  wrap.innerHTML = woSearchResults.map(wo => {
+    const allMembers = [
+      ...(Array.isArray(wo.team_members) ? wo.team_members : []),
+      ...(Array.isArray(wo.shared_members) ? wo.shared_members.map(m => `${m.name} (${m.department})`) : [])
+    ];
+    return `<div class="dep-card">
+      <div class="dep-card-header">
+        <div class="dep-card-title">📅 ${wo.work_date} — ${wo.line_name||'-'}</div>
+        <div class="dep-card-meta">${wo.work_type ? '🔧 '+wo.work_type : ''}</div>
+      </div>
+      <p style="font-size:0.82rem;margin-top:6px">🚗 السائق: ${wo.driver_name||'-'} ${wo.driver_car ? '('+wo.driver_car+')' : ''}</p>
+      <p style="font-size:0.8rem;margin-top:4px;color:#4A5568">👷 الأفراد (${allMembers.length}): ${allMembers.join('، ')}</p>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-secondary btn-sm" onclick="editWorkOrder('${wo.id}')">✏️ تعديل</button>
+        <button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="deleteWorkOrder('${wo.id}')">🗑️ حذف</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// يبني صفحة PDF كاملة لورقة واجب واحدة — السائق أعلى يمين، الخط+نوع العمل تحته، التاريخ يسار،
+// وجدول بكل الأفراد (فريقنا + المشتركين معهم بقسمهم) أسفل الصفحة
+async function buildWorkOrderPageCanvas(wo, pageW, pageH) {
+  const scale = 1.5;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(pageW * scale);
+  canvas.height = Math.ceil(pageH * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, pageW, pageH);
+  ctx.direction = 'rtl';
+
+  const marginX = 40;
+  let y = 55;
+
+  // العنوان
+  ctx.textAlign = 'center'; ctx.fillStyle = '#1A2A46';
+  ctx.font = 'bold 20px Tahoma, Arial, sans-serif';
+  ctx.fillText('ورقة واجب', pageW/2, y);
+  y += 35;
+  ctx.strokeStyle = '#2D3748'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(marginX, y); ctx.lineTo(pageW - marginX, y); ctx.stroke();
+  y += 30;
+
+  // أعلى يمين: السائق | تحته: الخط + نوع العمل | يسار: التاريخ
+  ctx.textAlign = 'right'; ctx.font = 'bold 14px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#1A2A46';
+  ctx.fillText(`🚗 السائق: ${wo.driver_name||'-'}${wo.driver_car ? ' ('+wo.driver_car+')' : ''}`, pageW - marginX, y);
+  ctx.textAlign = 'left';
+  ctx.fillText(`📅 التاريخ: ${wo.work_date||'-'}`, marginX, y);
+  y += 26;
+  ctx.textAlign = 'right';
+  ctx.font = '13px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#2D3748';
+  ctx.fillText(`⚡ الخط: ${wo.line_name||'-'}${wo.work_type ? '   |   🔧 نوع العمل: '+wo.work_type : ''}`, pageW - marginX, y);
+  y += 40;
+
+  // جدول الأفراد — فريقنا أولاً، بعدهم المشتركين (بقسمهم أمام اسمهم)
+  const rows = [
+    ...(Array.isArray(wo.team_members) ? wo.team_members.map(n => ({ name: n, dept: '' })) : []),
+    ...(Array.isArray(wo.shared_members) ? wo.shared_members.map(m => ({ name: m.name, dept: m.department })) : [])
+  ];
+
+  ctx.textAlign = 'center'; ctx.font = 'bold 14px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#1A2A46';
+  ctx.fillText('👷 أسماء أفراد الطاقم', pageW/2, y);
+  y += 22;
+
+  const tableW = pageW - marginX*2;
+  const colNum = 40, colDept = 140, colName = tableW - colNum - colDept;
+  const rowH = 26;
+  // رأس الجدول
+  ctx.fillStyle = '#EDF2F7'; ctx.fillRect(marginX, y, tableW, rowH);
+  ctx.strokeStyle = '#CBD5E0'; ctx.lineWidth = 1; ctx.strokeRect(marginX, y, tableW, rowH);
+  ctx.fillStyle = '#2D3748'; ctx.font = 'bold 12px Tahoma, Arial, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('ت', marginX + colNum/2, y + 17);
+  ctx.fillText('الاسم', marginX + colNum + colName/2, y + 17);
+  ctx.fillText('القسم (إن وُجد)', marginX + colNum + colName + colDept/2, y + 17);
+  y += rowH;
+
+  ctx.font = '12.5px Tahoma, Arial, sans-serif';
+  rows.forEach((r, i) => {
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.strokeRect(marginX, y, colNum, rowH);
+    ctx.strokeRect(marginX + colNum, y, colName, rowH);
+    ctx.strokeRect(marginX + colNum + colName, y, colDept, rowH);
+    ctx.fillStyle = '#2D3748'; ctx.textAlign = 'center';
+    ctx.fillText(String(i+1), marginX + colNum/2, y + 17);
+    ctx.fillText(r.name || '-', marginX + colNum + colName/2, y + 17);
+    ctx.fillText(r.dept || '—', marginX + colNum + colName + colDept/2, y + 17);
+    y += rowH;
+  });
+
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
+async function exportWorkOrdersPDF() {
+  if (!woSearchResults.length) { showToast('⚠️ سوّي بحث أولاً', 'error'); return; }
+  showToast('⏳ جاري تحضير التقرير...');
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    for (let i = 0; i < woSearchResults.length; i++) {
+      if (i > 0) doc.addPage();
+      const dataUrl = await buildWorkOrderPageCanvas(woSearchResults[i], pageW, pageH);
+      doc.addImage(dataUrl, 'JPEG', 0, 0, pageW, pageH);
+    }
+    const blob = doc.output('blob');
+    const from = document.getElementById('wo_search_from').value || 'الكل';
+    const to = document.getElementById('wo_search_to').value || 'الكل';
+    await shareOrDownloadFile(blob, `اوراق_واجب_${from}_الى_${to}.pdf`, 'application/pdf');
+    showToast('✅ تم تجهيز التقرير');
+  } catch (e) {
+    console.error(e);
+    showToast('❌ تعذر تجهيز التقرير', 'error');
+  }
 }
 
 function showMemoHome() {
