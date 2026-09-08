@@ -3034,6 +3034,27 @@ function renderTowersGridFromCache(lineName) {
 
 // فتح خط لأول مرة: يتأكد الكاش محدَّث من السيرفر أولاً، بعدين يرسم. بدون هذا الفحص لأول فتحة،
 // كان يحتمل نرسم ببيانات قديمة لو دخلت على الخط أول مرة بنفس الجلسة
+// كاش تحميل لكل خط لحاله: متى آخر مرة حمّلنا بيانات هذا الخط بالذات — يمنع إعادة التحميل المتكرر
+// خلال دقيقتين، بس بشكل مستقل لكل خط (بدل مؤقت واحد عام لكل الخطوط)
+let loadedLineCacheAt = {}; // { [lineName]: timestamp }
+
+// يحمّل آخر حالة لأبراج خط واحد بس (بدل كل الـ33 خط دفعة وحدة) — هذا يقلّل حجم التحميل من ~8.5
+// ميجا لكل الخطوط إلى ~260 كيلوبايت لخط واحد بالمتوسط (خط وحد = ~3% بس من إجمالي كل الأبراج)،
+// وهذا هو سبب تأخير الثواني الثلاث اللي كان يصير عند فتح أي خط
+async function loadLineRecordsCache(lineName, force) {
+  const now = Date.now();
+  if (!force && loadedLineCacheAt[lineName] && (now - loadedLineCacheAt[lineName]) < 120000) {
+    return; // بيانات هذا الخط حديثة، لا حاجة لإعادة التحميل
+  }
+  const rows = await fetchAllPages(`latest_inspections?select=*&line_name=eq.${encodeURIComponent(lineName)}`);
+  // نشيل أي نسخة قديمة لنفس الخط من الكاش الموحّد (لو كانت موجودة من تحميل سابق)، ونضيف الجديدة —
+  // بدون ما نلمس بيانات باقي الخطوط المحمّلة مسبقاً (لو زرت المغادرات مثلاً قبل هذا)
+  fullRecordsCache = fullRecordsCache.filter(r => r.line_name !== lineName).concat(rows);
+  delete latestRecordsIndex[lineName];
+  rows.forEach(r => indexOneRecordInPlace(r));
+  loadedLineCacheAt[lineName] = now;
+}
+
 async function renderTowersGrid(lineName) {
   const section = document.getElementById('towersGridSection');
   const grid = document.getElementById('towersGrid');
@@ -3042,7 +3063,7 @@ async function renderTowersGrid(lineName) {
   document.getElementById('towersGridTitle').textContent = '🗼 أبراج خط: ' + lineName;
   grid.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات الأبراج...</div>';
   try {
-    await loadFullRecordsCache();
+    await loadLineRecordsCache(lineName);
     renderTowersGridFromCache(lineName);
   } catch (e) {
     console.warn('[tower-app] فشل تحميل شبكة أبراج الخط', lineName, e);
@@ -10362,9 +10383,10 @@ async function checkPreviousInspection(lineName, towerNumber) {
   previousTreatmentsForLoad = [];
   if (!lineName || !towerNumber) { banner.style.display = 'none'; return; }
 
-  // مهم: نستخدم نفس المصدر الموحّد (fullRecordsCache) المستخدم بالمغادرات وحالة الخطوط تماماً —
-  // هذا يضمن نفس النتيجة بكل مكان دائماً (بما فيها أي تحديث فوري بعد معالجة بنفس الجلسة)
-  if (navigator.onLine) { try { await loadFullRecordsCache(true); } catch(e) { console.warn('[tower-app] فشل تحديث الكاش الموحّد قبل فحص الكشف السابق — سيُستخدم الكاش القديم إن وُجد', e); } }
+  // نحدّث بيانات هذا الخط بس (مو كل الـ33 خط) — التعديلات المحلية الفورية (بعد حفظ/معالجة بنفس
+  // الجلسة) أصلاً محدَّثة بالذاكرة فوراً بدون حاجة لإعادة تحميل، فهذا التحديث غرضه فقط التقاط أي
+  // تغيير من جهاز/فني ثاني — ما يحتاج يكون إجبارياً وسريعاً في كل مرة، يكفي كل دقيقتين
+  if (navigator.onLine) { try { await loadLineRecordsCache(lineName); } catch(e) { console.warn('[tower-app] فشل تحديث بيانات الخط قبل فحص الكشف السابق — سيُستخدم الكاش القديم إن وُجد', e); } }
 
   let last = null;
   let fromCache = false;
