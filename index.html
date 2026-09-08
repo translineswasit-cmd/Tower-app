@@ -6885,19 +6885,24 @@ async function saveWorkOrder() {
   };
 
   try {
+    let res;
     if (editingWorkOrderId) {
-      const res = await sbFetch(`work_orders?id=eq.${editingWorkOrderId}`, { method: 'PATCH', body: JSON.stringify({ ...payload, updated_at: new Date().toISOString() }) });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      showToast('✅ تم تحديث ورقة الواجب');
+      res = await sbFetch(`work_orders?id=eq.${editingWorkOrderId}`, { method: 'PATCH', body: JSON.stringify({ ...payload, updated_at: new Date().toISOString() }) });
     } else {
       payload.client_uuid = genUUID();
-      const res = await sbFetch('work_orders?on_conflict=client_uuid', { method: 'POST', headers: { 'Prefer': 'resolution=ignore-duplicates' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      showToast('✅ تم حفظ ورقة الواجب');
+      res = await sbFetch('work_orders?on_conflict=client_uuid', { method: 'POST', headers: { 'Prefer': 'resolution=ignore-duplicates' }, body: JSON.stringify(payload) });
     }
+    if (!res.ok) {
+      let detail = '';
+      try { const errBody = await res.json(); detail = errBody && (errBody.message || errBody.hint || errBody.code) ? ` — ${errBody.message || errBody.hint || errBody.code}` : ''; } catch(e) {}
+      throw new Error(`HTTP ${res.status}${detail}`);
+    }
+    showToast(editingWorkOrderId ? '✅ تم تحديث ورقة الواجب' : '✅ تم حفظ ورقة الواجب');
     startNewWorkOrder();
   } catch (e) {
-    showToast('❌ تعذر الحفظ، تحقق من الاتصال', 'error');
+    // نعرض السبب الحقيقي (رمز HTTP وتفاصيله) بدل رسالة عامة تخفي المشكلة — يساعد بتشخيص فوري
+    console.warn('[tower-app] فشل حفظ ورقة الواجب:', e);
+    showToast('❌ تعذر الحفظ: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
   }
 }
 
