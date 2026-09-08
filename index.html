@@ -7000,75 +7000,92 @@ function renderWoSearchResults() {
 
 // يبني صفحة PDF كاملة لورقة واجب واحدة — السائق أعلى يمين، الخط+نوع العمل تحته، التاريخ يسار،
 // وجدول بكل الأفراد (فريقنا + المشتركين معهم بقسمهم) أسفل الصفحة
-async function buildWorkOrderPageCanvas(wo, pageW, pageH) {
-  const scale = 1.5;
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(pageW * scale);
-  canvas.height = Math.ceil(pageH * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, pageW, pageH);
-  ctx.direction = 'rtl';
-
-  const marginX = 40;
-  let y = 55;
-
-  // العنوان
-  ctx.textAlign = 'center'; ctx.fillStyle = '#1A2A46';
-  ctx.font = 'bold 20px Tahoma, Arial, sans-serif';
-  ctx.fillText('ورقة واجب', pageW/2, y);
-  y += 35;
-  ctx.strokeStyle = '#2D3748'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(marginX, y); ctx.lineTo(pageW - marginX, y); ctx.stroke();
-  y += 30;
-
-  // أعلى يمين: السائق | تحته: الخط + نوع العمل | يسار: التاريخ
-  ctx.textAlign = 'right'; ctx.font = 'bold 14px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#1A2A46';
-  ctx.fillText(`🚗 السائق: ${wo.driver_name||'-'}${wo.driver_car ? ' ('+wo.driver_car+')' : ''}`, pageW - marginX, y);
-  ctx.textAlign = 'left';
-  ctx.fillText(`📅 التاريخ: ${wo.work_date||'-'}`, marginX, y);
-  y += 26;
-  ctx.textAlign = 'right';
-  ctx.font = '13px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#2D3748';
-  ctx.fillText(`⚡ الخط: ${wo.line_name||'-'}${wo.work_type ? '   |   🔧 نوع العمل: '+wo.work_type : ''}`, pageW - marginX, y);
-  y += 40;
-
-  // جدول الأفراد — فريقنا أولاً، بعدهم المشتركين (بقسمهم أمام اسمهم)
+// يبني صفحة/صفحات PDF لورقة واجب واحدة — يرجّع مصفوفة (عادة صفحة وحدة، أكثر لو عدد الأفراد كبير
+// ولا يسع بصفحة وحدة). بدون هذا التقسيم، ورقة فيها عدد أفراد كبير كانت تخاطر بانضغاط أو انقطاع
+// صفوف الجدول بصمت لو تجاوزت ارتفاع الصفحة — نفس فئة الخلل اللي صلّحناه سابقاً بصور العوازل.
+// يبني بطاقة/بطاقات لورقة واجب واحدة بارتفاعها الطبيعي فقط (بدون حشو لصفحة كاملة) — هذا يسمح
+// لعدة أوراق قصيرة تتجمّع بنفس صفحة الطباعة لو المساحة تسع (بدل ما توزَّع كل ورقة بصفحة مستقلة
+// حتى لو فيها ٤ أفراد بس). لو ورقة واحدة فيها عدد أفراد كبير جداً بحيث ما تسع حتى بصفحة كاملة
+// لحالها (حالة نادرة)، تنقسم تلقائياً لعدة بطاقات متتالية بأمان بدون فقدان أي اسم.
+async function buildWorkOrderCardsCanvases(wo, cardW, maxCardH) {
   const rows = [
     ...(Array.isArray(wo.team_members) ? wo.team_members.map(n => ({ name: n, dept: '' })) : []),
     ...(Array.isArray(wo.shared_members) ? wo.shared_members.map(m => ({ name: m.name, dept: m.department })) : [])
   ];
+  const marginX = 16, rowH = 24;
+  const tableW = cardW - marginX*2;
+  // ترتيب الأعمدة بمحاذاة القراءة العربية: القسم أقصى اليسار، الاسم بالوسط، ت أقصى اليمين (أول عمود يمين)
+  const colDept = 130, colNum = 34, colName = tableW - colNum - colDept;
+  const deptX = marginX, nameX = marginX + colDept, numX = marginX + colDept + colName;
+  const FULL_HEADER_H = 140, CONT_HEADER_H = 34;
 
-  ctx.textAlign = 'center'; ctx.font = 'bold 14px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#1A2A46';
-  ctx.fillText('👷 أسماء أفراد الطاقم', pageW/2, y);
-  y += 22;
+  const cards = [];
+  let rowIdx = 0;
+  let firstChunk = true;
+  while (rowIdx < rows.length || firstChunk) {
+    const hdrH = firstChunk ? FULL_HEADER_H : CONT_HEADER_H;
+    const availableForRows = Math.max(rowH, maxCardH - hdrH - 14);
+    const maxRowsThisChunk = Math.max(1, Math.floor(availableForRows / rowH));
+    const rowsThisChunk = rows.slice(rowIdx, rowIdx + maxRowsThisChunk);
+    const chunkH = hdrH + Math.max(rowsThisChunk.length, 0)*rowH + (rows.length ? 14 : 40);
 
-  const tableW = pageW - marginX*2;
-  const colNum = 40, colDept = 140, colName = tableW - colNum - colDept;
-  const rowH = 26;
-  // رأس الجدول
-  ctx.fillStyle = '#EDF2F7'; ctx.fillRect(marginX, y, tableW, rowH);
-  ctx.strokeStyle = '#CBD5E0'; ctx.lineWidth = 1; ctx.strokeRect(marginX, y, tableW, rowH);
-  ctx.fillStyle = '#2D3748'; ctx.font = 'bold 12px Tahoma, Arial, sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('ت', marginX + colNum/2, y + 17);
-  ctx.fillText('الاسم', marginX + colNum + colName/2, y + 17);
-  ctx.fillText('القسم (إن وُجد)', marginX + colNum + colName + colDept/2, y + 17);
-  y += rowH;
+    const scale = 1.5;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(cardW * scale);
+    canvas.height = Math.ceil(chunkH * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, cardW, chunkH);
+    ctx.strokeStyle = '#CBD5E0'; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, cardW-1, chunkH-1);
+    ctx.direction = 'rtl';
 
-  ctx.font = '12.5px Tahoma, Arial, sans-serif';
-  rows.forEach((r, i) => {
-    ctx.strokeStyle = '#E2E8F0';
-    ctx.strokeRect(marginX, y, colNum, rowH);
-    ctx.strokeRect(marginX + colNum, y, colName, rowH);
-    ctx.strokeRect(marginX + colNum + colName, y, colDept, rowH);
-    ctx.fillStyle = '#2D3748'; ctx.textAlign = 'center';
-    ctx.fillText(String(i+1), marginX + colNum/2, y + 17);
-    ctx.fillText(r.name || '-', marginX + colNum + colName/2, y + 17);
-    ctx.fillText(r.dept || '—', marginX + colNum + colName + colDept/2, y + 17);
+    let y = 22;
+    if (firstChunk) {
+      ctx.textAlign = 'center'; ctx.fillStyle = '#1A2A46'; ctx.font = 'bold 16px Tahoma, Arial, sans-serif';
+      ctx.fillText('ورقة واجب', cardW/2, y); y += 22;
+      ctx.strokeStyle = '#2D3748'; ctx.beginPath(); ctx.moveTo(marginX, y); ctx.lineTo(cardW - marginX, y); ctx.stroke(); y += 20;
+      ctx.textAlign = 'right'; ctx.font = 'bold 13px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#1A2A46';
+      ctx.fillText(`🚗 السائق: ${wo.driver_name||'-'}${wo.driver_car ? ' ('+wo.driver_car+')' : ''}`, cardW - marginX, y);
+      ctx.textAlign = 'left';
+      ctx.fillText(`📅 ${wo.work_date||'-'}`, marginX, y);
+      y += 20;
+      ctx.textAlign = 'right'; ctx.font = '12px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#2D3748';
+      ctx.fillText(`⚡ الخط: ${wo.line_name||'-'}${wo.work_type ? '   |   🔧 نوع العمل: '+wo.work_type : ''}`, cardW - marginX, y);
+      y += 26;
+    } else {
+      ctx.textAlign = 'center'; ctx.fillStyle = '#1A2A46'; ctx.font = 'bold 11.5px Tahoma, Arial, sans-serif';
+      ctx.fillText(`تكملة — ${wo.work_date||'-'} — ${wo.line_name||'-'}`, cardW/2, y);
+      y += 20;
+    }
+
+    ctx.fillStyle = '#EDF2F7'; ctx.fillRect(marginX, y, tableW, rowH);
+    ctx.strokeStyle = '#CBD5E0'; ctx.strokeRect(marginX, y, tableW, rowH);
+    ctx.fillStyle = '#2D3748'; ctx.font = 'bold 11px Tahoma, Arial, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('ت', numX + colNum/2, y + 16);
+    ctx.fillText('الاسم', nameX + colName/2, y + 16);
+    ctx.fillText('القسم (إن وُجد)', deptX + colDept/2, y + 16);
     y += rowH;
-  });
 
-  return canvas.toDataURL('image/jpeg', 0.85);
+    ctx.font = '11.5px Tahoma, Arial, sans-serif';
+    rowsThisChunk.forEach((r, i) => {
+      const idx = rowIdx + i;
+      ctx.strokeStyle = '#E2E8F0';
+      ctx.strokeRect(numX, y, colNum, rowH);
+      ctx.strokeRect(nameX, y, colName, rowH);
+      ctx.strokeRect(deptX, y, colDept, rowH);
+      ctx.fillStyle = '#2D3748'; ctx.textAlign = 'center';
+      ctx.fillText(String(idx+1), numX + colNum/2, y + 16);
+      ctx.fillText(r.name || '-', nameX + colName/2, y + 16);
+      ctx.fillText(r.dept || '—', deptX + colDept/2, y + 16);
+      y += rowH;
+    });
+
+    cards.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), w: cardW, h: chunkH });
+    rowIdx += rowsThisChunk.length;
+    firstChunk = false;
+    if (!rows.length) break; // ورقة بلا أفراد (حالة نادرة) — بطاقة وحدة فاضية تكفي
+  }
+  return cards;
 }
 
 async function exportWorkOrdersPDF() {
@@ -7079,10 +7096,22 @@ async function exportWorkOrdersPDF() {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
-    for (let i = 0; i < woSearchResults.length; i++) {
-      if (i > 0) doc.addPage();
-      const dataUrl = await buildWorkOrderPageCanvas(woSearchResults[i], pageW, pageH);
-      doc.addImage(dataUrl, 'JPEG', 0, 0, pageW, pageH);
+    const marginX = 40, marginTop = 40, marginBottom = 40;
+    const cardW = pageW - marginX*2;
+    const maxCardH = pageH - marginTop - marginBottom;
+    let y = marginTop;
+    // نفس منطق "لا نقفز لصفحة جديدة إلا لو فيه محتوى مرسوم أصلاً بالصفحة الحالية" المُثبَت بالتقرير
+    // الموحّد — يمنع صفحة أولى فارغة، ويسمح لعدة أوراق قصيرة تتجمّع بنفس الصفحة
+    function ensureSpace(h) {
+      if (y > marginTop && y + h > pageH - marginBottom) { doc.addPage(); y = marginTop; }
+    }
+    for (const wo of woSearchResults) {
+      const cards = await buildWorkOrderCardsCanvases(wo, cardW, maxCardH);
+      for (const card of cards) {
+        ensureSpace(card.h);
+        doc.addImage(card.dataUrl, 'JPEG', marginX, y, cardW, card.h);
+        y += card.h + 14; // فاصل بسيط بين كل ورقة والتالية
+      }
     }
     const blob = doc.output('blob');
     const from = document.getElementById('wo_search_from').value || 'الكل';
