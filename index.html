@@ -8661,7 +8661,7 @@ function transliterateArabic(str) {
 function genPassword() {
   const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
   let pass = '';
-  for (let i=0;i<6;i++) pass += chars[Math.floor(Math.random()*chars.length)];
+  for (let i=0;i<10;i++) pass += chars[Math.floor(Math.random()*chars.length)];
   return pass;
 }
 
