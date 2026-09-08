@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v295';
+const CACHE_NAME = 'tower-app-v296';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [

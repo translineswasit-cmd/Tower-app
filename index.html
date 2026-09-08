@@ -866,7 +866,7 @@ tbody tr:hover { background: #F7FAFC; }
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
         <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;background:#EBF0F5;padding:4px 10px;border-radius:14px"><input type="checkbox" id="depExportCategoryAll" checked onchange="onDepExportCategoryAllToggle()"> الكل</label>
       </div>
-      <div id="depExportCatWrap" style="display:none;grid-template-columns:1fr 1fr;gap:2px 8px;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px">
+      <div id="depExportCatWrap" style="display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px">
         <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="foundation" onchange="onDepExportCategoryPick()"> 🧱 قواعد</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="iron" onchange="onDepExportCategoryPick()"> 🔩 حديد/ملحقات</label>
         <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depExportCatChk" value="insulator" onchange="onDepExportCategoryPick()"> ⚡ عوازل</label>
@@ -11095,8 +11095,7 @@ function getInsulatorTreatedIdx(state, cycle) {
 // ========================
 function onDepExportCategoryAllToggle() {
   const allChecked = document.getElementById('depExportCategoryAll').checked;
-  document.getElementById('depExportCatWrap').style.display = allChecked ? 'none' : 'grid';
-  if (allChecked) document.querySelectorAll('.depExportCatChk').forEach(cb => cb.checked = false);
+  document.querySelectorAll('.depExportCatChk').forEach(cb => { cb.disabled = allChecked; if (allChecked) cb.checked = false; });
 }
 function onDepExportCategoryPick() {
   const anyChecked = Array.from(document.querySelectorAll('.depExportCatChk')).some(cb => cb.checked);
@@ -11126,8 +11125,7 @@ function openDepExportModal() {
   document.getElementById('depExportTowerFrom').value = '';
   document.getElementById('depExportTowerTo').value = '';
   document.getElementById('depExportCategoryAll').checked = true;
-  document.getElementById('depExportCatWrap').style.display = 'none';
-  document.querySelectorAll('.depExportCatChk').forEach(cb => cb.checked = false);
+  document.querySelectorAll('.depExportCatChk').forEach(cb => { cb.checked = false; cb.disabled = true; });
   updateDepExportTowerList();
   document.getElementById('depExportModalBg').classList.add('show');
 }
