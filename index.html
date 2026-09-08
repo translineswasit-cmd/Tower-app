@@ -10862,15 +10862,26 @@ function renderDepLinesList() {
   }).join('');
 }
 
+let depLineTowersCurrentLine = null;
+let depLineTowersCategoryFilter = null; // null = عرض الكل | 'electrical'|'mechanical'|'fire'|'washing'
+
 function openDepLineTowers(lineName) {
   pushLevel(backToDepLinesList);
   document.getElementById('depLinesListView').style.display = 'none';
   document.getElementById('depLineTowersView').style.display = '';
   document.getElementById('depLineTowersTitle').textContent = '🗼 أبراج خط ' + lineName + ' — المغادرات';
+  depLineTowersCategoryFilter = null; // نبدأ من غير فلتر عند فتح خط جديد
   renderDepLineTowers(lineName);
 }
 
+// الضغط على بطاقة تصنيف يفلتر الأبراج تحتها لهذا النوع بس — ضغطها ثانية يلغي الفلتر ويرجّع عرض الكل
+function filterDepLineByCategory(cat) {
+  depLineTowersCategoryFilter = (depLineTowersCategoryFilter === cat) ? null : cat;
+  renderDepLineTowers(depLineTowersCurrentLine);
+}
+
 function renderDepLineTowers(lineName) {
+  depLineTowersCurrentLine = lineName;
   const body = document.getElementById('depLineTowersBody');
   const activeTowers = getActiveDepartureTowers(lineName);
 
@@ -10878,37 +10889,58 @@ function renderDepLineTowers(lineName) {
 
   activeTowers.sort((a,b) => parseInt(a.r.tower_number) - parseInt(b.r.tower_number));
 
-  // عدّادات: عدد الأبراج (ضمن هذا الخط) اللي فيها مغادرة بكل فئة — برج واحد ممكن يُحسب بأكثر من فئة
+  // عدّادات + وسم كل برج بفئاته — نفس آلية الحساب السابقة، بس نخزّن الفئات على كل برج حتى نقدر نفلتر بيها
   const isIssue = s => s && s !== 'ok';
   let elCount = 0, mCount = 0, fireCount = 0, washCount = 0;
-  activeTowers.forEach(({r}) => {
-    if (isIssue(r.sev_insulator) || isIssue(r.sev_wires) || isIssue(r.sev_ground)) elCount++;
-    if (isIssue(r.sev_iron) || isIssue(r.sev_foundation)) mCount++;
-    if (isIssue(r.sev_fire)) fireCount++;
-    if (r.insulator_washing && r.insulator_washing !== '' && r.insulator_washing !== 'clean') washCount++;
+  activeTowers.forEach(item => {
+    const r = item.r;
+    item._cats = [];
+    if (isIssue(r.sev_insulator) || isIssue(r.sev_wires) || isIssue(r.sev_ground)) { elCount++; item._cats.push('electrical'); }
+    if (isIssue(r.sev_iron) || isIssue(r.sev_foundation)) { mCount++; item._cats.push('mechanical'); }
+    if (isIssue(r.sev_fire)) { fireCount++; item._cats.push('fire'); }
+    if (r.insulator_washing && r.insulator_washing !== '' && r.insulator_washing !== 'clean') { washCount++; item._cats.push('washing'); }
   });
 
+  const filter = depLineTowersCategoryFilter;
+  const CAT_LABELS = { electrical: '⚡ مغادرات كهربائية', mechanical: '⚙️ مغادرات ميكانيكية', fire: '🔥 مسببات الحرائق', washing: '💧 نظافة العوازل' };
+  const cardStyle = (cat, active, base) => active
+    ? `${base};outline:3px solid #2D3748;cursor:pointer;transform:scale(1.02)`
+    : `${base};cursor:pointer`;
+
   let html = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-    <div style="flex:1;min-width:140px;background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;padding:10px;text-align:center">
+    <div onclick="filterDepLineByCategory('electrical')" style="${cardStyle('electrical', filter==='electrical', 'flex:1;min-width:140px;background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;padding:10px;text-align:center')}">
       <div style="font-size:0.75rem;color:#2C5282;font-weight:700">⚡ مغادرات كهربائية</div>
       <div style="font-size:1.3rem;font-weight:700;color:#2B6CB0">${elCount}</div>
     </div>
-    <div style="flex:1;min-width:140px;background:#FFFAF0;border:1.5px solid #F6AD55;border-radius:10px;padding:10px;text-align:center">
+    <div onclick="filterDepLineByCategory('mechanical')" style="${cardStyle('mechanical', filter==='mechanical', 'flex:1;min-width:140px;background:#FFFAF0;border:1.5px solid #F6AD55;border-radius:10px;padding:10px;text-align:center')}">
       <div style="font-size:0.75rem;color:#7B341E;font-weight:700">⚙️ مغادرات ميكانيكية</div>
       <div style="font-size:1.3rem;font-weight:700;color:#C05621">${mCount}</div>
     </div>
-    <div style="flex:1;min-width:140px;background:#FFF5F5;border:1.5px solid #FC8181;border-radius:10px;padding:10px;text-align:center">
+    <div onclick="filterDepLineByCategory('fire')" style="${cardStyle('fire', filter==='fire', 'flex:1;min-width:140px;background:#FFF5F5;border:1.5px solid #FC8181;border-radius:10px;padding:10px;text-align:center')}">
       <div style="font-size:0.75rem;color:#742A2A;font-weight:700">🔥 مسببات الحرائق</div>
       <div style="font-size:1.3rem;font-weight:700;color:#C53030">${fireCount}</div>
     </div>
-    ${washCount > 0 ? `<div style="flex:1;min-width:140px;background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;padding:10px;text-align:center">
+    ${washCount > 0 ? `<div onclick="filterDepLineByCategory('washing')" style="${cardStyle('washing', filter==='washing', 'flex:1;min-width:140px;background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;padding:10px;text-align:center')}">
       <div style="font-size:0.75rem;color:#2B6CB0;font-weight:700">💧 نظافة العوازل</div>
       <div style="font-size:1.3rem;font-weight:700;color:#2B6CB0">${washCount}</div>
     </div>` : ''}
   </div>`;
 
+  if (filter) {
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;background:#EDF2F7;border-radius:8px;padding:8px 12px;margin-bottom:10px">
+      <span style="font-size:0.82rem;color:#2D3748">🔍 مفلتَر حسب: <b>${CAT_LABELS[filter]}</b></span>
+      <button class="btn btn-secondary btn-sm" onclick="filterDepLineByCategory('${filter}')">✕ إلغاء التصفية</button>
+    </div>`;
+  }
+
+  const visibleTowers = filter ? activeTowers.filter(item => item._cats.includes(filter)) : activeTowers;
+  if (filter && !visibleTowers.length) {
+    body.innerHTML = html + '<div class="empty-state">لا توجد أبراج بهذا التصنيف</div>';
+    return;
+  }
+
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
-  activeTowers.forEach(({r, deps}) => {
+  visibleTowers.forEach(({r, deps}) => {
     const level = getTowerCriticalityLevel(r);
     const meta = TOWER_LEVEL_META[level] || TOWER_LEVEL_META.red;
     const catIconsHTML = buildCategoryIconsHTML(r);
