@@ -2952,11 +2952,32 @@ const TOWER_LEVEL_META = {
   red:    { bg:'#FCA5A5', border:'#F56565', text:'#742A2A' },
 };
 
+// فهرس مشترك: { [اسم الخط]: { [رقم البرج]: آخر سجل } } — يبنى بمسح واحد لكل fullRecordsCache،
+// بدل ما تفلتر كل دالة (شبكة الأبراج، المغادرات...) كل السجلات التاريخية لحالها في كل مرة. بدون
+// هذا الفهرس، فتح شبكة أبراج خط فيه 150 برج كان يعمل 150 عملية مسح كاملة لكل السجلات (بطء واضح
+// ومتزايد كل ما تكبر البيانات)، وفتح شاشة المغادرات كان يمسح كل السجلات 33 مرة (مرة لكل خط).
+let latestRecordsIndex = {};
+
+function rebuildLatestRecordsIndex() {
+  latestRecordsIndex = {};
+  fullRecordsCache.forEach(r => indexOneRecordInPlace(r));
+}
+function indexOneRecordInPlace(r) {
+  if (!r || !r.line_name) return;
+  const lineBucket = latestRecordsIndex[r.line_name] || (latestRecordsIndex[r.line_name] = {});
+  const key = String(r.tower_number);
+  const cur = lineBucket[key];
+  if (!cur) { lineBucket[key] = r; return; }
+  const dCur = cur.inspection_date||'', dNew = r.inspection_date||'';
+  if (dNew > dCur || (dNew === dCur && String(r.created_at||'') > String(cur.created_at||''))) lineBucket[key] = r;
+}
+
+function getLatestRecordsPerTower(lineName) {
+  return Object.values(latestRecordsIndex[lineName] || {});
+}
+
 function getLatestRecordForTower(lineName, towerNum) {
-  const recs = fullRecordsCache.filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNum));
-  if (!recs.length) return null;
-  recs.sort((a,b) => (b.inspection_date||'').localeCompare(a.inspection_date||'') || String(b.created_at||'').localeCompare(String(a.created_at||'')));
-  return recs[0];
+  return (latestRecordsIndex[lineName] || {})[String(towerNum)] || null;
 }
 
 // رسم شبكة الأبراج من الذاكرة المحلية مباشرة — بدون أي طلب شبكة. تُستخدم بعد الحفظ الناجح
@@ -4123,7 +4144,7 @@ async function saveRecord() {
     // يبقى غير ظاهر بالمغادرات/حالة الخطوط/التقارير (لأنها تقرأ fullRecordsCache) لحد ما ينتهي عمر الكاش
     function applyEditLocally() {
       const idx = fullRecordsCache.findIndex(r => r.id === editId);
-      if (idx !== -1) fullRecordsCache[idx] = { ...fullRecordsCache[idx], ...patchData };
+      if (idx !== -1) { fullRecordsCache[idx] = { ...fullRecordsCache[idx], ...patchData }; indexOneRecordInPlace(fullRecordsCache[idx]); }
       const idx2 = records.findIndex(r => r.id === editId);
       if (idx2 !== -1) records[idx2] = { ...records[idx2], ...patchData };
     }
@@ -4175,7 +4196,9 @@ async function saveRecord() {
 // مهم: لو الحفظ أونلاين ونجح، d هنا هو الصف الحقيقي المرجَع من السيرفر (فيه id صحيح) — وليس النسخة المحلية الناقصة،
 // لتجنّب خلل "سجل بلا id" يفسد اختيار آخر كشف لاحقاً (بالمعالجة أو الكشف الجديد)
 function afterGridSaveSuccess(d) {
-  fullRecordsCache.unshift({ ...d, created_at: d.created_at || new Date().toISOString() });
+  const savedRec = { ...d, created_at: d.created_at || new Date().toISOString() };
+  fullRecordsCache.unshift(savedRec);
+  indexOneRecordInPlace(savedRec);
   document.getElementById('towerInspectionModal').classList.remove('show');
   resetTowerFieldsOnly();
   // فوري من الذاكرة المحلية — بدون هذا كان يعيد تحميل كل الكشوفات من السيرفر بعد كل حفظ، وهذا
@@ -4283,10 +4306,11 @@ async function loadFullRecordsCache(force) {
   }
   try {
     fullRecordsCache = await fetchAllPages('inspections?select=*&order=created_at.desc');
+    rebuildLatestRecordsIndex();
     fullRecordsCacheLoadedAt = now;
   } catch {
     // فشل التحميل: نستخدم الكاش الموجود أو نرجع لـ records العادية كحل بديل
-    if (!fullRecordsCache.length) fullRecordsCache = records;
+    if (!fullRecordsCache.length) { fullRecordsCache = records; rebuildLatestRecordsIndex(); }
     showToast('⚠️ تعذر تحميل كل السجلات، قد تكون البيانات غير مكتملة', 'error');
   }
 }
@@ -4499,6 +4523,7 @@ async function confirmDelete() {
     if (res.ok) {
       showToast('🗑️ تم حذف السجل');
       fullRecordsCache = fullRecordsCache.filter(r => r.id !== deleteId); // تحديث فوري حتى ما تبقى المغادرات قديمة
+      rebuildLatestRecordsIndex();
       loadRecords();
     }
   } catch { showToast('❌ خطأ بالحذف', 'error'); }
@@ -4525,6 +4550,7 @@ async function bulkDeleteRecords() {
   }
   // نحذف من الكاش بس اللي فعلاً انحذف من قاعدة البيانات — قبل كذا كان يُحذف الكل من الكاش حتى لو فشل الحذف الحقيقي
   fullRecordsCache = fullRecordsCache.filter(r => !succeededIds.includes(r.id));
+  rebuildLatestRecordsIndex();
   const success = succeededIds.length;
   showToast(success === n ? `🗑️ تم حذف ${success} من ${n} سجل` : `⚠️ تم حذف ${success} من ${n} سجل فقط — راجع سجل المتصفح (console) لمعرفة سبب فشل الباقي`, success === n ? undefined : 'error');
   loadRecords();
@@ -4592,6 +4618,34 @@ function insulatorStateToText(insulatorStateJSON) {
   return parts.join(' | ');
 }
 
+// يحوّل مصفوفة حالة فيز واحد (بترتيب عمود-تلو-عمود: أول N خانة = السلسلة 1، اللي بعدها = السلسلة 2...)
+// لنص "عدد العوازل المتضررة بكل سلسلة" — سلسلة سليمة (صفر) تُستبعد، ولو كل السلاسل سليمة يرجع "سليم"
+function insulatorPhaseCountsText(stateArr, chainsCount) {
+  if (!Array.isArray(stateArr) || !stateArr.length) return 'سليم';
+  const cols = chainsCount || 1;
+  const rowsPerChain = Math.max(1, Math.ceil(stateArr.length / cols));
+  const counts = [];
+  for (let c = 0; c < cols; c++) {
+    let cnt = 0;
+    for (let rIdx = 0; rIdx < rowsPerChain; rIdx++) {
+      if (stateArr[c*rowsPerChain + rIdx]) cnt++;
+    }
+    if (cnt > 0) counts.push(cnt);
+  }
+  return counts.length ? counts.join('+') : 'سليم';
+}
+// يبني نص التصدير لفيز معيّن بدائرة معيّنة لسجل كشف — يحسب نمط العوازل الصحيح لهذا البرج بالذات
+// (عدد السلاسل يختلف حسب الجهد ونوع البرج والخط) قبل ما يقسّم المصفوفة الفعلية
+function getInsulatorPhaseExportText(r, phase, circuitNum) {
+  const stateJSON = circuitNum === 2 ? r.insulator_state_2 : r.insulator_state;
+  if (circuitNum === 2 && !isDoubleCircuitLine(r.line_name, r.insulator_state_2)) return ''; // خط مفرد: خانة الدائرة الثانية فاضية
+  const state = safeParseJSON(stateJSON);
+  if (!state) return circuitNum === 2 ? '' : 'سليم';
+  const mode = getInsulatorMode(r.voltage, r.tower_type, r.line_name, r.tower_number);
+  const cols = getChainsPerPhase(mode);
+  return insulatorPhaseCountsText(state[phase], cols);
+}
+
 // تعريف موحّد لأعمدة تصدير Excel — المصدر الوحيد لبناء القائمة وبناء الملف معاً
 const EXPORT_COLUMNS = [
   { label: 'اسم الخط',                get: r => r.line_name },
@@ -4600,7 +4654,12 @@ const EXPORT_COLUMNS = [
   { label: 'نوع البرج',               get: r => r.tower_type },
   { label: 'الجهد',                   get: r => (r.voltage || '') + 'kV' },
   { label: 'الموظف',                  get: r => r.created_by_name || '' },
-  { label: 'العوازل',                 get: r => insulatorStateToText(r.insulator_state) },
+  { label: 'عوازل الدائرة الأولى R',   get: r => getInsulatorPhaseExportText(r, 'R', 1) },
+  { label: 'عوازل الدائرة الأولى S',   get: r => getInsulatorPhaseExportText(r, 'S', 1) },
+  { label: 'عوازل الدائرة الأولى T',   get: r => getInsulatorPhaseExportText(r, 'T', 1) },
+  { label: 'عوازل الدائرة الثانية R',  get: r => getInsulatorPhaseExportText(r, 'R', 2) },
+  { label: 'عوازل الدائرة الثانية S',  get: r => getInsulatorPhaseExportText(r, 'S', 2) },
+  { label: 'عوازل الدائرة الثانية T',  get: r => getInsulatorPhaseExportText(r, 'T', 2) },
   { label: 'تقاطعات الحديد',          get: r => r.iron_intersections },
   { label: 'قواعد البرج',             get: r => r.tower_foundations },
   { label: 'ملحقات البرج',            get: r => r.tower_attachments },
@@ -11102,10 +11161,11 @@ function populateTreatLines() {
   sel.innerHTML = '<option value="">-- اختر الخط --</option>';
   const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
   const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
-  const linesWithDeps = [...new Set(
-    fullRecordsCache.filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
-           .map(r => r.line_name).filter(Boolean)
-  )].sort();
+  // نستخدم فهرس "آخر سجل لكل برج" بدل مسح كل التاريخ — أسرع بكثير (لا يكبر مع تراكم الكشوفات
+  // القديمة) وأدق أيضاً (يعكس الحالة الحالية فقط، مو كشف قديم انصلح لاحقاً)
+  const linesWithDeps = Object.keys(latestRecordsIndex).filter(lineName =>
+    Object.values(latestRecordsIndex[lineName]).some(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
+  ).sort();
   linesWithDeps.forEach(name => {
     const opt = document.createElement('option');
     opt.value = name; opt.textContent = name;
@@ -11120,10 +11180,12 @@ function onTreatLineChange() {
   towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
   document.getElementById('treatItemsCard').style.display = 'none';
   if (!lineName) { towerSel.disabled = true; return; }
-  const towersWithDeps = [...new Set(
-    fullRecordsCache.filter(r => r.line_name === lineName && extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
-           .map(r => r.tower_number)
-  )].sort((a,b) => parseInt(a)-parseInt(b));
+  // نفس التحسين: من فهرس آخر سجل لهذا الخط بس، بدل مسح كل الكشوفات التاريخية له
+  const bucket = latestRecordsIndex[lineName] || {};
+  const towersWithDeps = Object.values(bucket)
+    .filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
+    .map(r => r.tower_number)
+    .sort((a,b) => parseInt(a)-parseInt(b));
   if (!towersWithDeps.length) { towerSel.innerHTML = '<option value="">-- لا توجد مغادرات --</option>'; towerSel.disabled = true; return; }
   towersWithDeps.forEach(tn => { const o = document.createElement('option'); o.value = tn; o.textContent = 'برج ' + tn; towerSel.appendChild(o); });
   towerSel.disabled = false;
@@ -11134,14 +11196,9 @@ function onTreatTowerChange() {
   const towerNum = document.getElementById('treatTower').value;
   const card = document.getElementById('treatItemsCard');
   if (!lineName || !towerNum) { card.style.display = 'none'; return; }
-  const recs = fullRecordsCache.filter(r => r.line_name === lineName && String(r.tower_number) === String(towerNum));
-  if (!recs.length) { card.style.display = 'none'; return; }
-  recs.sort((a,b) => {
-    const d = (b.inspection_date||'').localeCompare(a.inspection_date||'');
-    if (d !== 0) return d;
-    return (b.created_at||'').localeCompare(a.created_at||''); // كسر التعادل بتاريخ الإنشاء الفعلي
-  });
-  currentTreatRecord = recs[0];
+  const r = getLatestRecordForTower(lineName, towerNum); // فوري من الفهرس — بدل مسح كامل لكل تاريخ الكشوفات
+  if (!r) { card.style.display = 'none'; return; }
+  currentTreatRecord = r;
   otherDepTreatState = {};
   card.style.display = 'block';
   renderTreatItems();
@@ -11812,7 +11869,7 @@ async function saveTreatment() {
     Object.assign(r, inspectionPatch);
     if (typeof fullRecordsCache !== 'undefined' && Array.isArray(fullRecordsCache)) {
       const idx = fullRecordsCache.findIndex(x => x.id === r.id);
-      if (idx > -1) Object.assign(fullRecordsCache[idx], inspectionPatch);
+      if (idx > -1) { Object.assign(fullRecordsCache[idx], inspectionPatch); indexOneRecordInPlace(fullRecordsCache[idx]); }
     }
     if (typeof records !== 'undefined' && Array.isArray(records)) {
       const idx2 = records.findIndex(x => x.id === r.id);
@@ -12023,21 +12080,6 @@ function getDepLogFiltered() {
     const mTo = !to || (t.treatment_date||'') <= to;
     return mLine && mFrom && mTo;
   });
-}
-
-// يرجع آخر سجل كشف فقط لكل برج بخط معين (الحقيقة المعتمدة لحالة البرج)
-function getLatestRecordsPerTower(lineName) {
-  const rec = fullRecordsCache.filter(r => r.line_name === lineName);
-  const byTower = {};
-  rec.forEach(r => {
-    const key = r.tower_number;
-    const cur = byTower[key];
-    if (!cur) { byTower[key] = r; return; }
-    const dCur = cur.inspection_date||'', dNew = r.inspection_date||'';
-    if (dNew > dCur) { byTower[key] = r; }
-    else if (dNew === dCur && (r.created_at||'') > (cur.created_at||'')) { byTower[key] = r; } // كسر التعادل بتاريخ الإنشاء الفعلي
-  });
-  return Object.values(byTower);
 }
 
 // ===== حساب قيمة السلسلة الواحدة من العوازل =====
@@ -13277,7 +13319,7 @@ async function buildInsulatorImageCard(r, insImg, titleLabel) {
 const REPORT_CATEGORY_EXPORT_COLUMN_LABELS = {
   foundation: ['قواعد البرج'],
   iron: ['تقاطعات الحديد', 'ملحقات البرج'],
-  insulator: ['العوازل'],
+  insulator: ['عوازل الدائرة الأولى R', 'عوازل الدائرة الأولى S', 'عوازل الدائرة الأولى T', 'عوازل الدائرة الثانية R', 'عوازل الدائرة الثانية S', 'عوازل الدائرة الثانية T'],
   wires: ['أسلاك R', 'أسلاك S', 'أسلاك T'],
   ground: ['الأرضي 1', 'الأرضي 2'],
   fire: ['مسببات الحرائق'],
@@ -13626,6 +13668,7 @@ async function hubDeleteSingleInspection(id) {
     const res = await sbFetch(`inspections?id=eq.${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error();
     fullRecordsCache = fullRecordsCache.filter(r => r.id !== id);
+    rebuildLatestRecordsIndex();
     records = records.filter(r => r.id !== id); // مزامنة كاش شاشة السجلات أيضاً
     showToast('🗑️ تم الحذف');
     renderHubDetail();
@@ -13672,6 +13715,7 @@ async function deleteWholeHubDate() {
   // نمسح من الكاش بس اللي فعلاً انحذف — قبل كذا كان يُمسح الكل من الكاش حتى لو فشل الحذف الحقيقي بالسيرفر
   if (hubBrowseType === 'visual') {
     fullRecordsCache = fullRecordsCache.filter(r => !succeededIds.includes(r.id));
+    rebuildLatestRecordsIndex();
     records = records.filter(r => !succeededIds.includes(r.id));
   }
   else treatmentsCache = treatmentsCache.filter(t => !succeededIds.includes(t.id));
