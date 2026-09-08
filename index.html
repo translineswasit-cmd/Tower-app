@@ -4305,7 +4305,18 @@ async function loadFullRecordsCache(force) {
     return; // الكاش حديث، لا حاجة لإعادة التحميل
   }
   try {
-    fullRecordsCache = await fetchAllPages('inspections?select=*&order=created_at.desc');
+    // نقرأ من "latest_inspections" (رؤية بقاعدة البيانات ترجّع آخر كشف لكل برج بس) بدل جدول inspections
+    // كامل — هذا يخلي حجم التحميل ثابتاً (بعدد الأبراج)، ما يكبر مهما تراكمت كشوفاتك بمرور الوقت.
+    // البيانات التاريخية الكاملة (للتقارير والمركز الموحّد) تُجلب عند الحاجة فقط من مصدرها مباشرة،
+    // مو من هذا الكاش. لو الرؤية غير موجودة بعد (قبل تنفيذ SQL المطلوب)، نرجع تلقائياً للجدول الكامل.
+    let rows;
+    try {
+      rows = await fetchAllPages('latest_inspections?select=*');
+    } catch (viewErr) {
+      console.warn('[tower-app] رؤية latest_inspections غير متاحة، رجوع مؤقت للجدول الكامل (أبطأ):', viewErr);
+      rows = await fetchAllPages('inspections?select=*&order=created_at.desc');
+    }
+    fullRecordsCache = rows;
     rebuildLatestRecordsIndex();
     fullRecordsCacheLoadedAt = now;
   } catch {
@@ -12907,18 +12918,30 @@ function getReportSelectedTypes() {
 }
 
 // يرجّع كل أرقام الأبراج المتاحة ضمن فلتر الخط/التاريخ/النوع الحالي (بدون فلتر الأبراج نفسه) — لبناء قائمة "أبراج معينة"
-function getReportAvailableTowers() {
+// يجلب الكشوفات المطلوبة للتقارير مباشرة من السيرفر بفلترة الخط والتاريخ — بدل الاعتماد على كاش
+// شامل محمَّل مسبقاً. هذا يعني حجم الطلب محدود بالفترة المختارة فقط، لا يكبر مع تراكم البيانات.
+async function fetchInspectionsForReport(lines, from, to) {
+  if (!from && !to && !lines) {
+    // حالة نادرة: بدون أي تحديد فترة أو خط — نضطر لجلب كل شي (نفس السلوك القديم، استثناء متوقّع)
+    return await fetchAllPages('inspections?select=*&order=created_at.desc');
+  }
+  let query = 'inspections?select=*&order=created_at.desc';
+  if (from) query += `&inspection_date=gte.${from}`;
+  if (to) query += `&inspection_date=lte.${to}`;
+  if (lines && lines.length === 1) query += `&line_name=eq.${encodeURIComponent(lines[0])}`;
+  const rows = await fetchAllPages(query);
+  return (lines && lines.length > 1) ? rows.filter(r => lines.includes(r.line_name)) : rows;
+}
+
+async function getReportAvailableTowers() {
   const lines = getReportSelectedLines(); // null = كل الخطوط
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const types = getReportSelectedTypes();
   const towers = new Set();
   if (types.includes('inspection')) {
-    (fullRecordsCache||[]).forEach(r => {
-      if ((!lines || lines.includes(r.line_name)) && (!from || (r.inspection_date||'') >= from) && (!to || (r.inspection_date||'') <= to) && r.tower_number != null) {
-        towers.add(String(r.tower_number));
-      }
-    });
+    const rows = await fetchInspectionsForReport(lines, from, to);
+    rows.forEach(r => { if (r.tower_number != null) towers.add(String(r.tower_number)); });
   }
   if (types.includes('treatment')) {
     (treatmentsCache||[]).forEach(t => {
@@ -12946,9 +12969,10 @@ function getReportAvailableTowers() {
   return [...towers].sort((a,b) => (parseInt(a)||0) - (parseInt(b)||0) || a.localeCompare(b));
 }
 
-function updateReportTowersList() {
+async function updateReportTowersList() {
   const wrap = document.getElementById('repTowersWrap');
-  const towers = getReportAvailableTowers();
+  wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">⏳ جاري التحميل...</div>';
+  const towers = await getReportAvailableTowers();
   if (!towers.length) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد أبراج مطابقة</div>'; return; }
   wrap.innerHTML = towers.map(tn => `
     <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
@@ -13019,16 +13043,12 @@ function dedupeLatestPerTowerDate(rows, dateField) {
   return [...map.values()];
 }
 
-function getReportFilteredInspections() {
+async function getReportFilteredInspections() {
   const lines = getReportSelectedLines(); // null = كل الخطوط
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
-  const base = (fullRecordsCache||[]).filter(r =>
-    (!lines || lines.includes(r.line_name)) &&
-    (!from || (r.inspection_date||'') >= from) &&
-    (!to || (r.inspection_date||'') <= to) &&
-    reportTowerPasses(r.tower_number)
-  );
+  const rows = await fetchInspectionsForReport(lines, from, to);
+  const base = rows.filter(r => reportTowerPasses(r.tower_number));
   // ملاحظة مهمة: لا نفلتر بالتصنيف هنا — كل برج مطابق للخط/التاريخ/نطاق الأبراج يظهر بالتقرير دائماً،
   // والتصنيف المختار يتحكم بس بشنو المعلومات تُعرض بكل بطاقة (سليم أو تفاصيل الضرر) — راجع buildReportInspectionCardCanvas
   return sortByLineThenTower(dedupeLatestPerTowerDate(base, 'inspection_date'), 'tower_number');
@@ -13152,10 +13172,12 @@ async function buildThermalNotesCardCanvas(lineName, towerNumber, notes) {
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
 }
 
-function updateReportResultCount() {
+async function updateReportResultCount() {
   const types = getReportSelectedTypes();
+  const el = document.getElementById('repResultCount');
+  el.textContent = '⏳ جاري الحساب...';
   let parts = [];
-  if (types.includes('inspection')) parts.push(`📋 كشف: ${getReportFilteredInspections().length}`);
+  if (types.includes('inspection')) parts.push(`📋 كشف: ${(await getReportFilteredInspections()).length}`);
   if (types.includes('treatment')) parts.push(`🔧 معالجة: ${getReportFilteredTreatments().length}`);
   if (types.includes('thermal')) {
     // نحسب عدد الأبراج المشمولة (من المصدرين معاً: القراءات الخام + صفوف الاستمارات الرسمية)
@@ -13165,7 +13187,7 @@ function updateReportResultCount() {
     getReportFilteredThermalForms().forEach(f => (f.rows||[]).forEach(row => towers.add(f.line_name + '||' + row.tower_number)));
     parts.push(`🌡️ كشف حراري: ${towers.size} برج`);
   }
-  document.getElementById('repResultCount').textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
+  el.textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
 }
 
 // بطاقة كشف واحدة (كانفاس) — تعرض بس التصنيفات المختارة (أو كل شي لو "الكل")
@@ -13334,12 +13356,13 @@ function getReportExcelColumns(categories) {
   return EXPORT_COLUMNS.filter(c => labels.has(c.label));
 }
 
-function exportUnifiedReportExcel() {
+async function exportUnifiedReportExcel() {
   const types = getReportSelectedTypes();
   if (!types.length) { showToast('⚠️ اختر نوع بيانات واحد على الأقل', 'error'); return; }
   const categories = getReportSelectedCategories();
+  showToast('⏳ جاري تجهيز البيانات...');
 
-  const inspections = types.includes('inspection') ? getReportFilteredInspections() : [];
+  const inspections = types.includes('inspection') ? await getReportFilteredInspections() : [];
   const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
   const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
   const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
@@ -13411,7 +13434,7 @@ async function generateUnifiedReportPDF() {
   if (!types.length) { showToast('⚠️ اختر نوع بيانات واحد على الأقل', 'error'); return; }
   const categories = getReportSelectedCategories();
 
-  const inspections = types.includes('inspection') ? getReportFilteredInspections() : [];
+  const inspections = types.includes('inspection') ? await getReportFilteredInspections() : [];
   const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
   const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
   const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
@@ -13513,7 +13536,9 @@ function getHubGroups(type) {
     return map.get(key);
   }
   if (type === 'visual') {
-    (fullRecordsCache||[]).forEach(r => { if (r.line_name && r.inspection_date) ensure(r.line_name, r.inspection_date).items.push(r); });
+    // نستخدم "records" (كاش آخر 6 أشهر، محدود الحجم أصلاً) بدل fullRecordsCache — لأن الأخير صار
+    // يحتوي "آخر حالة لكل برج" بس (رؤية latest_inspections)، وما يصلح لتصفّح تواريخ متعددة بالتاريخ
+    (records||[]).forEach(r => { if (r.line_name && r.inspection_date) ensure(r.line_name, r.inspection_date).items.push(r); });
   } else if (type === 'treat') {
     (treatmentsCache||[]).forEach(t => { if (t.line_name && t.treatment_date) ensure(t.line_name, t.treatment_date).items.push(t); });
   } else if (type === 'thermal') {
@@ -13529,7 +13554,7 @@ async function openHubBrowse(type) {
   hubBrowseType = type;
   pushLevel(() => { showHubView('hubHomeView'); });
   showToast('⏳ جاري التحميل...');
-  if (type === 'visual') await loadFullRecordsCache(true).catch(()=>{});
+  if (type === 'visual') await loadRecords().catch(()=>{});
   if (type === 'treat') await loadTreatments().catch(()=>{});
   if (type === 'thermal') await Promise.all([loadThermalArchive().catch(()=>{}), loadReportThermalForms().catch(()=>{})]);
   renderHubLines();
