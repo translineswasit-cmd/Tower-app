@@ -3041,18 +3041,48 @@ let loadedLineCacheAt = {}; // { [lineName]: timestamp }
 // يحمّل آخر حالة لأبراج خط واحد بس (بدل كل الـ33 خط دفعة وحدة) — هذا يقلّل حجم التحميل من ~8.5
 // ميجا لكل الخطوط إلى ~260 كيلوبايت لخط واحد بالمتوسط (خط وحد = ~3% بس من إجمالي كل الأبراج)،
 // وهذا هو سبب تأخير الثواني الثلاث اللي كان يصير عند فتح أي خط
+// الحقول اللي فعلاً تحتاجها شبكة الأبراج + شاشة المغادرات (نفس الكاش المشترك) للعرض والفحص —
+// استبعاد التفاصيل الأقل استخداماً (دورة المعالجة، مادة الدائرة الثانية، الملاحظات، اسم الفني)
+// يقلّل حجم تحميل الخط بشكل ملموس. التفاصيل الكاملة تُجلب بس لما تفتح برج محدد فعلياً
+// (عبر loadFullTowerRecord)، مو لكل أبراج الخط دفعة وحدة.
+// مهم: insulator_state_2 وinsulator_chain_types مطلوبان هنا (مو للعرض بالشبكة) لأن شاشة المغادرات
+// تستخدمهم لاكتشاف ضرر الدائرة الثانية وعوازل البلاستك/الخزف من نفس هذا الكاش بالضبط.
+const GRID_SELECT_FIELDS = ['id','line_name','tower_number','tower_type','voltage','inspection_date',
+  'insulator_state','insulator_state_2','insulator_chain_types','insulator_washing',
+  'tower_foundations','iron_intersections','tower_attachments','ground_1','ground_2','fire_causes_notes','road_access','road_access_notes',
+  'sev_insulator','sev_foundation','sev_iron','sev_wires','sev_ground','sev_fire'].join(',');
+
 async function loadLineRecordsCache(lineName, force) {
   const now = Date.now();
   if (!force && loadedLineCacheAt[lineName] && (now - loadedLineCacheAt[lineName]) < 120000) {
     return; // بيانات هذا الخط حديثة، لا حاجة لإعادة التحميل
   }
-  const rows = await fetchAllPages(`latest_inspections?select=*&line_name=eq.${encodeURIComponent(lineName)}`);
+  const rows = await fetchAllPages(`latest_inspections?select=${GRID_SELECT_FIELDS}&line_name=eq.${encodeURIComponent(lineName)}`);
   // نشيل أي نسخة قديمة لنفس الخط من الكاش الموحّد (لو كانت موجودة من تحميل سابق)، ونضيف الجديدة —
   // بدون ما نلمس بيانات باقي الخطوط المحمّلة مسبقاً (لو زرت المغادرات مثلاً قبل هذا)
   fullRecordsCache = fullRecordsCache.filter(r => r.line_name !== lineName).concat(rows);
   delete latestRecordsIndex[lineName];
   rows.forEach(r => indexOneRecordInPlace(r));
   loadedLineCacheAt[lineName] = now;
+}
+
+// يجلب السجل الكامل (كل الحقول، بما فيها الدائرة الثانية والملاحظات) لبرج واحد بس — طلب صغير
+// وفوري دائماً بغض النظر عن سرعة النت (سجل واحد بس)، يُستخدم عند فتح برج محدد فعلياً
+async function loadFullTowerRecord(lineName, towerNumber) {
+  try {
+    const res = await sbFetch(`inspections?select=*&line_name=eq.${encodeURIComponent(lineName)}&tower_number=eq.${encodeURIComponent(towerNumber)}&order=inspection_date.desc,created_at.desc`);
+    if (!res.ok) return null;
+    const rows = await res.json();
+    if (!rows.length) return null;
+    const full = rows[0];
+    const idx = fullRecordsCache.findIndex(r => r.line_name === lineName && String(r.tower_number) === String(towerNumber));
+    if (idx > -1) fullRecordsCache[idx] = full; else fullRecordsCache.push(full);
+    indexOneRecordInPlace(full);
+    return full;
+  } catch (e) {
+    console.warn('[tower-app] فشل تحميل السجل الكامل للبرج', lineName, towerNumber, e);
+    return null;
+  }
 }
 
 async function renderTowersGrid(lineName) {
@@ -10386,7 +10416,12 @@ async function checkPreviousInspection(lineName, towerNumber) {
   // نحدّث بيانات هذا الخط بس (مو كل الـ33 خط) — التعديلات المحلية الفورية (بعد حفظ/معالجة بنفس
   // الجلسة) أصلاً محدَّثة بالذاكرة فوراً بدون حاجة لإعادة تحميل، فهذا التحديث غرضه فقط التقاط أي
   // تغيير من جهاز/فني ثاني — ما يحتاج يكون إجبارياً وسريعاً في كل مرة، يكفي كل دقيقتين
-  if (navigator.onLine) { try { await loadLineRecordsCache(lineName); } catch(e) { console.warn('[tower-app] فشل تحديث بيانات الخط قبل فحص الكشف السابق — سيُستخدم الكاش القديم إن وُجد', e); } }
+  if (navigator.onLine) {
+    try { await loadLineRecordsCache(lineName); } catch(e) { console.warn('[tower-app] فشل تحديث بيانات الخط قبل فحص الكشف السابق — سيُستخدم الكاش القديم إن وُجد', e); }
+    // تحميل شبكة الأبراج مختصر الحقول (بدون تفاصيل الدائرة الثانية/الملاحظات) لتوفير الحجم — نجيب
+    // السجل الكامل لهذا البرج بالذات هنا (طلب صغير وفوري) قبل ما نستخدمه لتعبئة الكشف السابق
+    try { await loadFullTowerRecord(lineName, towerNumber); } catch(e) { console.warn('[tower-app] فشل تحميل السجل الكامل لهذا البرج', e); }
+  }
 
   let last = null;
   let fromCache = false;
@@ -11048,11 +11083,12 @@ function renderDepLineTowers(lineName) {
   body.innerHTML = html;
 }
 
-function openDepTowerDetail(lineName, towerNum) {
+async function openDepTowerDetail(lineName, towerNum) {
   pushLevel(backToDepLineTowers);
   document.getElementById('depLineTowersView').style.display = 'none';
   document.getElementById('depTowerDetailView').style.display = '';
   document.getElementById('depTowerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
+  if (navigator.onLine) { try { await loadFullTowerRecord(lineName, towerNum); } catch(e) { console.warn('[tower-app] فشل تحميل السجل الكامل لتفاصيل برج المغادرة', e); } }
   renderDepTowerDetail(lineName, towerNum);
 }
 
@@ -11224,12 +11260,14 @@ function onTreatLineChange() {
   towerSel.disabled = false;
 }
 
-function onTreatTowerChange() {
+async function onTreatTowerChange() {
   const lineName = document.getElementById('treatLine').value;
   const towerNum = document.getElementById('treatTower').value;
   const card = document.getElementById('treatItemsCard');
   if (!lineName || !towerNum) { card.style.display = 'none'; return; }
-  const r = getLatestRecordForTower(lineName, towerNum); // فوري من الفهرس — بدل مسح كامل لكل تاريخ الكشوفات
+  // نجيب السجل الكامل لهذا البرج بالذات (طلب صغير وفوري) — شاشة المعالجة تحتاج تفاصيل غير متوفرة
+  // بالتحميل المختصر لشبكة الأبراج (دورة المعالجة، مادة سلاسل الدائرة الثانية، الملاحظات)
+  const r = navigator.onLine ? (await loadFullTowerRecord(lineName, towerNum)) || getLatestRecordForTower(lineName, towerNum) : getLatestRecordForTower(lineName, towerNum);
   if (!r) { card.style.display = 'none'; return; }
   currentTreatRecord = r;
   otherDepTreatState = {};
