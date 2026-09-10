@@ -11108,10 +11108,23 @@ function getDepExportSelectedCategories() {
   return picked.length ? picked : null;
 }
 
-function openDepExportModal() {
+async function openDepExportModal() {
+  const wrap = document.getElementById('depExportLinesWrap');
+  document.getElementById('depExportSelectAllBtn').textContent = 'تحديد الكل';
+  document.getElementById('depExportTowerFrom').value = '';
+  document.getElementById('depExportTowerTo').value = '';
+  document.getElementById('depExportCategoryAll').checked = true;
+  document.querySelectorAll('.depExportCatChk').forEach(cb => { cb.checked = false; cb.disabled = true; });
+  document.getElementById('depExportModalBg').classList.add('show');
+
+  // نتأكد بيانات المغادرات فعلاً اكتملت قبل ما نقرر "ما فيه مغادرات" — بدون هذا الانتظار، فتح
+  // نافذة التصدير بسرعة (خصوصاً بنت ضعيف، قبل ما تكتمل المرحلة الثانية من تحميل المغادرات) كان
+  // يعرض "لا توجد مغادرات" بشكل خاطئ تماماً، فقط لأن البيانات الحقيقية لسا ما وصلت
+  wrap.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات المغادرات...</div>';
+  try { await Promise.all([loadFullRecordsCache(), loadTreatments()]); } catch(e) { console.warn('[tower-app] فشل تحديث بيانات المغادرات قبل التصدير', e); }
+
   const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
   const linesWithOpenDeps = uniqueLines.filter(name => getActiveDepartureTowers(name).length > 0);
-  const wrap = document.getElementById('depExportLinesWrap');
   if (!linesWithOpenDeps.length) {
     wrap.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات مفتوحة</div>';
   } else {
@@ -11121,13 +11134,7 @@ function openDepExportModal() {
         <span>${name}</span>
       </label>`).join('');
   }
-  document.getElementById('depExportSelectAllBtn').textContent = 'تحديد الكل';
-  document.getElementById('depExportTowerFrom').value = '';
-  document.getElementById('depExportTowerTo').value = '';
-  document.getElementById('depExportCategoryAll').checked = true;
-  document.querySelectorAll('.depExportCatChk').forEach(cb => { cb.checked = false; cb.disabled = true; });
   updateDepExportTowerList();
-  document.getElementById('depExportModalBg').classList.add('show');
 }
 
 function closeDepExportModal() {
