@@ -2671,6 +2671,11 @@ function pushLevel(restoreFn) {
   if (levelStack[levelStack.length - 1] === restoreFn) return; // يمنع تكرار نفس المستوى لو انضغط نفس الزر مرتين (مثل إعادة المحاولة)
   levelStack.push(restoreFn);
 }
+// يسحب مستوى معيّن من قمة المكدّس لو كان هو الحالي — يُستخدم لما تُغلَق نافذة بطريقة غير "رجوع"
+// (حفظ ناجح، زر إغلاق مباشر...)، حتى لا يبقى مستوى "عالق" يُفعَّل خطأً بضغطة رجوع لاحقة غير مرتبطة
+function popLevelIfMatches(fn) {
+  if (levelStack[levelStack.length - 1] === fn) levelStack.pop();
+}
 
 function navKeyForPage(id) {
   if (id === 'home') return 'home';
@@ -3271,6 +3276,7 @@ function endLineInspection(lineName) {
 }
 
 function openTowerModal(lineName, towerNum) {
+  pushLevel(closeTowerInspectionModal);
   document.getElementById('f_line_name').value = lineName;
   // لو التاريخ فاضي، أو لو تغيّر اليوم الفعلي عن المكتوب بالحقل (مثلاً التطبيق ضل مفتوح بالخلفية
   // من يوم سابق)، نحدّثه لتاريخ اليوم الحقيقي تلقائياً — بدون ما يأثر على استمرار نفس جلسة العمل
@@ -3304,7 +3310,7 @@ function openTowerModal(lineName, towerNum) {
 }
 
 function closeTowerInspectionModal() {
-  document.getElementById('towerInspectionModal').classList.remove('show');
+  document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   if (editId) { cancelEdit(); return; }
   resetTowerFieldsOnly();
 }
@@ -4268,7 +4274,7 @@ function clearForm() {
 
 function cancelEdit() {
   editId=null; clearForm();
-  document.getElementById('towerInspectionModal').classList.remove('show');
+  document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   document.getElementById('formTitle').textContent='➕ إضافة كشف جديد';
   document.getElementById('saveBtn').textContent='💾 حفظ الكشف';
   document.getElementById('cancelEditBtn').style.display='none';
@@ -4323,7 +4329,7 @@ async function saveRecord() {
       if (res.ok) {
         applyEditLocally();
         showToast('✅ تم تحديث السجل');
-        document.getElementById('towerInspectionModal').classList.remove('show');
+        document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
         cancelEdit(); loadRecords();
         if (currentGridLine) renderTowersGridFromCache(currentGridLine);
       } else {
@@ -4333,7 +4339,7 @@ async function saveRecord() {
       // فشل التعديل — نحفظ أوف لاين ونُعلم المستخدم
       addToInspectionPatchQueue(editId, patchData);
       showToast('📦 تعذّر التحديث، حُفظ محلياً وسيُرسل عند الاتصال');
-      document.getElementById('towerInspectionModal').classList.remove('show');
+      document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
       cancelEdit();
       applyEditLocally();
       if (currentGridLine) renderTowersGridFromCache(currentGridLine);
@@ -4369,7 +4375,7 @@ function afterGridSaveSuccess(d) {
   const savedRec = { ...d, created_at: d.created_at || new Date().toISOString() };
   fullRecordsCache.unshift(savedRec);
   indexOneRecordInPlace(savedRec);
-  document.getElementById('towerInspectionModal').classList.remove('show');
+  document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   resetTowerFieldsOnly();
   // فوري من الذاكرة المحلية — بدون هذا كان يعيد تحميل كل الكشوفات من السيرفر بعد كل حفظ، وهذا
   // بالضبط اللي يسبب "تحميل" بطيء بعد كل برج على نت ضعيف رغم إن البيانات محدَّثة أصلاً محلياً
@@ -10152,7 +10158,7 @@ function saveEditedPendingInspection() {
   if (!safeSetItem(QUEUE_KEY, JSON.stringify(q))) return;
   editingPendingInspectionIndex = null;
   showToast('✅ تم تحديث الكشف المعلق');
-  document.getElementById('towerInspectionModal').classList.remove('show');
+  document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   clearForm();
   // إعادة الزر لوضعه الطبيعي
   const btn = document.getElementById('saveBtn');
