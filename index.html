@@ -358,8 +358,8 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
   <div id="pendingSyncBadge" onclick="showPage('pendingSync');renderPendingSyncPage();" style="display:none;background:#F6C23E;color:#1a202c;padding:8px 16px;text-align:center;font-weight:700;font-size:0.85rem;cursor:pointer;align-items:center;justify-content:center;gap:6px"></div>
   <div class="header-mini" id="headerMini">
-    <button class="header-back-btn" onclick="goBackFromOperation()">→ رجوع</button>
-    <button class="header-cancel-btn" onclick="cancelToHome()" title="إلغاء والعودة للرئيسية">✕</button>
+    <button class="header-back-btn" ontouchstart="document.activeElement && document.activeElement !== document.body && document.activeElement.blur && document.activeElement.blur();" onclick="goBackFromOperation()">→ رجوع</button>
+    <button class="header-cancel-btn" ontouchstart="document.activeElement && document.activeElement !== document.body && document.activeElement.blur && document.activeElement.blur();" onclick="cancelToHome()" title="إلغاء والعودة للرئيسية">✕</button>
   </div>
   <nav>
     <button class="active" data-page="home" onclick="showPage('home',this)">🏠 الرئيسية</button>
@@ -2705,6 +2705,12 @@ function forceCloseAllModals() {
 }
 
 function goBackFromOperation() {
+  // إلغاء تركيز أي حقل نشط أولاً (يغلق الكيبورد فوراً) — بدون هذا، لو كان المستخدم يكتب بحقل نص
+  // وضغط "رجوع"، الضغطة الأولى على iOS Safari كانت تُمتص بس لإغلاق الكيبورد بدل تنفيذ الرجوع
+  // الفعلي، فيحتاج يضغط الزر مرتين
+  if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
   // إغلاق قسري لأي نافذة منبثقة عالقة قبل أي رجوع — بغض النظر عن المسار (مستوى تنقّل محفوظ أو صفحة
   // سابقة). بدون هذا، الرجوع بمسار "مستوى محفوظ" (levelStack) كان يتجاوز هذا التنظيف كلياً، فتبقى
   // أي نافذة مفتوحة (زي تصدير المغادرات) عالقة على الشاشة حتى لو انتقلت لصفحة ثانية بالكامل
@@ -3275,7 +3281,10 @@ function endLineInspection(lineName) {
   showToast('✅ تم إنهاء الكشف على هذا الخط');
 }
 
+let towerGridScrollY = 0;
+
 function openTowerModal(lineName, towerNum) {
+  towerGridScrollY = window.scrollY; // نحفظ موضع التمرير الحالي بشبكة الأبراج حتى نرجع له عند الإغلاق
   pushLevel(closeTowerInspectionModal);
   document.getElementById('f_line_name').value = lineName;
   // لو التاريخ فاضي، أو لو تغيّر اليوم الفعلي عن المكتوب بالحقل (مثلاً التطبيق ضل مفتوح بالخلفية
@@ -3310,7 +3319,12 @@ function openTowerModal(lineName, towerNum) {
 }
 
 function closeTowerInspectionModal() {
+  if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
   document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
+  // نستعيد موضع التمرير المحفوظ (بعد لحظة قصيرة حتى تكتمل إعادة رسم الشبكة أولاً)
+  setTimeout(() => window.scrollTo(0, towerGridScrollY), 0);
   if (editId) { cancelEdit(); return; }
   resetTowerFieldsOnly();
 }
