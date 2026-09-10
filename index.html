@@ -2686,7 +2686,24 @@ function updateHeaderMode(id) {
 
 let isGoingBack = false;
 // زر "→ رجوع" الموحّد: يرجع خطوة وحدة بس — أولاً بمستويات الصفحة الحالية (لو فيها)، وبعدين بين الصفحات نفسها
+// إغلاق قسري لكل النوافذ المنبثقة (كلا الصنفين المستخدمين بالتطبيق) — نفرض display:none مباشرة
+// كتحصين إضافي فوق إزالة الصنف نفسها، لأن Safari بآيفون أحياناً يتأخر برسم التغيير المعتمد على
+// الصنف فقط لعناصر position:fixed بعد تمرير سابق داخلها (خلل رسم معروف بـWebKit)
+function forceCloseAllModals() {
+  document.querySelectorAll('.modal-bg.show, .treat-modal-bg.show').forEach(m => {
+    m.classList.remove('show');
+    m.style.display = 'none';
+    // نفرض إعادة رسم فورية (بدل ما ننتظر الدورة الطبيعية) — يمنع "شبح" المحتوى القديم المرسوم
+    void m.offsetHeight;
+    m.style.display = '';
+  });
+}
+
 function goBackFromOperation() {
+  // إغلاق قسري لأي نافذة منبثقة عالقة قبل أي رجوع — بغض النظر عن المسار (مستوى تنقّل محفوظ أو صفحة
+  // سابقة). بدون هذا، الرجوع بمسار "مستوى محفوظ" (levelStack) كان يتجاوز هذا التنظيف كلياً، فتبقى
+  // أي نافذة مفتوحة (زي تصدير المغادرات) عالقة على الشاشة حتى لو انتقلت لصفحة ثانية بالكامل
+  forceCloseAllModals();
   if (levelStack.length) {
     const restoreFn = levelStack.pop();
     restoreFn();
@@ -2732,8 +2749,9 @@ function showPage(id, btn) {
   if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
     document.activeElement.blur();
   }
-  // إغلاق قسري لأي نافذة منبثقة عالقة (.modal-bg) — يمنع أي طبقة شفافة عالقة تحجب اللمس فوق الصفحة الجديدة
-  document.querySelectorAll('.modal-bg.show').forEach(m => m.classList.remove('show'));
+  // إغلاق قسري لأي نافذة منبثقة عالقة (كلا الصنفين المستخدمين بالتطبيق للنوافذ المنبثقة) — يمنع أي
+  // طبقة شفافة عالقة تحجب اللمس فوق الصفحة الجديدة
+  forceCloseAllModals();
   // صلاحية القراءة فقط: ممنوع الدخول لصفحة إضافة كشف
   if (id === 'form' && currentUser && currentUser.role === 'readonly') {
     isGoingBack = false;
@@ -2911,7 +2929,7 @@ function onLineChange(skipModalClose) {
   if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
     document.activeElement.blur();
   }
-  if (!skipModalClose) document.querySelectorAll('.modal-bg.show').forEach(m => m.classList.remove('show'));
+  if (!skipModalClose) forceCloseAllModals();
   addActiveLineTab(name);
   renderTowersGrid(name);
 }
