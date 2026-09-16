@@ -2261,7 +2261,6 @@ tbody tr:hover { background: #F7FAFC; }
 </div><!-- end appRoot -->
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
 <script>
@@ -2306,6 +2305,23 @@ function genUUID() {
     const r = Math.random()*16|0, v = c==='x'?r:(r&0x3|0x8);
     return v.toString(16);
   });
+}
+
+// تحميل كسول لمكتبة jsPDF: لا تُحمَّل إلا عند أول طلب تصدير PDF فعلي (بدل تحميلها بكل فتحة تطبيق).
+// لو محمَّلة مسبقاً (window.jspdf موجودة) ترجع فوراً بدون أي تحميل جديد. لو التحميل جارٍ أصلاً
+// (استدعتها أكثر من وظيفة بنفس اللحظة)، الكل يشارك نفس الـPromise بدل تكرار طلب التحميل.
+let _jsPDFLoadPromise = null;
+function ensureJsPDFLoaded() {
+  if (window.jspdf) return Promise.resolve();
+  if (_jsPDFLoadPromise) return _jsPDFLoadPromise;
+  _jsPDFLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    script.onload = () => resolve();
+    script.onerror = () => { _jsPDFLoadPromise = null; reject(new Error('فشل تحميل مكتبة jsPDF')); };
+    document.head.appendChild(script);
+  });
+  return _jsPDFLoadPromise;
 }
 
 async function sbFetch(path, options = {}) {
@@ -4921,6 +4937,7 @@ async function confirmExportPDF() {
   closeExportModal();
 
   try {
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -5256,6 +5273,7 @@ async function exportDepLogPDF() {
   showToast('⏳ جاري تحضير PDF...');
 
   try {
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -5948,6 +5966,7 @@ async function exportOfficialFormPDF() {
   try {
     if (!stampImgReady) await stampImgLoadPromise;
     const pages = buildOfficialFormCanvasPNG(760);
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -7147,6 +7166,7 @@ async function exportWorkOrdersPDF() {
   if (!woSearchResults.length) { showToast('⚠️ سوّي بحث أولاً', 'error'); return; }
   showToast('⏳ جاري تحضير التقرير...');
   try {
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -7623,6 +7643,7 @@ async function exportMemoPDF() {
   showToast('⏳ جاري تحضير ملف PDF...');
   try {
     const png = buildMemoCanvasPNG(700);
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -8036,6 +8057,7 @@ async function exportPeriodSummaryPDF() {
   if (!periodSummaryData.length) { showToast('⚠️ ولّد الملخّص أولاً', 'error'); return; }
   showToast('⏳ جاري تحضير التقرير...');
   try {
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -9808,6 +9830,7 @@ function buildTableReportPages(title, columns, rows, opts) {
 }
 
 async function exportCanvasReportPDF(pages, filename, orientation) {
+  await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: orientation || 'landscape', unit: 'pt', format: 'a4', compress: true });
   const pageW = doc.internal.pageSize.getWidth();
@@ -11265,6 +11288,7 @@ async function exportOpenDeparturesPDF() {
   await new Promise(r => setTimeout(r, 100));
 
   try {
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -14099,6 +14123,7 @@ async function generateUnifiedReportPDF() {
   const towerList = sortByLineThenTower([...towerMap.values()], 'tower_number');
 
   try {
+    await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
