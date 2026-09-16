@@ -1,10 +1,11 @@
-const CACHE_NAME = 'tower-app-v307';
+const CACHE_NAME = 'tower-app-v308';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
   './',
   './index.html',
-  './work-orders.js'
+  './work-orders.js',
+  './backup.js'
 ];
 
 // أصول مساندة: مرغوبة لكن فشلها يجب ألا يُسقط التثبيت بالكامل
