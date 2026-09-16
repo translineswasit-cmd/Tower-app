@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v305';
+const CACHE_NAME = 'tower-app-v306';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -17,7 +17,6 @@ const OPTIONAL_ASSETS = [
 ];
 
 const EXTRA_ASSETS = [
-  'https://unpkg.com/docx@8.5.0/build/index.js'
 ];
 
 // Install: الأساسيات يجب أن تنجح، وكل ما عداها اختياري
