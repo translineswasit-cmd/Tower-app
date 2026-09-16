@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v304';
+const CACHE_NAME = 'tower-app-v305';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -17,7 +17,6 @@ const OPTIONAL_ASSETS = [
 ];
 
 const EXTRA_ASSETS = [
-  'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js',
   'https://unpkg.com/docx@8.5.0/build/index.js'
 ];
 
