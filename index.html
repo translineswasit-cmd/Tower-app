@@ -2260,7 +2260,6 @@ tbody tr:hover { background: #F7FAFC; }
 
 </div><!-- end appRoot -->
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
 <script>
@@ -2322,6 +2321,23 @@ function ensureJsPDFLoaded() {
     document.head.appendChild(script);
   });
   return _jsPDFLoadPromise;
+}
+
+// تحميل كسول لمكتبة XLSX: لا تُحمَّل إلا عند أول طلب تصدير Excel فعلي (بدل تحميلها بكل فتحة تطبيق).
+// نفس مبدأ ensureJsPDFLoaded أعلاه بالضبط — لو محمَّلة مسبقاً (window.XLSX موجودة) ترجع فوراً بدون
+// أي تحميل جديد، ولو التحميل جارٍ أصلاً (استدعتها أكثر من وظيفة بنفس اللحظة) الكل يشارك نفس الـPromise.
+let _xlsxLoadPromise = null;
+function ensureXLSXLoaded() {
+  if (window.XLSX) return Promise.resolve();
+  if (_xlsxLoadPromise) return _xlsxLoadPromise;
+  _xlsxLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.onload = () => resolve();
+    script.onerror = () => { _xlsxLoadPromise = null; reject(new Error('فشل تحميل مكتبة XLSX')); };
+    document.head.appendChild(script);
+  });
+  return _xlsxLoadPromise;
 }
 
 async function sbFetch(path, options = {}) {
@@ -4911,7 +4927,7 @@ function toggleExportColumnsSelectAll() {
   btn.textContent = allChecked ? 'تحديد الكل' : 'إلغاء التحديد';
 }
 
-function confirmExportExcel() {
+async function confirmExportExcel() {
   const rows = getExportFilteredRecords();
   if (!rows.length) { showToast('لا توجد بيانات مطابقة للتصدير', 'error'); return; }
   const cols = Array.from(document.querySelectorAll('.exportColChk:checked'))
@@ -4922,6 +4938,7 @@ function confirmExportExcel() {
     cols.forEach(c => { o[c.label] = c.get(r); });
     return o;
   });
+  await ensureXLSXLoaded(); // Lazy load: يضمن اكتمال تحميل XLSX قبل الاستخدام
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'كشف الأبراج');
@@ -7989,7 +8006,7 @@ function renderPeriodSummary() {
   }).join('');
 }
 
-function exportPeriodSummaryExcel() {
+async function exportPeriodSummaryExcel() {
   if (!periodSummaryData.length) { showToast('⚠️ ولّد الملخّص أولاً', 'error'); return; }
   const data = periodSummaryData.map(e => ({
     'اسم الخط': e.line_name,
@@ -8001,6 +8018,7 @@ function exportPeriodSummaryExcel() {
     'صيانة بدون إطفاء (تاريخ — التفاصيل)': e.noOutageEntries.map(m => `${m.date}: ${m.detail||'-'}`).join(' | '),
     'إزالة مسببات حرائق': e.fireDates.join('، ')
   }));
+  await ensureXLSXLoaded(); // Lazy load: يضمن اكتمال تحميل XLSX قبل الاستخدام
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'ملخص الفترة');
   const from = document.getElementById('drp_from').value, to = document.getElementById('drp_to').value;
@@ -14034,6 +14052,7 @@ async function exportUnifiedReportExcel() {
     return;
   }
 
+  await ensureXLSXLoaded(); // Lazy load: يضمن اكتمال تحميل XLSX قبل الاستخدام
   const wb = XLSX.utils.book_new();
 
   if (inspections.length) {
