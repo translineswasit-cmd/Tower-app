@@ -2036,7 +2036,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="page-title">📑 الاستمارات</div>
   <div class="thermal-cards">
     <div class="card" id="formsDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
-    <div class="card" onclick="showPage('memo');showMemoHome();"><span class="icon">📝</span><span class="label">مذكرة</span><span class="sublabel">مذكرة رسمية</span></div>
+    <div class="card" onclick="openMemoFeature();"><span class="icon">📝</span><span class="label">مذكرة</span><span class="sublabel">مذكرة رسمية</span></div>
     <div class="card" onclick="showPage('workOrders');openWorkOrdersHome();"><span class="icon">📋</span><span class="label">أوراق الواجب</span><span class="sublabel">تسجيل وأرشيف واجبات الفرق</span></div>
   </div>
 </div>
@@ -2369,6 +2369,40 @@ function ensureDocxLoaded() {
     document.head.appendChild(script);
   });
   return _docxLoadPromise;
+}
+
+// تحميل كسول لملف memo.js: لا يُحمَّل ولا يُنفَّذ إلا عند أول دخول فعلي لميزة المذكرة (بدل تنفيذه
+// بكل فتحة تطبيق أثناء البدء). الملف نفسه يبقى ضمن CRITICAL_ASSETS بعامل الخدمة (متاح Offline من
+// أول تثبيت) — هذا المحمّل بس يتحكم بتوقيت تنفيذه داخل صفحة التطبيق، لا علاقة له بتخزينه المسبق.
+// نفس مبدأ المحمّلات الأربعة أعلاه بالضبط (Promise مشترك، تصفير عند الفشل لإتاحة إعادة المحاولة)،
+// بفارق وحيد: نستخدم علامة boolean بدل فحص كائن عام مميَّز (لا يوجد كائن واحد يمثّل "المذكرة محمَّلة").
+let _memoLoaded = false;
+let _memoLoadPromise = null;
+function ensureMemoLoaded() {
+  if (_memoLoaded) return Promise.resolve();
+  if (_memoLoadPromise) return _memoLoadPromise;
+  _memoLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = './memo.js';
+    script.onload = () => { _memoLoaded = true; resolve(); };
+    script.onerror = () => { _memoLoadPromise = null; reject(new Error('فشل تحميل ميزة المذكرة')); };
+    document.head.appendChild(script);
+  });
+  return _memoLoadPromise;
+}
+
+// نقطة الدخول الوحيدة لميزة المذكرة (بطاقة "مذكرة" بصفحة الاستمارات) — تضمن تحميل memo.js أولاً
+// قبل أي استدعاء لدالة منه. عند فشل التحميل تُعرَض رسالة واضحة والمستخدم يقدر يعيد المحاولة لاحقاً
+// (الـLoader نفسه يصفّر حالته عند الفشل، فمحاولة ثانية تُعيد طلب التحميل من جديد).
+async function openMemoFeature() {
+  try {
+    await ensureMemoLoaded();
+  } catch (e) {
+    showToast('❌ تعذر تحميل ميزة المذكرة، تأكد من الاتصال وحاول مرة ثانية', 'error');
+    return;
+  }
+  showPage('memo');
+  showMemoHome();
 }
 
 async function sbFetch(path, options = {}) {
@@ -13702,6 +13736,5 @@ async function deleteMaterialRow() {
 </script>
 <script src="work-orders.js"></script>
 <script src="backup.js"></script>
-<script src="memo.js"></script>
 </body>
 </html>
