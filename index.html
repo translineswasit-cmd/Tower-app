@@ -2037,7 +2037,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="thermal-cards">
     <div class="card" id="formsDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
     <div class="card" onclick="openMemoFeature();"><span class="icon">📝</span><span class="label">مذكرة</span><span class="sublabel">مذكرة رسمية</span></div>
-    <div class="card" onclick="showPage('workOrders');openWorkOrdersHome();"><span class="icon">📋</span><span class="label">أوراق الواجب</span><span class="sublabel">تسجيل وأرشيف واجبات الفرق</span></div>
+    <div class="card" onclick="openWorkOrdersFeature();"><span class="icon">📋</span><span class="label">أوراق الواجب</span><span class="sublabel">تسجيل وأرشيف واجبات الفرق</span></div>
   </div>
 </div>
 
@@ -2403,6 +2403,50 @@ async function openMemoFeature() {
   }
   showPage('memo');
   showMemoHome();
+}
+
+// تحميل كسول لملف work-orders.js: نفس مبدأ ensureMemoLoaded أعلاه بالضبط — لا يُحمَّل ولا يُنفَّذ إلا
+// عند أول دخول فعلي لميزة أوراق الواجب. الملف نفسه يبقى ضمن CRITICAL_ASSETS بعامل الخدمة (متاح
+// Offline من أول تثبيت) — هذا المحمّل بس يتحكم بتوقيت تنفيذه داخل صفحة التطبيق.
+let _workOrdersLoaded = false;
+let _workOrdersLoadPromise = null;
+
+function ensureWorkOrdersLoaded() {
+  if (_workOrdersLoaded) return Promise.resolve();
+  if (_workOrdersLoadPromise) return _workOrdersLoadPromise;
+
+  _workOrdersLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = './work-orders.js';
+
+    script.onload = () => {
+      _workOrdersLoaded = true;
+      resolve();
+    };
+
+    script.onerror = () => {
+      _workOrdersLoadPromise = null;
+      reject(new Error('فشل تحميل ميزة أوراق الواجب'));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return _workOrdersLoadPromise;
+}
+
+// نقطة الدخول الوحيدة لميزة أوراق الواجب (بطاقة "أوراق الواجب" بصفحة الاستمارات) — تضمن تحميل
+// work-orders.js أولاً قبل أي استدعاء لدالة منه.
+async function openWorkOrdersFeature() {
+  try {
+    await ensureWorkOrdersLoaded();
+  } catch (e) {
+    showToast('❌ تعذر تحميل ميزة أوراق الواجب، تأكد من الاتصال وحاول مرة ثانية', 'error');
+    return;
+  }
+
+  showPage('workOrders');
+  await openWorkOrdersHome();
 }
 
 async function sbFetch(path, options = {}) {
@@ -13734,7 +13778,6 @@ async function deleteMaterialRow() {
 }
 
 </script>
-<script src="work-orders.js"></script>
 <script src="backup.js"></script>
 </body>
 </html>
