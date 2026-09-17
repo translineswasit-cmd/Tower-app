@@ -100,7 +100,13 @@ async function showMemoNew() {
   document.getElementById('memoArchiveView').style.display = 'none';
   if (!editingMemoId) {
     document.getElementById('memo_date').value = new Date().toISOString().split('T')[0];
-    document.getElementById('memo_number').value = await generateNextMemoNumber();
+    const nextNumber = await generateNextMemoNumber();
+    if (nextNumber !== null) {
+      document.getElementById('memo_number').value = nextNumber;
+    } else {
+      document.getElementById('memo_number').value = '';
+      showToast('⚠️ تعذر جلب عدد المذكرة — يتطلب اتصالاً بالإنترنت قبل الحفظ الرسمي', 'error');
+    }
     document.getElementById('memo_to').value = 'الى / السيـد المـديـر الـمحتـرم...';
     document.getElementById('memo_subject').value = '';
     document.getElementById('memo_body').value = '';
@@ -121,20 +127,29 @@ function showMemoArchive() {
   renderMemoArchive();
 }
 
+// يرجع الرقم التالي كنص عند نجاح فعلي (رقم صالح، أو '1' لو الجدول فارغ حقاً بنجاح حقيقي)،
+// أو null عند أي فشل حقيقي (شبكة/أوفلاين/HTTP/بيانات غير موثوقة) — لا نرجع '1' كتخمين عند الفشل،
+// لأن هذا يظهر كرقم رسمي وهمي بدون أي علاقة بالتسلسل الحقيقي بالسيرفر.
+// ملاحظة: هذا تسلسل من جهة العميل (client-side) وليس ضماناً ذرياً بين عدة أجهزة — الحل النهائي
+// القوي يحتاج تخصيص رقم ذرّي من جهة السيرفر (Server-side atomic allocation) لاحقاً.
 async function generateNextMemoNumber() {
   try {
     const res = await sbFetch('memos?select=memo_number&order=created_at.desc&limit=1');
+    if (!res.ok) return null; // فشل HTTP فعلي — لا نعتمد على أي بيانات مرفَقة
     const list = await res.json();
-    if (list.length) {
-      const n = parseInt(list[0].memo_number);
-      if (!isNaN(n)) return String(n + 1);
-    }
-  } catch (e) { /* تجاهل، يبقى فاضي للتعبئة اليدوية */ }
-  return '1';
+    if (!Array.isArray(list)) return null; // استجابة غير متوقعة/غير موثوقة
+    if (!list.length) return '1'; // نجاح حقيقي وجدول فارغ فعلاً — هذا رقم أول صحيح، مو تخمين
+    const n = parseInt(list[0].memo_number);
+    if (!isNaN(n)) return String(n + 1);
+    return null; // آخر قيمة مخزَّنة غير رقمية — ما نقدر نبني عليها رقماً موثوقاً
+  } catch (e) {
+    return null; // فشل شبكة/أوفلاين
+  }
 }
 
 async function saveMemo() {
-  const number = document.getElementById('memo_number').value;
+  const numberField = document.getElementById('memo_number');
+  let number = numberField.value;
   const date = document.getElementById('memo_date').value;
   const to = document.getElementById('memo_to').value;
   const subject = document.getElementById('memo_subject').value;
@@ -142,6 +157,21 @@ async function saveMemo() {
   const senderTitle = document.getElementById('memo_sender_title').value;
   const senderName = document.getElementById('memo_sender_name').value;
   if (!date || !body.trim()) { showToast('⚠️ اكمل التاريخ ومحتوى المذكرة', 'error'); return; }
+
+  // مذكرة جديدة بلا عدد صالح (فتحت أوفلاين مثلاً) — نحاول مرة وحدة نجيب العدد الحقيقي الآن (يغطي
+  // حالة "رجع الاتصال أثناء ما المستخدم يكتب"). لو فشلت المحاولة، نوقف بدون أي POST ولا نمسح شي
+  // كتبه المستخدم. تعديل مذكرة موجودة (editingMemoId) يحتفظ برقمه الأصلي دائماً، بدون أي فحص هنا.
+  if (!editingMemoId && !number.trim()) {
+    const retryNumber = await generateNextMemoNumber();
+    if (retryNumber !== null) {
+      number = retryNumber;
+      numberField.value = retryNumber;
+    } else {
+      showToast('⚠️ لا يمكن حفظ المذكرة رسمياً قبل الحصول على العدد — اتصل بالإنترنت ثم حاول من جديد', 'error');
+      return;
+    }
+  }
+
   const payload = { memo_number: number, memo_date: date, memo_to: to, subject: subject, content: body, sender_title: senderTitle, sender_name: senderName, table_data: memoTableData, attachments: memoAttachments, created_by: currentUser.full_name };
   try {
     if (editingMemoId) {
