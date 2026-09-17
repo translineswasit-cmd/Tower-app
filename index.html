@@ -518,7 +518,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" id="svcFormsCard" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
     <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
-    <div class="card" id="svcBackupCard" onclick="showPage('backup')"><span class="icon">💾</span><span class="label">النسخ الاحتياطي</span></div>
+    <div class="card" id="svcBackupCard" onclick="openBackupFeature()"><span class="icon">💾</span><span class="label">النسخ الاحتياطي</span></div>
     <div class="card" onclick="showPage('account');loadAccountPage();"><span class="icon">👤</span><span class="label">الحساب</span></div>
   </div>
 </div>
@@ -2447,6 +2447,50 @@ async function openWorkOrdersFeature() {
 
   showPage('workOrders');
   await openWorkOrdersHome();
+}
+
+// تحميل كسول لملف backup.js: نفس مبدأ ensureMemoLoaded وensureWorkOrdersLoaded أعلاه بالضبط — لا
+// يُحمَّل ولا يُنفَّذ إلا عند أول دخول فعلي لصفحة النسخ الاحتياطي. الملف نفسه يبقى ضمن CRITICAL_ASSETS
+// بعامل الخدمة (متاح Offline من أول تثبيت) — هذا المحمّل بس يتحكم بتوقيت تنفيذه داخل صفحة التطبيق.
+let _backupLoaded = false;
+let _backupLoadPromise = null;
+
+function ensureBackupLoaded() {
+  if (_backupLoaded) return Promise.resolve();
+  if (_backupLoadPromise) return _backupLoadPromise;
+
+  _backupLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = './backup.js';
+
+    script.onload = () => {
+      _backupLoaded = true;
+      resolve();
+    };
+
+    script.onerror = () => {
+      _backupLoadPromise = null;
+      reject(new Error('فشل تحميل ميزة النسخ الاحتياطي'));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return _backupLoadPromise;
+}
+
+// نقطة الدخول الوحيدة لصفحة النسخ الاحتياطي (بطاقة "النسخ الاحتياطي") — تضمن تحميل backup.js أولاً
+// قبل إظهار الصفحة. لا تستدعي أي دالة داخلية من backup.js هنا — الدوال الثلاث (تنزيل/اختيار ملف/
+// استعادة) تبقى مرتبطة فقط بتفاعل المستخدم اللاحق داخل الصفحة نفسها، بدون أي تهيئة إضافية.
+async function openBackupFeature() {
+  try {
+    await ensureBackupLoaded();
+  } catch (e) {
+    showToast('❌ تعذر تحميل ميزة النسخ الاحتياطي، حاول مرة ثانية', 'error');
+    return;
+  }
+
+  showPage('backup');
 }
 
 async function sbFetch(path, options = {}) {
@@ -13778,6 +13822,5 @@ async function deleteMaterialRow() {
 }
 
 </script>
-<script src="backup.js"></script>
 </body>
 </html>
