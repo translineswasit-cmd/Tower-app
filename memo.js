@@ -2,6 +2,11 @@
 // MEMO (مذكرة)
 // ========================
 let editingMemoId = null;
+// الرقم "الرسمي" الموثوق لجلسة تحرير المذكرة الحالية — يُضبَط فقط من generateNextMemoNumber() الناجحة
+// (مذكرة جديدة) أو من السجل المحمَّل فعلياً من السيرفر (تعديل مذكرة موجودة). saveMemo() تعتمد على
+// هذا المتغيّر، مو على قيمة حقل الـDOM مباشرة — يمنع اعتماد رقم غُيِّر يدوياً بالحقل (حتى لو عبر
+// أدوات المطوّر) كرقم رسمي بديل.
+let memoOfficialNumber = null;
 let memoTableData = null; // مصفوفة ثنائية اختيارية، null = لا يوجد جدول
 
 function addMemoTable() {
@@ -100,11 +105,15 @@ async function showMemoNew() {
   document.getElementById('memoArchiveView').style.display = 'none';
   if (!editingMemoId) {
     document.getElementById('memo_date').value = new Date().toISOString().split('T')[0];
+    const numberField = document.getElementById('memo_number');
+    numberField.readOnly = true; // النظام وحده يملأ هذا الحقل — يمنع التعديل اليدوي بالواجهة العادية
     const nextNumber = await generateNextMemoNumber();
     if (nextNumber !== null) {
-      document.getElementById('memo_number').value = nextNumber;
+      memoOfficialNumber = nextNumber;
+      numberField.value = nextNumber;
     } else {
-      document.getElementById('memo_number').value = '';
+      memoOfficialNumber = null;
+      numberField.value = '';
       showToast('⚠️ تعذر جلب عدد المذكرة — يتطلب اتصالاً بالإنترنت قبل الحفظ الرسمي', 'error');
     }
     document.getElementById('memo_to').value = 'الى / السيـد المـديـر الـمحتـرم...';
@@ -149,7 +158,6 @@ async function generateNextMemoNumber() {
 
 async function saveMemo() {
   const numberField = document.getElementById('memo_number');
-  let number = numberField.value;
   const date = document.getElementById('memo_date').value;
   const to = document.getElementById('memo_to').value;
   const subject = document.getElementById('memo_subject').value;
@@ -158,19 +166,22 @@ async function saveMemo() {
   const senderName = document.getElementById('memo_sender_name').value;
   if (!date || !body.trim()) { showToast('⚠️ اكمل التاريخ ومحتوى المذكرة', 'error'); return; }
 
-  // مذكرة جديدة بلا عدد صالح (فتحت أوفلاين مثلاً) — نحاول مرة وحدة نجيب العدد الحقيقي الآن (يغطي
+  // مصدر الرقم الرسمي الوحيد هو memoOfficialNumber (وليس قيمة حقل الـDOM مباشرة) — يمنع اعتماد
+  // رقم غُيِّر يدوياً (حتى عبر أدوات المطوّر) كرقم رسمي بديل، بغض النظر عن كون الحقل غير فارغ.
+  // مذكرة جديدة بلا رقم موثوق (فتحت أوفلاين مثلاً) — نحاول مرة وحدة نجيب العدد الحقيقي الآن (يغطي
   // حالة "رجع الاتصال أثناء ما المستخدم يكتب"). لو فشلت المحاولة، نوقف بدون أي POST ولا نمسح شي
-  // كتبه المستخدم. تعديل مذكرة موجودة (editingMemoId) يحتفظ برقمه الأصلي دائماً، بدون أي فحص هنا.
-  if (!editingMemoId && !number.trim()) {
+  // كتبه المستخدم. تعديل مذكرة موجودة (editingMemoId) يحتفظ برقمه الأصلي الموثوق دائماً، بدون أي فحص هنا.
+  if (!editingMemoId && !memoOfficialNumber) {
     const retryNumber = await generateNextMemoNumber();
     if (retryNumber !== null) {
-      number = retryNumber;
+      memoOfficialNumber = retryNumber;
       numberField.value = retryNumber;
     } else {
       showToast('⚠️ لا يمكن حفظ المذكرة رسمياً قبل الحصول على العدد — اتصل بالإنترنت ثم حاول من جديد', 'error');
       return;
     }
   }
+  const number = memoOfficialNumber;
 
   const payload = { memo_number: number, memo_date: date, memo_to: to, subject: subject, content: body, sender_title: senderTitle, sender_name: senderName, table_data: memoTableData, attachments: memoAttachments, created_by: currentUser.full_name };
   try {
@@ -255,7 +266,10 @@ async function openMemoFromArchive(id) {
     document.getElementById('memoHomeView').style.display = 'none';
     document.getElementById('memoNewView').style.display = 'block';
     document.getElementById('memoArchiveView').style.display = 'none';
-    document.getElementById('memo_number').value = m.memo_number || '';
+    memoOfficialNumber = m.memo_number || '';
+    const numberField = document.getElementById('memo_number');
+    numberField.readOnly = true; // نفس مبدأ المذكرة الجديدة — رقم المذكرة الموجودة لا يُعدَّل يدوياً
+    numberField.value = m.memo_number || '';
     document.getElementById('memo_date').value = m.memo_date || '';
     document.getElementById('memo_to').value = m.memo_to || 'الى / السيـد المـديـر الـمحتـرم...';
     document.getElementById('memo_subject').value = m.subject || '';
