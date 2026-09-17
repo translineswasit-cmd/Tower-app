@@ -2493,6 +2493,37 @@ async function openBackupFeature() {
   showPage('backup');
 }
 
+// تحميل كسول لملف period-summary.js: نفس مبدأ ensureMemoLoaded وensureWorkOrdersLoaded وensureBackupLoaded
+// أعلاه بالضبط — لا يُحمَّل ولا يُنفَّذ إلا عند أول دخول فعلي لتبويب "تقرير فترة" بالموقف اليومي. الملف
+// نفسه يبقى ضمن CRITICAL_ASSETS بعامل الخدمة (متاح Offline من أول تثبيت) — هذا المحمّل بس يتحكم بتوقيت
+// تنفيذه داخل صفحة التطبيق.
+let _periodSummaryLoaded = false;
+let _periodSummaryLoadPromise = null;
+
+function ensurePeriodSummaryLoaded() {
+  if (_periodSummaryLoaded) return Promise.resolve();
+  if (_periodSummaryLoadPromise) return _periodSummaryLoadPromise;
+
+  _periodSummaryLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = './period-summary.js';
+
+    script.onload = () => {
+      _periodSummaryLoaded = true;
+      resolve();
+    };
+
+    script.onerror = () => {
+      _periodSummaryLoadPromise = null;
+      reject(new Error('فشل تحميل ميزة تقرير الفترة'));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return _periodSummaryLoadPromise;
+}
+
 async function sbFetch(path, options = {}) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`;
   const headers = {
@@ -6911,6 +6942,7 @@ function showFormsHome() {
 // ========================
 let dailyReportRows = [];
 let editingDailyReportId = null;
+let dailyReportTabRequestSeq = 0;
 
 function showDailyReportHome() {
   switchDailyReportTab('new');
@@ -6931,14 +6963,27 @@ function resetDailyReportForm() {
   dailyReportRows = [];
 }
 
-function switchDailyReportTab(tab) {
+async function switchDailyReportTab(tab) {
+  const requestId = ++dailyReportTabRequestSeq;
   document.getElementById('drTabNewBtn').classList.toggle('active', tab === 'new');
   document.getElementById('drTabArchiveBtn').classList.toggle('active', tab === 'archive');
   document.getElementById('drTabPeriodBtn').classList.toggle('active', tab === 'period');
   document.getElementById('drNewView').style.display = tab === 'new' ? '' : 'none';
   document.getElementById('drArchiveView').style.display = tab === 'archive' ? '' : 'none';
-  document.getElementById('drPeriodView').style.display = tab === 'period' ? '' : 'none';
+  // تُخفى دائماً أولاً؛ لا تُظهَر إلا بعد اكتمال تحميل period-summary.js بنجاح أدناه (لا نجعل
+  // واجهة تقرير الفترة قابلة للتفاعل قبل اكتمال تحميل الملف الكسول الخاص بها).
+  document.getElementById('drPeriodView').style.display = 'none';
   if (tab === 'archive') renderDailyReportArchive();
+  if (tab !== 'period') return;
+  try {
+    await ensurePeriodSummaryLoaded();
+  } catch (e) {
+    if (requestId !== dailyReportTabRequestSeq) return;
+    showToast('❌ تعذر تحميل ميزة تقرير الفترة، تأكد من الاتصال وحاول مرة ثانية', 'error');
+    return;
+  }
+  if (requestId !== dailyReportTabRequestSeq) return;
+  document.getElementById('drPeriodView').style.display = '';
 }
 
 async function renderDailyReportArchive() {
@@ -13639,6 +13684,5 @@ async function deleteMaterialRow() {
 }
 
 </script>
-<script src="./period-summary.js"></script>
 </body>
 </html>
