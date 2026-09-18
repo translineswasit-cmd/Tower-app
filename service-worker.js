@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v322';
+const CACHE_NAME = 'tower-app-v323';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -11,7 +11,8 @@ const CRITICAL_ASSETS = [
   './memo.js',
   './period-summary.js',
   './daily-report.js',
-  './inventory.js'
+  './inventory.js',
+  './records-reports.js'
 ];
 
 // أصول مساندة: مرغوبة لكن فشلها يجب ألا يُسقط التثبيت بالكامل
