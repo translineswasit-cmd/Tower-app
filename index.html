@@ -500,7 +500,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" id="homePendingCard" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span><span class="sublabel">بانتظار الرفع</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span><span class="sublabel">متابعة الأعطال</span></div>
     <div class="card" id="homeLinesCard" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
-    <div class="card" id="homeDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
+    <div class="card" id="homeDailyReportCard" onclick="openDailyReportFeature();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
   </div>
 </div>
 
@@ -2035,7 +2035,7 @@ tbody tr:hover { background: #F7FAFC; }
 <div class="page" id="page-forms">
   <div class="page-title">📑 الاستمارات</div>
   <div class="thermal-cards">
-    <div class="card" id="formsDailyReportCard" onclick="showPage('dailyReport');showDailyReportHome();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
+    <div class="card" id="formsDailyReportCard" onclick="openDailyReportFeature();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
     <div class="card" onclick="openMemoFeature();"><span class="icon">📝</span><span class="label">مذكرة</span><span class="sublabel">مذكرة رسمية</span></div>
     <div class="card" onclick="openWorkOrdersFeature();"><span class="icon">📋</span><span class="label">أوراق الواجب</span><span class="sublabel">تسجيل وأرشيف واجبات الفرق</span></div>
   </div>
@@ -2524,6 +2524,55 @@ function ensurePeriodSummaryLoaded() {
   return _periodSummaryLoadPromise;
 }
 
+// تحميل كسول لملف daily-report.js: نفس مبدأ ensureMemoLoaded وensureWorkOrdersLoaded وensureBackupLoaded
+// وensurePeriodSummaryLoaded أعلاه بالضبط — لا يُحمَّل ولا يُنفَّذ إلا عند أول دخول فعلي لميزة التقرير
+// اليومي. الملف نفسه يبقى ضمن CRITICAL_ASSETS بعامل الخدمة (متاح Offline من أول تثبيت) — هذا المحمّل
+// بس يتحكم بتوقيت تنفيذه داخل صفحة التطبيق. تحميل period-summary.js يبقى مستقلاً تماماً ولا يُستدعى
+// من هنا؛ فقط switchDailyReportTab (داخل daily-report.js نفسه) يستدعيه عند اختيار تبويب "تقرير فترة".
+let _dailyReportLoaded = false;
+let _dailyReportLoadPromise = null;
+
+function ensureDailyReportLoaded() {
+  if (_dailyReportLoaded) return Promise.resolve();
+  if (_dailyReportLoadPromise) return _dailyReportLoadPromise;
+
+  _dailyReportLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = './daily-report.js';
+
+    script.onload = () => {
+      _dailyReportLoaded = true;
+      resolve();
+    };
+
+    script.onerror = () => {
+      _dailyReportLoadPromise = null;
+      reject(new Error('فشل تحميل ميزة التقرير اليومي'));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return _dailyReportLoadPromise;
+}
+
+// نقطة الدخول الوحيدة لميزة التقرير اليومي (بطاقتا الرئيسية والاستمارات) — تضمن تحميل daily-report.js
+// أولاً قبل إظهار الصفحة، بنفس نمط openWorkOrdersFeature/openBackupFeature أعلاه.
+async function openDailyReportFeature() {
+  const navigationRequestId = pageNavigationRequestSeq;
+  try {
+    await ensureDailyReportLoaded();
+  } catch (e) {
+    if (navigationRequestId !== pageNavigationRequestSeq) return;
+    showToast('❌ تعذر تحميل ميزة التقرير اليومي، تأكد من الاتصال وحاول مرة ثانية', 'error');
+    return;
+  }
+
+  if (navigationRequestId !== pageNavigationRequestSeq) return;
+  showPage('dailyReport');
+  showDailyReportHome();
+}
+
 async function sbFetch(path, options = {}) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`;
   const headers = {
@@ -2906,6 +2955,10 @@ function updateHeaderMode(id) {
 }
 
 let isGoingBack = false;
+// عدّاد تسلسل التنقّل بين الصفحات — يُستخدم لاكتشاف الطلبات المتأخرة (stale) من محمّلات كسولة تنتظر
+// تحميل ملف خارجي (مثل openDailyReportFeature)، بنفس مبدأ dailyReportTabRequestSeq (v318-R) لكن على
+// مستوى التنقّل بين الصفحات بدل تبويبات صفحة واحدة فقط.
+let pageNavigationRequestSeq = 0;
 // زر "→ رجوع" الموحّد: يرجع خطوة وحدة بس — أولاً بمستويات الصفحة الحالية (لو فيها)، وبعدين بين الصفحات نفسها
 // إغلاق قسري لكل النوافذ المنبثقة (كلا الصنفين المستخدمين بالتطبيق) — نفرض display:none مباشرة
 // كتحصين إضافي فوق إزالة الصنف نفسها، لأن Safari بآيفون أحياناً يتأخر برسم التغيير المعتمد على
@@ -2972,6 +3025,7 @@ function cancelToHome() {
 }
 
 function showPage(id, btn) {
+  pageNavigationRequestSeq++;
   // إلغاء تركيز أي حقل (خاصة حقول التاريخ) قبل أي تنقّل — يمنع عالق منتقي التاريخ الأصلي بالآيفون فوق الصفحة
   if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
     document.activeElement.blur();
@@ -13075,6 +13129,5 @@ async function deleteMaterialRow() {
 }
 
 </script>
-<script src="./daily-report.js"></script>
 </body>
 </html>
