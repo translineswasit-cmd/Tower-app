@@ -516,7 +516,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
     <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">إحصائيات الموظفين</span></div>
     <div class="card" id="svcFormsCard" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
-    <div class="card" onclick="showPage('inventory');showInventoryHome();"><span class="icon">📦</span><span class="label">المخزن</span></div>
+    <div class="card" onclick="openInventoryFeature();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
     <div class="card" id="svcBackupCard" onclick="openBackupFeature()"><span class="icon">💾</span><span class="label">النسخ الاحتياطي</span></div>
     <div class="card" onclick="showPage('account');loadAccountPage();"><span class="icon">👤</span><span class="label">الحساب</span></div>
@@ -2261,7 +2261,6 @@ tbody tr:hover { background: #F7FAFC; }
 </div><!-- end appRoot -->
 
 <script src="./lines-data.js"></script>
-<script src="./inventory.js"></script>
 <script>
 const LINE_VOLTAGE = {"واسط الحرارية - الامين رقم 1 400 ك.ف":400,"واسط الحرارية - الامين رقم 2 400 ك.ف":400,"واسط الحرارية - جنوب بغداد 400 ك.ف":400,"واسط - شطرة 400 ك.ف":400,"واسط - ميسان 400 ك.ف":400,"واسط - واسط الحرارية رقم 1 400 ك.ف":400,"واسط - واسط الحرارية رقم 2 400 ك.ف":400,"الكوت القديمة - جنوب الكوت 132 ك.ف":132,"الكوت القديمة - شيخ سعد 132 ك.ف":132,"جنوب الكوت - الدجيلي 132 ك.ف":132,"الحي - رفاعي 132 ك.ف":132,"دبوني - جصان (1+2) 132 ك.ف":132,"الدجيلي - الحي 132 ك.ف":132,"شمال الصويرة - الصويرة 132 ك.ف":132,"شمال الكوت - جنوب الكوت (1+2) 132 ك.ف":132,"شمال الكوت - شيخ سعد 132 ك.ف":132,"شمال غرب الكوت - الحي (1+2) 132 ك.ف":132,"عزيزية - شمال الصويرة 132 ك.ف":132,"عزيزية - صويرة 132 ك.ف":132,"واسط - حقل الاحدب 132 ك.ف":132,"واسط - دبوني 132 ك.ف":132,"واسط - الكوت القديمة 132 ك.ف":132,"واسط - شمال الكوت رقم 3 132 ك.ف":132,"واسط - شمال الكوت (1+2) 132 ك.ف":132,"واسط - شمال غرب الكوت (1+2) 132 ك.ف":132,"واسط - شيخ سعد 132 ك.ف":132,"واسط - مركز الكوت 132 ك.ف":132,"واسط - نعمانية (1+2) 132 ك.ف":132,"واسط - نعمانية رقم 3 132 ك.ف":132,"واسط الحرارية - عزيزية (1+2) 132 ك.ف":132,"واسط الحرارية - الدبوني 132 ك.ف":132,"واسط الحرارية - نعمانية 132 ك.ف":132,"الكوت القديمة - مركز الكوت 132 ك.ف":132};
 
@@ -2572,6 +2571,55 @@ async function openDailyReportFeature() {
   if (navigationRequestId !== pageNavigationRequestSeq) return;
   showPage('dailyReport');
   showDailyReportHome();
+}
+
+// تحميل كسول لملف inventory.js: نفس مبدأ ensureDailyReportLoaded أعلاه بالضبط — لا يُحمَّل ولا يُنفَّذ
+// إلا عند أول دخول فعلي لصفحة المخزن. الملف نفسه يبقى ضمن CRITICAL_ASSETS بعامل الخدمة (متاح Offline
+// من أول تثبيت) — هذا المحمّل بس يتحكم بتوقيت تنفيذه داخل صفحة التطبيق.
+let _inventoryLoaded = false;
+let _inventoryLoadPromise = null;
+
+function ensureInventoryLoaded() {
+  if (_inventoryLoaded) return Promise.resolve();
+  if (_inventoryLoadPromise) return _inventoryLoadPromise;
+
+  _inventoryLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = './inventory.js';
+
+    script.onload = () => {
+      _inventoryLoaded = true;
+      resolve();
+    };
+
+    script.onerror = () => {
+      _inventoryLoadPromise = null;
+      reject(new Error('فشل تحميل ميزة المخزن'));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return _inventoryLoadPromise;
+}
+
+// نقطة الدخول الوحيدة لميزة المخزن (بطاقة الرئيسية) — تضمن تحميل inventory.js أولاً قبل إظهار الصفحة،
+// مع حراسة تسلسل التنقّل (pageNavigationRequestSeq) لمنع استدعاء متأخر (stale) من الاستحواذ على
+// الصفحة أو إظهار رسالة خطأ قديمة لو المستخدم انتقل لمكان آخر أثناء التحميل — نفس نمط
+// openDailyReportFeature أعلاه بالضبط.
+async function openInventoryFeature() {
+  const navigationRequestId = pageNavigationRequestSeq;
+  try {
+    await ensureInventoryLoaded();
+  } catch (e) {
+    if (navigationRequestId !== pageNavigationRequestSeq) return;
+    showToast('❌ تعذر تحميل ميزة المخزن، تأكد من الاتصال وحاول مرة ثانية', 'error');
+    return;
+  }
+
+  if (navigationRequestId !== pageNavigationRequestSeq) return;
+  showPage('inventory');
+  showInventoryHome();
 }
 
 async function sbFetch(path, options = {}) {
