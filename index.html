@@ -509,7 +509,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="page-title">🧰 الخدمات</div>
   <div class="cards-grid cards-grid-3col">
     <div class="card" onclick="showPage('form');clearForm();"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
-    <div class="card" id="svcHubCard" onclick="showPage('recordsHub');openRecordsHub()"><span class="icon">📚</span><span class="label">السجلات والتقارير</span></div>
+    <div class="card" id="svcHubCard" onclick="openRecordsHubFeature()"><span class="icon">📚</span><span class="label">السجلات والتقارير</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
@@ -2261,7 +2261,6 @@ tbody tr:hover { background: #F7FAFC; }
 </div><!-- end appRoot -->
 
 <script src="./lines-data.js"></script>
-<script src="./records-reports.js"></script>
 <script>
 const LINE_VOLTAGE = {"واسط الحرارية - الامين رقم 1 400 ك.ف":400,"واسط الحرارية - الامين رقم 2 400 ك.ف":400,"واسط الحرارية - جنوب بغداد 400 ك.ف":400,"واسط - شطرة 400 ك.ف":400,"واسط - ميسان 400 ك.ف":400,"واسط - واسط الحرارية رقم 1 400 ك.ف":400,"واسط - واسط الحرارية رقم 2 400 ك.ف":400,"الكوت القديمة - جنوب الكوت 132 ك.ف":132,"الكوت القديمة - شيخ سعد 132 ك.ف":132,"جنوب الكوت - الدجيلي 132 ك.ف":132,"الحي - رفاعي 132 ك.ف":132,"دبوني - جصان (1+2) 132 ك.ف":132,"الدجيلي - الحي 132 ك.ف":132,"شمال الصويرة - الصويرة 132 ك.ف":132,"شمال الكوت - جنوب الكوت (1+2) 132 ك.ف":132,"شمال الكوت - شيخ سعد 132 ك.ف":132,"شمال غرب الكوت - الحي (1+2) 132 ك.ف":132,"عزيزية - شمال الصويرة 132 ك.ف":132,"عزيزية - صويرة 132 ك.ف":132,"واسط - حقل الاحدب 132 ك.ف":132,"واسط - دبوني 132 ك.ف":132,"واسط - الكوت القديمة 132 ك.ف":132,"واسط - شمال الكوت رقم 3 132 ك.ف":132,"واسط - شمال الكوت (1+2) 132 ك.ف":132,"واسط - شمال غرب الكوت (1+2) 132 ك.ف":132,"واسط - شيخ سعد 132 ك.ف":132,"واسط - مركز الكوت 132 ك.ف":132,"واسط - نعمانية (1+2) 132 ك.ف":132,"واسط - نعمانية رقم 3 132 ك.ف":132,"واسط الحرارية - عزيزية (1+2) 132 ك.ف":132,"واسط الحرارية - الدبوني 132 ك.ف":132,"واسط الحرارية - نعمانية 132 ك.ف":132,"الكوت القديمة - مركز الكوت 132 ك.ف":132};
 
@@ -2623,6 +2622,55 @@ async function openInventoryFeature() {
   showInventoryHome();
 }
 
+// تحميل كسول لملف records-reports.js: لا يُحمَّل ولا يُنفَّذ إلا عند أول دخول فعلي لصفحة السجلات
+// والتقارير. الملف نفسه يبقى ضمن CRITICAL_ASSETS بعامل الخدمة (متاح Offline من أول تثبيت) — هذا
+// المحمّل بس يتحكم بتوقيت تنفيذه داخل صفحة التطبيق. نفس نمط ensureInventoryLoaded أعلاه، مع إزالة
+// عنصر السكربت الفاشل قبل إعادة المحاولة.
+let _recordsReportsLoaded = false;
+let _recordsReportsLoadPromise = null;
+
+function ensureRecordsReportsLoaded() {
+  if (_recordsReportsLoaded) return Promise.resolve();
+  if (_recordsReportsLoadPromise) return _recordsReportsLoadPromise;
+
+  _recordsReportsLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = './records-reports.js';
+
+    script.onload = () => {
+      _recordsReportsLoaded = true;
+      resolve();
+    };
+
+    script.onerror = () => {
+      _recordsReportsLoadPromise = null;
+      if (script.parentNode) script.parentNode.removeChild(script);
+      reject(new Error('فشل تحميل ميزة السجلات والتقارير'));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return _recordsReportsLoadPromise;
+}
+
+// نقطة الدخول الوحيدة لصفحة السجلات والتقارير (بطاقة svcHubCard) — تضمن تحميل records-reports.js أولاً
+// قبل إظهار الصفحة، مع حراسة تسلسل التنقّل (pageNavigationRequestSeq) بنفس نمط openInventoryFeature.
+async function openRecordsHubFeature() {
+  const navigationRequestId = pageNavigationRequestSeq;
+  try {
+    await ensureRecordsReportsLoaded();
+  } catch (e) {
+    if (navigationRequestId !== pageNavigationRequestSeq) return;
+    showToast('❌ تعذر تحميل ميزة السجلات والتقارير، تأكد من الاتصال وحاول مرة ثانية', 'error');
+    return;
+  }
+
+  if (navigationRequestId !== pageNavigationRequestSeq) return;
+  showPage('recordsHub');
+  openRecordsHub();
+}
+
 async function sbFetch(path, options = {}) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`;
   const headers = {
@@ -2736,6 +2784,9 @@ function safeParseJSON(v) {
 }
 let currentVoltage = 0;
 let editId = null, deleteId = null, deleteUserId = null;
+// محاولات إرسال كشف جديد لم تُحسم نتيجتها بعد (داخل الجلسة فقط، بلا تخزين دائم) — المفتاح: خط||برج||تاريخ،
+// القيمة: { uuid, snapshot } — تضمن إعادة المحاولة لنفس البيانات بنفس client_uuid بدل صف مكرر على السيرفر
+let _pendingInspectionAttempts = {};
 let currentGridLine = null;
 let activeInspectionLines = [];
 try { activeInspectionLines = JSON.parse(localStorage.getItem('active_inspection_lines')||'[]'); } catch(e) { activeInspectionLines = []; }
@@ -3130,7 +3181,9 @@ function updateStatus(online) {
 }
 
 function getTotalPendingCount() {
-  return getQueue().length + getThermalQueue().length + getTreatmentQueue().length + getLineEntryQueue().length + getInspectionPatchQueue().length + getStaffRosterQueue().length;
+  // طابور المعالجات/PATCH غير القابل للقراءة ليس فارغاً: يُحسب كعنصر معلّق مجهول حتى لا يُعلَن اكتمال المزامنة ولا يُسمح بإغلاق بلا تحذير
+  const tq = readQueueStrict(TREATMENT_QUEUE_KEY), pq = readQueueStrict(INSPECTION_PATCH_QUEUE_KEY);
+  return getQueue().length + getThermalQueue().length + (tq.ok ? tq.items.length : 1) + getLineEntryQueue().length + (pq.ok ? pq.items.length : 1) + getStaffRosterQueue().length;
 }
 
 function updatePendingBadge() {
@@ -3150,6 +3203,14 @@ function updatePendingBadge() {
 
 // يرفع كل أنواع العناصر المعلقة دفعة واحدة (تُستخدم بالفحص الدوري وحدث online وزر الرفع اليدوي)
 let syncInProgress = false;
+let _syncRerunRequested = false;
+// طلب مزامنة من مسار الحفظ: يمرّ بنفس الحماية المشتركة (syncInProgress) ولا ينشئ كاتب شبكة موازياً.
+// لو كانت مزامنة جارية تُسجَّل إعادة تشغيل واحدة بعد انتهائها. بلا اتصال: لا طلب (يلتقطه حدث online/الفحص الدوري).
+function requestSyncSoon() {
+  if (!navigator.onLine) return;
+  if (syncInProgress) { _syncRerunRequested = true; return; }
+  syncAllQueues().catch(() => {});
+}
 async function syncAllQueues() {
   if (syncInProgress) return; // تجنب تشغيل أكثر من مزامنة بنفس اللحظة
   if (getTotalPendingCount() === 0) return;
@@ -3163,6 +3224,7 @@ async function syncAllQueues() {
     await syncStaffRosterQueue();
   } finally {
     syncInProgress = false;
+    if (_syncRerunRequested) { _syncRerunRequested = false; setTimeout(() => { syncAllQueues().catch(() => {}); }, 0); }
   }
 }
 
@@ -3650,6 +3712,7 @@ function closeTowerInspectionModal() {
 }
 
 function resetTowerFieldsOnly() {
+  discardPendingInspectionAttemptForForm(); // إلغاء صريح لمحاولة هذا النموذج المعلّقة (قبل مسح الحقول)
   document.getElementById('f_tower_number').value = '';
   document.getElementById('f_tower_type').value = '';
   document.getElementById('towerInfoBox').style.display = 'none';
@@ -4593,6 +4656,7 @@ function setFormData(d) {
 }
 
 function clearForm() {
+  discardPendingInspectionAttemptForForm(); // إلغاء صريح لمحاولة هذا النموذج المعلّقة (قبل مسح الحقول)
   document.getElementById('f_line_name').value='';
   document.getElementById('f_tower_number').innerHTML='<option value="">-- اختر الخط أولاً --</option>';
   document.getElementById('f_tower_number').disabled=true;
@@ -4622,6 +4686,17 @@ function withSoftTimeout(promise, ms) {
     const timer = setTimeout(() => reject(new Error('SOFT_TIMEOUT')), ms);
     promise.then(v => { clearTimeout(timer); resolve(v); }, e => { clearTimeout(timer); reject(e); });
   });
+}
+
+// مفتاح محاولة الكشف الجديد: نفس الخط + البرج + التاريخ = نفس الكشف المنطقي (برج آخر أو تاريخ آخر = كشف مستقل)
+function _inspectionAttemptKey(lineName, towerNumber, inspectionDate) {
+  return [lineName || '', towerNumber || '', inspectionDate || ''].join('||');
+}
+// يُلغي المحاولة المعلّقة للنموذج الحالي فقط (يقرأ المفتاح من الحقول قبل مسحها) — يُستدعى من clearForm وresetTowerFieldsOnly
+// (بدء نموذج جديد / مسح / إغلاق النافذة). إعادة رسم الواجهة لا تستدعيه، فلا تمحو محاولة معلّقة.
+function discardPendingInspectionAttemptForForm() {
+  const val = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  delete _pendingInspectionAttempts[_inspectionAttemptKey(val('f_line_name'), val('f_tower_number'), val('f_inspection_date'))];
 }
 
 async function saveRecord() {
@@ -4654,11 +4729,19 @@ async function saveRecord() {
     // يبقى غير ظاهر بالمغادرات/حالة الخطوط/التقارير (لأنها تقرأ fullRecordsCache) لحد ما ينتهي عمر الكاش
     function applyEditLocally() {
       const idx = fullRecordsCache.findIndex(r => r.id === editId);
-      if (idx !== -1) { fullRecordsCache[idx] = { ...fullRecordsCache[idx], ...patchData }; indexOneRecordInPlace(fullRecordsCache[idx]); }
+      if (idx !== -1) { fullRecordsCache[idx] = { ...fullRecordsCache[idx], ...patchData }; rebuildLatestRecordsIndex(); } // إعادة بناء الفهرس: indexOneRecordInPlace لا يستبدل نسخة معدّلة عند تعادل التاريخ وcreated_at
       const idx2 = records.findIndex(r => r.id === editId);
       if (idx2 !== -1) records[idx2] = { ...records[idx2], ...patchData };
     }
+    // عمليات معلّقة لنفس الكشف (معالجة/تعديل): لا PATCH مباشر يتجاوزها — يُضاف بالترتيب لطابور PATCH. قراءة الطابور غير ممكنة = لا نتحقق من الترتيب فلا نرسل
+    const pendingForEdit = pendingOpsForInspection(editId);
+    if (pendingForEdit.unreadable) {
+      showToast('❌ لم يُحفظ التعديل ولم يُرسَل: ' + MSG_QUEUE_UNREADABLE + ' حقولك باقية.', 'error');
+      btn.disabled = false; return;
+    }
+    const mustQueueInOrder = pendingForEdit.items.length > 0;
     try {
+      if (mustQueueInOrder) throw new Error('PENDING_ORDER');
       const res = await withSoftTimeout(sbFetch(`inspections?id=eq.${editId}`, { method: 'PATCH', body: JSON.stringify(patchData) }), 8000);
       if (res.ok) {
         applyEditLocally();
@@ -4671,28 +4754,63 @@ async function saveRecord() {
       }
     } catch (e) {
       // فشل التعديل — نحفظ أوف لاين ونُعلم المستخدم
-      addToInspectionPatchQueue(editId, patchData);
-      showToast('📦 تعذّر التحديث، حُفظ محلياً وسيُرسل عند الاتصال');
+      // لو فشل الحفظ المحلي (ذاكرة ممتلئة): safeSetItem أظهر رسالة الفشل — لا نعلن حفظاً ولا نُغلق النموذج
+      // ولا نمسح الحقول ولا نلمس الكاش، ونُبقي editId ليعيد المستخدم المحاولة
+      const orderedOnly = !!(e && e.message === 'PENDING_ORDER'); // لم يُرسَل شيء أصلاً: قُدّم الحفظ بالترتيب بسبب عمليات معلّقة
+      if (!addToInspectionPatchQueue(editId, patchData)) {
+        const replied = !!(e && /^HTTP \d+/.test(e.message || ''));
+        showToast(_lastQueueFailReason === 'unreadable'
+          ? '❌ لم يُحفظ التعديل ولم يُرسَل: قائمة المعلّقات على الجهاز غير قابلة للقراءة (لم يُحذف شيء) وحقولك باقية — أبلغ المسؤول'
+          : orderedOnly
+            ? '❌ لم يُحفظ التعديل (ذاكرة الجهاز ممتلئة) ولم يُرسَل شيء، وللكشف عمليات معلّقة. حقولك باقية — حرّر مساحة واضغط حفظ التعديل ثانيةً'
+            : replied
+              ? `❌ لم يُحفظ التعديل محلياً (ذاكرة الجهاز ممتلئة) وحقولك باقية. ردّ السيرفر بخطأ (${e.message}) — حرّر مساحة واضغط حفظ التعديل ثانيةً`
+              : '❌ لم يُحفظ التعديل محلياً (ذاكرة الجهاز ممتلئة) وحقولك باقية. قد يكون السيرفر استلمه — حرّر مساحة واضغط حفظ التعديل ثانيةً', 'error');
+        btn.disabled = false; return;
+      }
+      showToast(orderedOnly ? '📦 لهذا الكشف عمليات معلّقة؛ حُفظ التعديل محلياً وسيُرسل بعد اكتمالها بالترتيب' : '📦 تعذّر التحديث، حُفظ محلياً وسيُرسل عند الاتصال');
       document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
+      applyEditLocally(); // قبل cancelEdit: لأنه يصفّر editId، وapplyEditLocally يعتمد عليه
       cancelEdit();
-      applyEditLocally();
       if (currentGridLine) renderTowersGridFromCache(currentGridLine);
+      if (orderedOnly) requestSyncSoon();
     }
   } else {
-    // كشف جديد — دائماً نولّد client_uuid لمنع التكرار عند إعادة الإرسال
-    d.client_uuid = d.client_uuid || genUUID();
+    // كشف جديد — هوية المحاولة تُحفظ بالذاكرة قبل أي إرسال: إعادة المحاولة لنفس البيانات (بعد فشل الشبكة والتخزين)
+    // تستخدم نفس client_uuid فلا يتكرر الصف لو كان الـPOST الأول قد وصل السيرفر. لو تغيّرت البيانات قبل حسم
+    // المحاولة نمنع الإرسال (ignore-duplicates كان سيُهمل البيانات المعدّلة بصمت)، ولا نولّد uuid جديداً لمحاولة معلّقة.
+    const attemptKey = _inspectionAttemptKey(d.line_name, d.tower_number, d.inspection_date);
+    const attemptSnapshot = JSON.stringify(d); // قبل إضافة client_uuid
+    const pendingAttempt = _pendingInspectionAttempts[attemptKey];
+    if (pendingAttempt && pendingAttempt.snapshot !== attemptSnapshot) {
+      showToast('⚠️ إرسال كشف هذا البرج السابق لم تُحسم نتيجته. أعد الحقول كما كانت ثم احفظ، أو اضغط "مسح" لإلغاء المحاولة المعلّقة (قد يتكرر الكشف إن كان قد وصل السيرفر)', 'error');
+      btn.disabled = false; return;
+    }
+    d.client_uuid = pendingAttempt ? pendingAttempt.uuid : genUUID();
+    if (!pendingAttempt) _pendingInspectionAttempts[attemptKey] = { uuid: d.client_uuid, snapshot: attemptSnapshot };
     try {
       const res = await withSoftTimeout(sbFetch('inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates,return=representation'}, body: JSON.stringify(d) }), 8000);
       if (res.ok) {
+        delete _pendingInspectionAttempts[attemptKey]; // نجاح مؤكد على السيرفر — المحاولة حُسمت
         let savedRow = d;
         try { const arr = await res.json(); if (Array.isArray(arr) && arr.length && arr[0].id) savedRow = arr[0]; } catch(e) { console.warn('[tower-app] فشل تحليل رد الحفظ — سيُستخدم السجل المحلي بدون id حقيقي من السيرفر', e); }
         showToast('✅ تم حفظ الكشف بنجاح'); afterGridSaveSuccess(savedRow);
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
-    } catch {
-      // أي فشل (انقطاع، خطأ سيرفر) → يُحفظ أوف لاين دائماً
-      addToQueue(d);
+    } catch (err) {
+      // أي فشل (انقطاع، خطأ سيرفر) → يُحفظ أوف لاين
+      // لو فشل الحفظ المحلي (ذاكرة ممتلئة): safeSetItem أظهر رسالة الفشل — لا نعلن حفظاً ولا نضيف للكاش
+      // ولا نُغلق النموذج ولا نمسح الحقول، ليعيد المستخدم المحاولة بعد تحرير مساحة
+      if (!addToQueue(d)) {
+        // المحاولة تبقى معلّقة (بنفس الهوية) — لا نعلن حفظاً ولا نؤكد أن السيرفر لم يستلمه لو كانت النتيجة غير محسومة
+        const replied = !!(err && /^HTTP \d+/.test(err.message || ''));
+        showToast(replied
+          ? `❌ لم يُحفظ الكشف محلياً (ذاكرة الجهاز ممتلئة) وحقولك باقية. ردّ السيرفر بخطأ (${err.message}) — حرّر مساحة واضغط حفظ ثانيةً`
+          : '❌ لم يُحفظ الكشف محلياً (ذاكرة الجهاز ممتلئة) وحقولك باقية. قد يكون السيرفر استلمه — حرّر مساحة واضغط حفظ ثانيةً دون تغيير أي حقل', 'error');
+        btn.disabled = false; return;
+      }
+      delete _pendingInspectionAttempts[attemptKey]; // حُفظ بالطابور بنفس client_uuid — المحاولة حُسمت
       const msg = navigator.onLine ? '📦 خطأ بالإرسال، حُفظ محلياً وسيُرسل عند الاتصال' : '📦 حُفظ أوف لاين، سيُرسل تلقائياً';
       showToast(msg);
       afterGridSaveSuccess(d);
@@ -4740,10 +4858,127 @@ function safeSetItem(key, value) {
 // مُعرّف ثابت لكل عنصر بالطابور (لمقارنة اللقطة بالمحتوى الحالي بدون التأثر بحقول مؤقتة مثل _lastError)
 function _queueItemKey(item) {
   if (!item || typeof item !== 'object') return 'v:' + JSON.stringify(item);
+  if (item._op && item._op.id) return 'op:' + item._op.id; // عناصر v326 الجديدة: هوية عملية فريدة (id+ts لا يضمن التفرد)
   if (item.client_uuid) return 'cu:' + item.client_uuid;
   if (item.id && item.patch) return 'patch:' + item.id;
   if (item.op && item.ts) return 'op:' + item.op + ':' + item.ts;
   return 'j:' + JSON.stringify(item);
+}
+
+// ==================== طوابير المعالجات وPATCH: قراءة صارمة، هوية عملية، حراس (v326) ====================
+// فشل قراءة/تحليل طابور موجود ليس طابوراً فارغاً: لا نستبدله بـ[] ولا نعلن اكتمال مزامنته.
+function readQueueStrict(key) {
+  let raw;
+  try { raw = localStorage.getItem(key); } catch (e) { return { ok: false, items: [], reason: 'read' }; }
+  if (raw === null || raw === '') return { ok: true, items: [] };
+  try {
+    const v = JSON.parse(raw);
+    if (!Array.isArray(v)) return { ok: false, items: [], reason: 'shape' };
+    return { ok: true, items: v };
+  } catch (e) { return { ok: false, items: [], reason: 'parse' }; }
+}
+let _lastQueueFailReason = ''; // 'unreadable' | 'storage' — يحدد رسالة الفشل لدى المستدعي
+const MSG_TREAT_UNSYNCED = 'هذا الكشف لم يُزامَن بعد. زامن الكشف ثم أعد فتح البرج لتسجيل المعالجة.';
+const MSG_QUEUE_UNREADABLE = 'تعذّرت قراءة قائمة المعلّقات على هذا الجهاز، فلا يمكن التحقق من حالة المزامنة. لم يُحذف ولم يُرسَل أي شيء — أبلغ المسؤول قبل المتابعة.';
+// معرّف الكشف الصالح: لا نفترض نوعه (رقم/نص)، فقط أنه موجود وغير فارغ
+function hasValidInspectionId(id) {
+  if (id === undefined || id === null) return false;
+  const t = String(id).trim();
+  return t !== '' && t !== 'undefined' && t !== 'null';
+}
+// عدّاد ترتيب العمليات الجديدة: يبدأ فوق أكبر قيمة موجودة بالطابورين ويبقى تصاعدياً حتى لو رجعت ساعة الجهاز
+let _opSeqLast = 0, _opSeqInit = false;
+function nextOpSeq() {
+  if (!_opSeqInit) {
+    const a = readQueueStrict(TREATMENT_QUEUE_KEY), b = readQueueStrict(INSPECTION_PATCH_QUEUE_KEY);
+    if (a.ok && b.ok) {
+      let m = 0;
+      a.items.concat(b.items).forEach(it => { if (it && typeof it === 'object') m = Math.max(m, (it._op && Number(it._op.seq)) || 0, Number(it.ts) || 0); });
+      _opSeqLast = Math.max(_opSeqLast, m); _opSeqInit = true;
+    }
+  }
+  _opSeqLast = Math.max(Date.now(), _opSeqLast + 1);
+  return _opSeqLast;
+}
+// حقول محلية (تبدأ بـ_) لا تصل لقاعدة البيانات أبداً
+function stripLocalFields(obj) {
+  const o = {};
+  Object.keys(obj || {}).forEach(k => { if (k.charAt(0) !== '_') o[k] = obj[k]; });
+  return o;
+}
+// مطابقة "نفس العملية" عند الإزالة/التحديث: المفتاح + المحتوى (بدون الحقول المؤقتة) — لا نحذف عملية أخرى لمجرد تطابق inspection_id
+const _QUEUE_TEMP_FIELDS = ['_lastError', '_retryCount', '_localId'];
+function _opContentJson(item) {
+  const o = {};
+  Object.keys(item).forEach(k => { if (_QUEUE_TEMP_FIELDS.indexOf(k) === -1) o[k] = item[k]; });
+  return JSON.stringify(o);
+}
+function sameQueueOperation(a, b) {
+  return !!a && !!b && typeof a === 'object' && typeof b === 'object' && _queueItemKey(a) === _queueItemKey(b) && _opContentJson(a) === _opContentJson(b);
+}
+// هل العملية ما زالت بالتخزين الحالي؟ true/false، أو null لو تعذّرت قراءة الطابور
+function queueHasOperation(key, item) {
+  const rd = readQueueStrict(key);
+  if (!rd.ok) return null;
+  return rd.items.some(x => sameQueueOperation(x, item));
+}
+// يزيل العملية من طابورها الأصلي بقراءة التخزين الحالي (يحفظ المضاف أثناء await ولا يُعيد ما حذفه المستخدم). false = لم تُثبَّت الإزالة
+function removeQueueOperation(key, item) {
+  const rd = readQueueStrict(key);
+  if (!rd.ok) return false;
+  const i = rd.items.findIndex(x => sameQueueOperation(x, item));
+  if (i === -1) return true; // لم تعد موجودة (حذفها المستخدم أو مسار آخر) — لا شيء لإزالته
+  rd.items.splice(i, 1);
+  try { localStorage.setItem(key, JSON.stringify(rd.items)); return true; } catch (e) { return false; }
+}
+// تحديث عنصر بالمكان (تسجيل _lastError...) بأفضل جهد: فشله لا يعني نجاح العملية ولا يوقف الدورة
+function updateQueueOperation(key, item, mutate) {
+  const rd = readQueueStrict(key);
+  if (!rd.ok) return false;
+  const i = rd.items.findIndex(x => sameQueueOperation(x, item));
+  if (i === -1) return false;
+  mutate(rd.items[i]);
+  try { localStorage.setItem(key, JSON.stringify(rd.items)); return true; } catch (e) { return false; }
+}
+let _unreadableToastAt = 0;
+function reportUnreadableQueues() {
+  const now = Date.now();
+  if (now - _unreadableToastAt < 60000) return;
+  _unreadableToastAt = now;
+  showToast('⚠️ ' + MSG_QUEUE_UNREADABLE, 'error');
+}
+// حراس المعالجة
+function pendingInspectionForTower(lineName, towerNumber) {
+  const rd = readQueueStrict(QUEUE_KEY);
+  if (!rd.ok) return { unreadable: true, found: false };
+  const found = rd.items.some(it => it && typeof it === 'object' && it.line_name === lineName && String(it.tower_number) === String(towerNumber));
+  return { unreadable: false, found };
+}
+function pendingOpsForInspection(id) {
+  const tq = readQueueStrict(TREATMENT_QUEUE_KEY), pq = readQueueStrict(INSPECTION_PATCH_QUEUE_KEY);
+  if (!tq.ok || !pq.ok) return { unreadable: true, items: [] };
+  const sid = String(id);
+  const items = tq.items.filter(it => it && typeof it === 'object' && it.inspection_id !== undefined && it.inspection_id !== null && String(it.inspection_id) === sid)
+    .concat(pq.items.filter(it => it && typeof it === 'object' && it.id !== undefined && it.id !== null && String(it.id) === sid));
+  return { unreadable: false, items };
+}
+function describePendingOps(items) {
+  const withErr = items.filter(x => x && x._lastError);
+  const lastErr = withErr.length ? String(withErr[withErr.length - 1]._lastError).slice(0, 120) : '';
+  return '⚠️ لهذا الكشف ' + items.length + ' عملية معلّقة لم تكتمل بعد (معالجة أو تعديل). انتظر اكتمال إرسالها ثم أعد المحاولة.' + (lastErr ? ' آخر خطأ: ' + lastErr : '');
+}
+// سبب منع المعالجة (نص) أو null. rec اختياري: عند الاختيار (قبل الجلب) لا يوجد سجل بعد
+function treatmentBlockReason(lineName, towerNumber, rec) {
+  if (rec && !hasValidInspectionId(rec.id)) return MSG_TREAT_UNSYNCED;
+  const t = pendingInspectionForTower(lineName, towerNumber);
+  if (t.unreadable) return MSG_QUEUE_UNREADABLE;
+  if (t.found) return MSG_TREAT_UNSYNCED;
+  if (rec) {
+    const o = pendingOpsForInspection(rec.id);
+    if (o.unreadable) return MSG_QUEUE_UNREADABLE;
+    if (o.items.length) return describePendingOps(o.items);
+  }
+  return null;
 }
 
 // يلتقط بصمات الطابور قبل بدء المزامنة
@@ -9557,6 +9792,7 @@ function onTowerChange() {
 // ========================
 
 let treatmentsCache = [];
+let treatmentsLoadFailed = false; // آخر جلب فشل: الكاش (إن وُجد) قديم/غير مكتمل، وليس دليلاً على عدم وجود معالجات
 let treatInsulatorState = { R: [], S: [], T: [] };
 let treatCycleState = { R: [], S: [], T: [] }; // مستوى دورة المعالجة الحالي لكل موضع (محمَّل من آخر معالجة سابقة)
 let treatInsulatorState2 = { R: [], S: [], T: [] }; // الدائرة الثانية (خطوط مزدوجة فقط)
@@ -9571,7 +9807,10 @@ let otherDepTreatState = {};
 async function loadTreatments() {
   try {
     treatmentsCache = await fetchAllPages('treatments?select=*&order=created_at.desc');
-  } catch { treatmentsCache = []; }
+    treatmentsLoadFailed = false; // نجاح (حتى بقائمة فارغة): الكاش يعكس الخادم
+  } catch {
+    treatmentsLoadFailed = true; // نحتفظ بالكاش السابق ولا نفرّغه — لكن لا ندّعي أنه حديث
+  }
 }
 
 // مهم: r.insulator_state أصبح يمثّل "الحقيقة الحالية الفعلية" دائماً — لأنه يتحدّث مباشرة بقاعدة البيانات
@@ -10310,10 +10549,13 @@ function populateTreatLines() {
 }
 
 function onTreatLineChange() {
+  // تغيير الخط يُبطل أي اختيار برج جارٍ جلبه: يُصفَّر السجل وتُخفى البطاقة قبل أي خروج، وتسلسل الاختيار يتقدّم فيُرفض الطلب القديم عند عودته
+  _treatSelectSeq++;
+  currentTreatRecord = null;
+  document.getElementById('treatItemsCard').style.display = 'none';
   const lineName = document.getElementById('treatLine').value;
   const towerSel = document.getElementById('treatTower');
   towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
-  document.getElementById('treatItemsCard').style.display = 'none';
   if (!lineName) { towerSel.disabled = true; return; }
   // نفس التحسين: من فهرس آخر سجل لهذا الخط بس، بدل مسح كل الكشوفات التاريخية له
   const bucket = latestRecordsIndex[lineName] || {};
@@ -10326,15 +10568,27 @@ function onTreatLineChange() {
   towerSel.disabled = false;
 }
 
+let _treatSelectSeq = 0;
 async function onTreatTowerChange() {
+  const mySeq = ++_treatSelectSeq;
   const lineName = document.getElementById('treatLine').value;
   const towerNum = document.getElementById('treatTower').value;
   const card = document.getElementById('treatItemsCard');
-  if (!lineName || !towerNum) { card.style.display = 'none'; return; }
+  // لا يُستعمل سجل اختيار سابق: يُصفَّر قبل أي فحص أو جلب، وتُخفى البطاقة حتى يُقبل الاختيار الجديد
+  currentTreatRecord = null;
+  card.style.display = 'none';
+  if (!lineName || !towerNum) return;
+  // حارس قبل أي جلب: وجود كشف معلّق لنفس الخط والبرج (أي تاريخ) يمنع الجلب كي لا يستبدل loadFullTowerRecord كشفاً محلياً معلّقاً
+  const early = treatmentBlockReason(lineName, towerNum, null);
+  if (early) { showToast(early, 'error'); return; }
   // نجيب السجل الكامل لهذا البرج بالذات (طلب صغير وفوري) — شاشة المعالجة تحتاج تفاصيل غير متوفرة
   // بالتحميل المختصر لشبكة الأبراج (دورة المعالجة، مادة سلاسل الدائرة الثانية، الملاحظات)
   const r = navigator.onLine ? (await loadFullTowerRecord(lineName, towerNum)) || getLatestRecordForTower(lineName, towerNum) : getLatestRecordForTower(lineName, towerNum);
-  if (!r) { card.style.display = 'none'; return; }
+  // لا نقبل السجل إلا لو بقي الاختيار نفسه: التسلسل لم يتقدّم والخط والبرج الحاليان يطابقان ما بدأ به الطلب
+  if (mySeq !== _treatSelectSeq || document.getElementById('treatLine').value !== lineName || document.getElementById('treatTower').value !== towerNum) return;
+  if (!r) return;
+  const late = treatmentBlockReason(lineName, towerNum, r); // نفس الحراس مع معرّف السجل المجلوب (id صالح + لا عمليات معلّقة له)
+  if (late) { showToast(late, 'error'); return; }
   currentTreatRecord = r;
   otherDepTreatState = {};
   card.style.display = 'block';
@@ -10810,6 +11064,10 @@ async function saveTreatment() {
   if (!currentTreatRecord) return;
   const r = currentTreatRecord;
 
+  // حراس v326 — قبل أي DOM أو تعديل محلي أو كتابة أو إرسال: id صالح، لا كشف معلّق لنفس البرج، لا عمليات معلّقة لنفس الكشف
+  const blockMsg = treatmentBlockReason(r.line_name, r.tower_number, r);
+  if (blockMsg) { showToast(blockMsg, 'error'); return; }
+
   // الخطوة 1: لو فيه أقسام عولجت بهذي الجلسة وما طلبنا منك تحدد درجتها الجديدة بعد، نطلبها أول
   const touched = getTouchedSeveritySections(r);
   const existingPrompt = document.getElementById('treatSeverityPrompts');
@@ -11004,12 +11262,15 @@ async function saveTreatment() {
   // نحدّث النسخة المحلية بالذاكرة فوراً (بغض النظر عن النت)، لضمان ظهور النتيجة الصحيحة بنفس الجلسة فوراً
   function applyPatchLocally() {
     Object.assign(r, inspectionPatch);
+    if (!hasValidInspectionId(r.id)) return; // لا مطابقة بمعرّف غائب أبداً (كانت تصيب أول سجل بلا id)
+    const rid = String(r.id);
+    const sameId = x => !!x && hasValidInspectionId(x.id) && String(x.id) === rid;
     if (typeof fullRecordsCache !== 'undefined' && Array.isArray(fullRecordsCache)) {
-      const idx = fullRecordsCache.findIndex(x => x.id === r.id);
-      if (idx > -1) { Object.assign(fullRecordsCache[idx], inspectionPatch); indexOneRecordInPlace(fullRecordsCache[idx]); }
+      const idx = fullRecordsCache.findIndex(sameId);
+      if (idx > -1) { Object.assign(fullRecordsCache[idx], inspectionPatch); rebuildLatestRecordsIndex(); }
     }
     if (typeof records !== 'undefined' && Array.isArray(records)) {
-      const idx2 = records.findIndex(x => x.id === r.id);
+      const idx2 = records.findIndex(sameId);
       if (idx2 > -1) Object.assign(records[idx2], inspectionPatch);
     }
   }
@@ -11017,9 +11278,9 @@ async function saveTreatment() {
   const btn = document.querySelector('#treatItemsCard .btn-primary');
   if (btn) btn.disabled = true;
 
-  async function finishUpSuccess() {
+  // العرض المحلي بعد ضمان الحفظ المحلي: بلا انتظار للشبكة (لا loadTreatments هنا — المعالجة لم تصل السيرفر بعد)
+  function finishLocalSave() {
     try { applyPatchLocally(); } catch(e) { console.error(e); }
-    try { await loadTreatments(); } catch(e) { console.error(e); }
     otherDepTreatState = {};
     chainReplacementLog = [];
     currentTreatRecord = null;
@@ -11032,20 +11293,19 @@ async function saveTreatment() {
   }
 
   try {
-    try {
-      const res = await sbFetch('treatments?on_conflict=client_uuid', {method:'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body:JSON.stringify(treatment)});
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const patchRes = await sbFetch(`inspections?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(inspectionPatch) });
-      if (!patchRes.ok) throw new Error('patch-failed');
-      showToast('✅ تم حفظ المعالجة بقاعدة البيانات');
-      await finishUpSuccess();
-    } catch {
-      addToTreatmentQueue(treatment);
-      addToInspectionPatchQueue(r.id, inspectionPatch);
-      const msg = navigator.onLine ? '📦 خطأ بالإرسال، حُفظ محلياً' : '📦 حُفظ أوف لاين، سيُرسل تلقائياً';
-      showToast(msg);
-      await finishUpSuccess();
+    // تسجيل أولاً: عنصر موحّد واحد (المعالجة + PATCH الكشف) بكتابة واحدة، قبل أي طلب شبكة. الهوية دائمة داخل العنصر نفسه
+    // (client_uuid = _op.id)، فلا تتكرر المعالجة بعد ضياع الرد أو إعادة التشغيل. لا PATCH مستقل لنفس المعالجة.
+    const queuedItem = { ...treatment, _v: 2, _op: { id: treatment.client_uuid, seq: nextOpSeq() }, _inspectionPatch: inspectionPatch };
+    if (!addToTreatmentQueue(queuedItem)) {
+      // لا شبكة ولا apply ولا إغلاق ولا مسح: لم يُرسَل شيء، فالإعادة محاولة جديدة آمنة
+      showToast(_lastQueueFailReason === 'unreadable'
+        ? '❌ لم تُحفظ المعالجة ولم تُرسَل: قائمة المعلّقات على الجهاز غير قابلة للقراءة (لم يُحذف شيء). اختياراتك باقية — أبلغ المسؤول'
+        : '❌ لم تُحفظ المعالجة (ذاكرة الجهاز ممتلئة) ولم تُرسَل إلى السيرفر. حقولك واختياراتك باقية — حرّر مساحة واضغط حفظ ثانيةً', 'error');
+      return;
     }
+    showToast('✅ حُفظت المعالجة محلياً — لم تُؤكَّد على السيرفر بعد وستُرسل تلقائياً');
+    finishLocalSave();
+    requestSyncSoon(); // المسار المحمي المشترك (syncAllQueues)، بلا انتظار: النموذج حُفظ محلياً وأُغلق
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -11053,72 +11313,143 @@ async function saveTreatment() {
 
 const INSPECTION_PATCH_QUEUE_KEY = 'inspection_patch_queue';
 function addToInspectionPatchQueue(id, patch) {
-  const q = getInspectionPatchQueue();
-  q.push({ id, patch, ts: Date.now() });
-  safeSetItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(q));
+  // قراءة صارمة: طابور غير قابل للقراءة لا يُستبدل بـ[] (فقد صامت لما فيه)
+  const rd = readQueueStrict(INSPECTION_PATCH_QUEUE_KEY);
+  if (!rd.ok) { _lastQueueFailReason = 'unreadable'; return false; }
+  _lastQueueFailReason = 'storage';
+  // عملية جديدة بهوية فريدة وترتيب تصاعدي (id+ts وحدهما لا يضمنان التفرد)؛ ts يبقى للتوافق والعرض
+  rd.items.push({ id, patch, ts: Date.now(), _op: { id: genUUID(), seq: nextOpSeq() } });
+  const ok = safeSetItem(INSPECTION_PATCH_QUEUE_KEY, JSON.stringify(rd.items));
   updatePendingBadge();
+  return ok;
 }
 function getInspectionPatchQueue() { try { return JSON.parse(localStorage.getItem(INSPECTION_PATCH_QUEUE_KEY)||'[]'); } catch { return []; } }
 
+// نص خطأ HTTP للتسجيل على العنصر (كما كان بالدوال القديمة)
+async function _httpErrorText(res) {
+  let bodyText = '';
+  try { bodyText = await res.text(); } catch (e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ المزامنة', e); }
+  return `HTTP ${res.status}: ${bodyText.slice(0, 200)}`;
+}
+
+// الكاتب المرتب لعمليات الكشف (inspections): PATCH المستقل + العناصر الموحّدة (معالجة + PATCH) — يُستدعى فقط من syncAllQueues (تحت syncInProgress).
+// الترتيب: القديمة (بلا _op) بترتيب المصفوفة مع مغلّف تصاعدي لـts، ثم الجديدة بـ_op.seq. لنفس الكشف: بعد نجاح عملية تُثبَّت إزالتها
+// من طابورها الأصلي قبل إرسال الأحدث؛ وأي فشل (شبكة/HTTP حتى 4xx/تثبيت الإزالة) يحجب الأحدث لنفس الكشف في هذه الدورة. كشف آخر يتابع.
 async function syncInspectionPatchQueue() {
-  const q = getInspectionPatchQueue();
-  if (!q.length) return;
-  const _snapKeys = snapshotQueueKeys(q);
-  let synced = 0;
-  const remaining = [];
-  for (const item of q) {
-    const patchToSend = { ...item.patch };
-    delete patchToSend._lastError;
+  const pr = readQueueStrict(INSPECTION_PATCH_QUEUE_KEY), tr = readQueueStrict(TREATMENT_QUEUE_KEY);
+  if (!pr.ok || !tr.ok) { reportUnreadableQueues(); updatePendingBadge(); return; } // طابور غير قابل للقراءة: لا إرسال ولا استبدال ولا إعلان اكتمال
+  const isObj = it => !!it && typeof it === 'object' && !Array.isArray(it);
+  const units = [];
+  let envelope = 0, idx = 0;
+  pr.items.forEach(it => {
+    if (!isObj(it)) return;
+    if (it._op && it._op.seq !== undefined) units.push({ kind: 'P', qk: INSPECTION_PATCH_QUEUE_KEY, item: it, rawId: it.id, ord: Number(it._op.seq) || 0, leg: 1, idx: idx++ });
+    else { envelope = Math.max(envelope, Number(it.ts) || 0); units.push({ kind: 'P', qk: INSPECTION_PATCH_QUEUE_KEY, item: it, rawId: it.id, ord: envelope, leg: 0, idx: idx++ }); }
+  });
+  tr.items.forEach(it => {
+    if (!isObj(it) || it._v !== 2) return; // القديم بلا _v يعالجه syncTreatmentQueue؛ صيغة غير معروفة تبقى كما هي
+    units.push({ kind: 'T', qk: TREATMENT_QUEUE_KEY, item: it, rawId: it.inspection_id, ord: Number(it._op && it._op.seq) || 0, leg: 1, idx: idx++ });
+  });
+  units.forEach(u => { u.id = hasValidInspectionId(u.rawId) ? String(u.rawId) : '__invalid__'; });
+  units.sort((x, y) => x.ord - y.ord || x.leg - y.leg || x.idx - y.idx);
+
+  const blocked = new Set();
+  // معالجة قديمة (غير موحّدة) ما زالت بالتخزين لنفس الكشف (فشل POST أو تثبيت الهوية أو تثبيت الإزالة بعد نجاحه): لا نتجاوزها.
+  // تُقرأ من التخزين الحالي هنا (tr) لا من متغير بين الاستدعاءات. عنصر بلا معرّف كشف صالح لا نستنتج ارتباطه بأي كشف: يبقى ولا يحجب أحداً.
+  tr.items.forEach(it => { if (isObj(it) && it._v !== 2 && hasValidInspectionId(it.inspection_id)) blocked.add(String(it.inspection_id)); });
+  let confirmedTreatments = 0, removeFailed = 0, unreadable = false;
+  for (const u of units) {
+    if (blocked.has(u.id)) continue; // لا نتجاوز عملية فاشلة لنفس الكشف
+    const present = queueHasOperation(u.qk, u.item);
+    if (present === null) { blocked.add(u.id); unreadable = true; continue; }
+    if (!present) continue; // حذفها المستخدم/أزالها مسار آخر أثناء الدورة: لا تُرسَل
+    if (u.id === '__invalid__') { updateQueueOperation(u.qk, u.item, o => { o._lastError = 'معرّف الكشف غير صالح'; }); blocked.add(u.id); continue; }
+    let failMsg = null;
     try {
-      const res = await sbFetch(`inspections?id=eq.${item.id}`, { method: 'PATCH', body: JSON.stringify(patchToSend) });
-      if (res.ok) synced++;
-      else {
-        let bodyText = '';
-        try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة تعديل الكشف', e); }
-        remaining.push({ ...item, _lastError: `HTTP ${res.status}: ${bodyText.slice(0,200)}` });
+      if (u.kind === 'T') {
+        const a = await sbFetch('treatments?on_conflict=client_uuid', { method: 'POST', headers: { 'Prefer': 'resolution=ignore-duplicates' }, body: JSON.stringify(stripLocalFields(u.item)) });
+        if (!a.ok) failMsg = await _httpErrorText(a);
       }
-    } catch(e) {
-      remaining.push({ ...item, _lastError: `خطأ شبكة: ${e && e.message ? e.message : e}` });
+      if (!failMsg) {
+        const patchBody = stripLocalFields(u.kind === 'T' ? u.item._inspectionPatch : u.item.patch);
+        const b = await sbFetch(`inspections?id=eq.${u.id}`, { method: 'PATCH', body: JSON.stringify(patchBody) });
+        if (!b.ok) failMsg = await _httpErrorText(b);
+      }
+    } catch (e) { failMsg = `خطأ شبكة: ${e && e.message ? e.message : e}`; }
+    if (failMsg) {
+      updateQueueOperation(u.qk, u.item, o => { o._lastError = failMsg; }); // أفضل جهد: فشل التسجيل لا يغيّر شيئاً
+      blocked.add(u.id);
+      continue;
     }
+    // نجح على السيرفر: نثبّت الإزالة قبل أي أحدث لنفس الكشف
+    if (u.kind === 'T') confirmedTreatments++;
+    if (!removeQueueOperation(u.qk, u.item)) { removeFailed++; blocked.add(u.id); }
   }
-  saveQueueAfterSync(INSPECTION_PATCH_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
+  if (unreadable) reportUnreadableQueues();
+  if (confirmedTreatments > 0) {
+    if (removeFailed > 0) showToast('⚠️ أُرسلت معالجات إلى السيرفر لكن تعذّر تحديث قائمة المعلّقات — سيُعاد الإرسال بأمان دون تكرار', 'error');
+    else showToast(`✅ تم إرسال ${confirmedTreatments} معالجة إلى السيرفر`);
+    try { await loadTreatments(); } catch (e) { console.error(e); }
+    try { renderDepLinesList(); } catch (e) { console.error(e); }
+  }
 }
 
 const TREATMENT_QUEUE_KEY = 'treatment_queue';
 function addToTreatmentQueue(rec) {
-  const q = getTreatmentQueue(); q.push(rec); safeSetItem(TREATMENT_QUEUE_KEY, JSON.stringify(q));
+  // يعيد boolean: false = لم تُكتب (طابور غير قابل للقراءة لا يُستبدل، أو فشل التخزين)
+  const rd = readQueueStrict(TREATMENT_QUEUE_KEY);
+  if (!rd.ok) { _lastQueueFailReason = 'unreadable'; return false; }
+  _lastQueueFailReason = 'storage';
+  rd.items.push(rec);
+  const ok = safeSetItem(TREATMENT_QUEUE_KEY, JSON.stringify(rd.items));
   updatePendingBadge();
+  return ok;
 }
 function getTreatmentQueue() { try { return JSON.parse(localStorage.getItem(TREATMENT_QUEUE_KEY)||'[]'); } catch { return []; } }
 
+// المعالجات القديمة فقط (بلا _v): POST بهويتها كما كانت، وإزالة كل عملية بعد نجاحها من التخزين الحالي. العناصر الموحّدة (_v:2) يعالجها syncInspectionPatchQueue.
 async function syncTreatmentQueue() {
-  const q = getTreatmentQueue();
-  if (!q.length) return;
-  const _snapKeys = snapshotQueueKeys(q);
-  let synced = 0;
-  const remaining = [];
-  for (const rec of q) {
-    if (!rec.client_uuid) rec.client_uuid = genUUID();
-    const toSend = { ...rec };
-    delete toSend._lastError;
+  const rd = readQueueStrict(TREATMENT_QUEUE_KEY);
+  if (!rd.ok) { reportUnreadableQueues(); return; }
+  const legacy = rd.items.filter(it => !!it && typeof it === 'object' && !Array.isArray(it) && it._v === undefined);
+  if (!legacy.length) return;
+  let synced = 0, removeFailed = 0;
+  for (const orig of legacy) {
+    const present = queueHasOperation(TREATMENT_QUEUE_KEY, orig);
+    if (present === null) break;
+    if (!present) continue; // حذفها المستخدم أثناء الدورة
+    // الهوية قبل أي POST: عنصر قديم بلا client_uuid يُثبَّت له uuid داخل نفس العنصر بالتخزين أولاً (لا نولّد uuid جديداً في كل محاولة).
+    // لو فشل التثبيت لا نرسل العنصر. وبعده نكمل بالنسخة المثبتة (من التخزين الحالي) للمطابقة والإرسال والإزالة.
+    let item = orig;
+    if (!orig.client_uuid) {
+      const uuid = genUUID();
+      if (!updateQueueOperation(TREATMENT_QUEUE_KEY, orig, o => { o.client_uuid = uuid; })) continue;
+      const rd2 = readQueueStrict(TREATMENT_QUEUE_KEY);
+      if (!rd2.ok) break;
+      const pinned = rd2.items.find(x => sameQueueOperation(x, { ...orig, client_uuid: uuid }));
+      if (!pinned) continue; // اختفى بعد التثبيت (حذفه المستخدم)
+      item = pinned;
+    }
+    const toSend = stripLocalFields(item);
     try {
       const res = await sbFetch('treatments?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
-      if (res.ok) synced++;
-      else {
-        let bodyText = '';
-        try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة المعالجة', e); }
-        rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
-        remaining.push(rec);
+      if (res.ok) {
+        synced++;
+        if (!removeQueueOperation(TREATMENT_QUEUE_KEY, item)) removeFailed++;
+      } else {
+        const msg = await _httpErrorText(res);
+        updateQueueOperation(TREATMENT_QUEUE_KEY, item, o => { o._lastError = msg; });
       }
     } catch(e) {
-      rec._lastError = `خطأ شبكة: ${e && e.message ? e.message : e}`;
-      remaining.push(rec);
+      const msg = `خطأ شبكة: ${e && e.message ? e.message : e}`;
+      updateQueueOperation(TREATMENT_QUEUE_KEY, item, o => { o._lastError = msg; });
     }
   }
-  saveQueueAfterSync(TREATMENT_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
-  if (synced > 0) { showToast(`✅ تم إرسال ${synced} معالجة محفوظة أوف لاين`); await loadTreatments(); }
+  if (removeFailed > 0) showToast('⚠️ أُرسلت معالجات لكن تعذّر تحديث قائمة المعلّقات — سيُعاد الإرسال بأمان دون تكرار', 'error');
+  else if (synced > 0) showToast(`✅ تم إرسال ${synced} معالجة محفوظة أوف لاين`);
+  if (synced > 0) await loadTreatments();
 }
 
 let currentDepLogRows = [];
@@ -11163,7 +11494,15 @@ async function renderDepLog() {
   const body = document.getElementById('depLogBody');
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   await loadTreatments();
-  if (!treatmentsCache.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مسجلة بعد</div>'; return; }
+  const staleBanner = treatmentsLoadFailed
+    ? '<div class="empty-state" style="color:#92400E;background:#FEF3C7;border-radius:8px;padding:10px;margin-bottom:10px">⚠️ تعذّر تحديث سجل المعالجات — المعروض نسخة محفوظة سابقاً وقد تكون قديمة وغير مكتملة</div>'
+    : '';
+  if (!treatmentsCache.length) {
+    body.innerHTML = treatmentsLoadFailed
+      ? '<div class="empty-state">⚠️ تعذّر تحميل سجل المعالجات (لا اتصال أو خطأ بالخادم) ولا توجد نسخة محفوظة لعرضها — هذا لا يعني عدم وجود معالجات</div>'
+      : '<div class="empty-state">لا توجد معالجات مسجلة بعد</div>';
+    return;
+  }
 
   // تحديث فلتر الخطوط (يحافظ على القيمة المختارة)
   const lineSel = document.getElementById('depLogFilterLine');
@@ -11178,9 +11517,9 @@ async function renderDepLog() {
   currentDepLogRows = rows;
   const bulkBtn = document.getElementById('depLogBulkDeleteBtn');
   if (bulkBtn) bulkBtn.style.display = (currentUser.role==='admin') ? '' : 'none';
-  if (!rows.length) { body.innerHTML = '<div class="empty-state">لا توجد معالجات مطابقة للفلتر</div>'; return; }
+  if (!rows.length) { body.innerHTML = staleBanner + '<div class="empty-state">لا توجد معالجات مطابقة للفلتر</div>'; return; }
 
-  body.innerHTML = rows.map(t => {
+  body.innerHTML = staleBanner + rows.map(t => {
     const items = t.items_treated||[];
     const hasCircuit2 = !!(t.insulator_svg_r_2 || t.insulator_svg_s_2 || t.insulator_svg_t_2);
     return `<div class="dep-card" style="border-right-color:#48BB78">
@@ -11794,7 +12133,7 @@ async function saveTreatmentEdit() {
     const depPage = document.getElementById('page-departures');
     if (depPage && depPage.classList.contains('active')) renderDepLog();
     const hubPage = document.getElementById('page-recordsHub');
-    if (hubPage && hubPage.classList.contains('active') && hubBrowseType === 'treat' && hubSelectedDate) renderHubDetail();
+    if (hubPage && hubPage.classList.contains('active') && typeof hubBrowseType !== 'undefined' && hubBrowseType === 'treat' && typeof hubSelectedDate !== 'undefined' && hubSelectedDate && typeof renderHubDetail === 'function') renderHubDetail();
   } catch (e) {
     showToast('❌ تعذر حفظ التعديل', 'error');
   }
