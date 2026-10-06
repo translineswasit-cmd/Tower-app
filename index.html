@@ -3562,7 +3562,12 @@ let loadedLineCacheAt = {}; // { [lineName]: timestamp }
 const GRID_SELECT_FIELDS = ['id','line_name','tower_number','tower_type','voltage','inspection_date',
   'insulator_state','insulator_state_2','insulator_chain_types','insulator_washing',
   'tower_foundations','iron_intersections','tower_attachments','ground_1','ground_2','fire_causes_notes','road_access','road_access_notes','notes',
-  'sev_insulator','sev_foundation','sev_iron','sev_wires','sev_ground','sev_fire'].join(',');
+  'sev_insulator','sev_foundation','sev_iron','sev_wires','sev_ground','sev_fire',
+  // v330: أسلاك الدائرتين (مغادرات الأسلاك + قائمة أبراج المعالجة تعتمد عليها من التحميل المختصر) + بيانات تعريفية:
+  // created_by_name لبطاقة PDF المغادرات، وcreated_at لكسر تعادل تاريخ الكشف بقواعد الفهرس. (مؤكَّدة بالرؤية latest_inspections من صاحب المشروع)
+  'wires_r1','wires_s1','wires_t1','wires_r1_c2','wires_s1_c2','wires_t1_c2','created_at','created_by_name',
+  // v333: تحديد الدائرة المقصودة بمغادرة الأسلاك + أنواع سلاسل عوازل الدائرة الثانية (مؤكَّدان بتعريف latest_inspections) — لحساب الصحة الكهربائية لكل دائرة
+  'wires_circuit','insulator_chain_types_2'].join(',');
 
 async function loadLineRecordsCache(lineName, force) {
   const now = Date.now();
@@ -5422,6 +5427,9 @@ const EXPORT_COLUMNS = [
   { label: 'أسلاك R',                 get: r => r.wires_r1 },
   { label: 'أسلاك S',                 get: r => r.wires_s1 },
   { label: 'أسلاك T',                 get: r => r.wires_t1 },
+  { label: 'أسلاك R (الدائرة الثانية)', get: r => r.wires_r1_c2 },
+  { label: 'أسلاك S (الدائرة الثانية)', get: r => r.wires_s1_c2 },
+  { label: 'أسلاك T (الدائرة الثانية)', get: r => r.wires_t1_c2 },
   { label: 'الأرضي 1',                get: r => r.ground_1 },
   { label: 'الأرضي 2',                get: r => r.ground_2 },
   { label: 'مسببات الحرائق',          get: r => r.fire_causes_notes },
@@ -5513,6 +5521,8 @@ async function confirmExportPDF() {
       addLine('قواعد البرج', r.tower_foundations);
       addLine('ملحقات البرج', r.tower_attachments);
       addLine('أسلاك R', r.wires_r1); addLine('أسلاك S', r.wires_s1); addLine('أسلاك T', r.wires_t1);
+      // أسلاك الدائرة الثانية: addLine يطبع الوصف غير الفارغ فقط (لا "سليم" ولا شيء للحقل الفارغ/الغائب) — فلا تظهر لخط مفرد بلا بيانات لها، ولا يُسقط وصف محفوظ لغياب insulator_state_2
+      addLine('أسلاك R (الدائرة الثانية)', r.wires_r1_c2); addLine('أسلاك S (الدائرة الثانية)', r.wires_s1_c2); addLine('أسلاك T (الدائرة الثانية)', r.wires_t1_c2);
       addLine('الأرضي 1', r.ground_1); addLine('الأرضي 2', r.ground_2);
       addLine('مسببات الحرائق', r.fire_causes);
       if (r.fire_causes_notes && r.fire_causes_notes.trim()) items.push({ text: `🔥 ${r.fire_causes_notes.trim()}`, fontSize: 10, color: '#922b21', padY: 3 });
@@ -5614,7 +5624,7 @@ function getDepLogExportFiltered() {
   const rows = getDepLogExportFilteredByLineDate();
   const selectedTowers = getDepLogExportSelectedTowers();
   if (!selectedTowers.size) return [];
-  return sortByLineThenTower(rows.filter(t => selectedTowers.has(String(t.tower_number))), 'tower_number');
+  return sortTreatmentsByLineTowerThenDate(rows.filter(t => selectedTowers.has(String(t.tower_number))));
 }
 function updateDepLogExportResultCount() {
   const n = getDepLogExportFiltered().length;
@@ -5718,8 +5728,77 @@ function wrapArabicText(ctx, text, maxWidth) {
 
 // يبني بطاقة معالجة واحدة كصورة (كانفاس) — يدعم العربي بشكل صحيح لأن الرسم بالكانفاس عبر fillText
 // وليس عبر jsPDF مباشرة (jsPDF بخطوطه الافتراضية لا يدعم الحروف العربية إطلاقاً)
-async function buildTreatLogRecordCanvas(t) {
-  const CARD_W = 760, PAD = 18, IMG_H = 90;
+// ترميز النصوص الحرة قبل إدراجها بـHTML (الخط، المنفّذ، تسميات العناصر، الملاحظات...). لا يُستعمل مع صور SVG.
+function escapeHtml(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// نموذج عرض موحّد لعملية معالجة (قراءة فقط: لا يعدّل الكائن ولا الكاش): الخط، البرج، التاريخ، المعالج، العناصر، الملاحظات
+function treatmentDisplayModel(t) {
+  const items = Array.isArray(t && t.items_treated) ? t.items_treated : [];
+  const notes = (t && t.notes != null ? String(t.notes) : '').replace(/\r\n?/g, '\n');
+  const hasNotes = notes.trim() !== '';
+  const itemLabels = items.map(it => (it && it.label != null ? String(it.label) : ''));
+  return {
+    line: t && t.line_name != null ? String(t.line_name) : '',
+    tower: t && t.tower_number != null ? String(t.tower_number) : '',
+    date: t && t.treatment_date != null ? String(t.treatment_date) : '',
+    by: t && t.treated_by != null ? String(t.treated_by) : '',
+    itemLabels,
+    itemsText: itemLabels.join('، '),
+    notes: hasNotes ? notes : '',
+    notesLines: hasNotes ? notes.split('\n') : []
+  };
+}
+
+// التفاف مخصص لبطاقات المعالجات (محلي: wrapArabicText المشتركة لم تُغيَّر): يحترم الأسطر الجديدة ويكسر الكلمة الأطول من العرض
+// بالأحرف دون حذف أي محتوى. القياس بالخط الحالي لـctx (يجب ضبطه مسبقاً بنفس خط الرسم).
+function _wrapTreatText(ctx, text, maxWidth) {
+  const out = [];
+  String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n').forEach(par => {
+    if (par === '') { out.push(''); return; }
+    let line = '';
+    const breakLong = word => {
+      let frag = '';
+      for (const ch of Array.from(word)) {
+        const test = frag + ch;
+        if (frag && ctx.measureText(test).width > maxWidth) { out.push(frag); frag = ch; } else frag = test;
+      }
+      return frag;
+    };
+    par.split(' ').forEach(word => {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width <= maxWidth) { line = test; return; }
+      if (line) { out.push(line); line = ''; }
+      line = (ctx.measureText(word).width <= maxWidth) ? word : breakLong(word);
+    });
+    out.push(line);
+  });
+  return out;
+}
+
+// عنوان PDF عربي عبر مسار الرسم العربي الموجود (doc.text لا يدعم العربية)؛ يُرسم بمحاذاة اليمين، والتاريخ باليسار
+function pdfDrawArabicTitle(doc, pageW, marginX, title) {
+  try {
+    const img = drawArabicTextPNG([{ text: title, fontSize: 15, fontWeight: 'bold', padY: 2 }], 260);
+    doc.addImage(img.dataUrl, 'JPEG', pageW - marginX - img.w, 6, img.w, img.h);
+  } catch (e) {
+    console.warn('[tower-app] تعذّر رسم عنوان PDF العربي', e);
+    doc.text('Report', pageW / 2, 26, { align: 'center' });
+  }
+  doc.setFontSize(9);
+  doc.text(new Date().toLocaleDateString('en-GB'), marginX, 30);
+}
+
+// بطاقة معالجة PDF: تُقسَّم تلقائياً إلى أجزاء (بطاقات تكملة) كل منها لا يتجاوز opts.maxPartH بكسل-بطاقة (يحسبه المستدعي من مساحة الصفحة وعرض الرسم)،
+// بحدود أسطر النص أو بين مجموعات الصور، دون حذف محتوى. opts.seq = رقم العملية (واحد لكل الأجزاء). تعيد الجزء الأول مع .parts (كل الأجزاء):
+// المستهلكون يرسمون card.parts || [card] — لا يكتفون بالأول.
+async function buildTreatLogRecordCanvas(t, opts) {
+  opts = opts || {};
+  const CARD_W = 760, PAD = 18, IMG_H = 90, TEXT_W = CARD_W - PAD*2, LH = 17, LH_HEAD = 20, SEP_H = 14, TOP = 30, circuitLabelH = 20, scale = 1.3;
+  const maxPartH = Math.max(200, Math.floor(opts.maxPartH || 496));
+  const seq = opts.seq != null ? opts.seq : null;
+  const m = treatmentDisplayModel(t);
   const svgEntries1 = [['R', t.insulator_svg_r], ['S', t.insulator_svg_s], ['T', t.insulator_svg_t]].filter(([,svg]) => svg);
   const svgEntries2 = [['R', t.insulator_svg_r_2], ['S', t.insulator_svg_s_2], ['T', t.insulator_svg_t_2]].filter(([,svg]) => svg);
   const hasCircuit2 = svgEntries2.length > 0;
@@ -5734,77 +5813,81 @@ async function buildTreatLogRecordCanvas(t) {
   const imgResults1 = await loadImgs(svgEntries1);
   const imgResults2 = hasCircuit2 ? await loadImgs(svgEntries2) : [];
 
-  const measureCanvas = document.createElement('canvas');
-  const mctx = measureCanvas.getContext('2d');
-  mctx.font = '13px Tahoma, Arial, sans-serif';
-  const items = (t.items_treated||[]).map(it => it.label);
-  const itemsText = items.length ? ('المعالَج: ' + items.join('، ')) : '';
-  const itemLines = wrapArabicText(mctx, itemsText, CARD_W - PAD*2);
+  const FONT_H = 'bold 14px Tahoma, Arial, sans-serif', FONT_T = '13px Tahoma, Arial, sans-serif', FONT_B = 'bold 13px Tahoma, Arial, sans-serif';
+  const mctx = document.createElement('canvas').getContext('2d');
+  const wrapWith = (font, text) => { mctx.font = font; return _wrapTreatText(mctx, text, TEXT_W); };
 
-  const headerH = 40;
-  const itemsH = itemLines.length ? (itemLines.length * 17 + 8) : 0;
-  const circuitLabelH = 20; // ارتفاع سطر "الدائرة الأولى/الثانية" — يظهر بس لو فيه دائرة ثانية
-  const imagesH1 = imgResults1.length ? ((hasCircuit2 ? circuitLabelH : 0) + IMG_H + 24) : 0;
-  const imagesH2 = imgResults2.length ? (circuitLabelH + IMG_H + 24) : 0;
-  const totalH = headerH + itemsH + imagesH1 + imagesH2 + PAD;
-
-  // مضاعف دقة معتدل (لا نضخّم الدقة أكثر من اللازم) — يحافظ على وضوح كافٍ مع حجم ملف صغير
-  const scale = 1.3;
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(CARD_W * scale);
-  canvas.height = Math.ceil(totalH * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.scale(scale, scale);
-  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, totalH);
-  ctx.direction = 'rtl';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'alphabetic';
-
-  let y = PAD + 12;
-  ctx.fillStyle = '#1A2A46';
-  ctx.font = 'bold 14px Tahoma, Arial, sans-serif';
-  ctx.fillText(`الخط: ${t.line_name||'-'}   |   برج: ${t.tower_number||'-'}   |   التاريخ: ${t.treatment_date||'-'}   |   المعالج: ${t.treated_by||'-'}`, CARD_W - PAD, y);
-  y += 18;
-
-  ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(PAD, y); ctx.lineTo(CARD_W - PAD, y); ctx.stroke();
-  y += 14;
-
-  if (itemLines.length) {
-    ctx.font = '13px Tahoma, Arial, sans-serif';
-    ctx.fillStyle = '#3C3C3C';
-    itemLines.forEach(line => { ctx.fillText(line, CARD_W - PAD, y); y += 17; });
-    y += 4;
+  const textUnits = (lines, font, color, lh) => lines.map(text => ({ kind: 'text', text, font, color, h: lh }));
+  const contUnits = () => {
+    const lbl = (seq != null ? 'عملية رقم ' + seq + ' — تابع' : 'تابع') + (m.tower ? ' — برج ' + m.tower : '');
+    return textUnits(wrapWith(FONT_H, lbl), FONT_H, '#2E4057', LH_HEAD);
+  };
+  const units = [];
+  if (seq != null) units.push(...textUnits(wrapWith(FONT_H, 'عملية رقم ' + seq), FONT_H, '#2E4057', LH_HEAD));
+  units.push(...textUnits(wrapWith(FONT_H, `الخط: ${m.line || '-'}   |   برج: ${m.tower || '-'}`), FONT_H, '#1A2A46', LH_HEAD));
+  units.push(...textUnits(wrapWith(FONT_H, `التاريخ: ${m.date || '-'}   |   المعالج: ${m.by || '-'}`), FONT_H, '#1A2A46', LH_HEAD));
+  units.push({ kind: 'sep', h: SEP_H });
+  if (m.itemLabels.length) units.push(...textUnits(wrapWith(FONT_T, 'المعالَج: ' + m.itemsText), FONT_T, '#3C3C3C', LH));
+  if (m.notes) {
+    units.push({ kind: 'text', text: 'الملاحظات:', font: FONT_B, color: '#2E4057', h: LH, keepNext: true });
+    units.push(...textUnits(wrapWith(FONT_T, m.notes), FONT_T, '#3C3C3C', LH));
   }
+  const imageGroup = (imgs, label) => imgs.length ? { kind: 'images', imgs, label, h: (label ? circuitLabelH : 0) + IMG_H + 24 } : null;
+  const g1 = imageGroup(imgResults1, hasCircuit2 ? 'الدائرة الأولى' : ''), g2 = imageGroup(imgResults2, 'الدائرة الثانية');
+  if (g1) units.push(g1); if (g2) units.push(g2);
 
-  function drawImgRow(imgResults, circuitLabel) {
-    if (!imgResults.length) return;
-    if (circuitLabel) {
-      ctx.font = 'bold 12px Tahoma, Arial, sans-serif';
-      ctx.fillStyle = '#4A5568';
-      ctx.fillText(circuitLabel, CARD_W - PAD, y);
-      y += circuitLabelH;
+  // التقسيم: لا يتجاوز أي جزء maxPartH؛ نقطة القطع بين الوحدات (أسطر نص/مجموعة صور) فقط — لا قصّ لبتماب عبر سطر
+  const parts = [{ units: [], h: TOP }];
+  units.forEach((u, i) => {
+    const cur = parts[parts.length - 1];
+    const need = u.h + (u.keepNext && units[i + 1] ? units[i + 1].h : 0);
+    if (cur.units.length && cur.h + need + PAD > maxPartH) {
+      const np = { units: [], h: TOP };
+      contUnits().forEach(cu => { np.units.push(cu); np.h += cu.h; });
+      np.units.push({ kind: 'sep', h: SEP_H }); np.h += SEP_H;
+      parts.push(np);
     }
-    let x = CARD_W - PAD;
-    for (const { label, res } of imgResults) {
-      const ratio = res.w && res.h ? (res.w / res.h) : 1;
-      const imgW = Math.min(IMG_H * ratio, 150) || 100;
-      x -= imgW;
-      try { ctx.drawImage(res.img, x, y, imgW, IMG_H); } catch(e) { console.warn('[tower-app] فشل رسم صورة عازل بسجل المعالجات', e); }
-      ctx.font = '11px Tahoma, Arial, sans-serif';
-      ctx.fillStyle = '#718096';
-      ctx.textAlign = 'center';
-      ctx.fillText(label, x + imgW/2, y + IMG_H + 13);
-      ctx.textAlign = 'right';
-      x -= 14;
-    }
-    y += IMG_H + 24;
-  }
-  drawImgRow(imgResults1, hasCircuit2 ? 'الدائرة الأولى' : '');
-  drawImgRow(imgResults2, 'الدائرة الثانية');
+    const p = parts[parts.length - 1]; p.units.push(u); p.h += u.h;
+  });
 
-  // JPEG بجودة متوسطة-منخفضة (0.5) لإبقاء حجم ملف الـ PDF صغيراً حتى مع عدد كبير من المعالجات
-  return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
+  const rendered = parts.map((p, idx) => {
+    const totalH = p.h + PAD;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(CARD_W * scale);
+    canvas.height = Math.ceil(totalH * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(scale, scale);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, CARD_W, totalH);
+    ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+    let y = TOP;
+    p.units.forEach(u => {
+      if (u.kind === 'text') {
+        ctx.font = u.font; ctx.fillStyle = u.color; ctx.textAlign = 'right';
+        if (u.text !== '') ctx.fillText(u.text, CARD_W - PAD, y);
+        y += u.h;
+      } else if (u.kind === 'sep') {
+        ctx.strokeStyle = '#E2E8F0'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(PAD, y - 8); ctx.lineTo(CARD_W - PAD, y - 8); ctx.stroke();
+        y += u.h;
+      } else {
+        if (u.label) { ctx.font = 'bold 12px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#4A5568'; ctx.textAlign = 'right'; ctx.fillText(u.label, CARD_W - PAD, y); y += circuitLabelH; }
+        let x = CARD_W - PAD;
+        for (const { label, res } of u.imgs) {
+          const ratio = res.w && res.h ? (res.w / res.h) : 1;
+          const imgW = Math.min(IMG_H * ratio, 150) || 100;
+          x -= imgW;
+          try { ctx.drawImage(res.img, x, y, imgW, IMG_H); } catch(e) { console.warn('[tower-app] فشل رسم صورة عازل بسجل المعالجات', e); }
+          ctx.font = '11px Tahoma, Arial, sans-serif'; ctx.fillStyle = '#718096'; ctx.textAlign = 'center';
+          ctx.fillText(label, x + imgW/2, y + IMG_H + 13); ctx.textAlign = 'right';
+          x -= 14;
+        }
+        y += IMG_H + 24;
+      }
+    });
+    // JPEG بجودة متوسطة-منخفضة (0.5) لإبقاء حجم ملف الـ PDF صغيراً حتى مع عدد كبير من المعالجات
+    return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH, part: idx + 1, partCount: parts.length, seq };
+  });
+  return Object.assign({}, rendered[0], { parts: rendered });
 }
 
 async function exportDepLogPDF() {
@@ -5821,20 +5904,21 @@ async function exportDepLogPDF() {
     const marginX = 30, marginTop = 50, marginBottom = 26;
     let y = marginTop;
 
-    doc.setFontSize(13);
-    doc.text('Treatments Log Report', pageW/2, 26, { align: 'center' });
-    doc.setFontSize(9);
-    doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, 38, { align: 'center' });
+    pdfDrawArabicTitle(doc, pageW, marginX, 'سجل المعالجات');
 
+    const drawW = pageW - marginX*2;
+    // أقصى ارتفاع لجزء بطاقة (بكسل-بطاقة) من مساحة الصفحة الفعلية بعد الهوامش وفاصل البطاقات وعرض الرسم
+    const maxPartH = Math.floor((pageH - marginTop - marginBottom - 8) / (drawW / 760));
     for (let i = 0; i < rows.length; i++) {
       const t = rows[i];
-      const card = await buildTreatLogRecordCanvas(t);
-      const drawW = pageW - marginX*2;
-      const drawH = card.h * (drawW / card.w);
-      // لا نقفز لصفحة جديدة إلا لو فيه محتوى مرسوم أصلاً بالصفحة الحالية (يمنع صفحة أولى فارغة)
-      if (y > marginTop && y + drawH > pageH - marginBottom) { doc.addPage(); y = marginTop; }
-      doc.addImage(card.dataUrl, 'JPEG', marginX, y, drawW, drawH);
-      y += drawH + 8;
+      const card = await buildTreatLogRecordCanvas(t, { seq: i + 1, maxPartH }); // ترقيم التصدير فقط: رقم واحد لكل أجزاء العملية
+      for (const part of (card.parts || [card])) { // كل الأجزاء تُرسم (لا الاكتفاء بالأول)
+        const drawH = part.h * (drawW / part.w);
+        // لا نقفز لصفحة جديدة إلا لو فيه محتوى مرسوم أصلاً بالصفحة الحالية (يمنع صفحة أولى فارغة)
+        if (y > marginTop && y + drawH > pageH - marginBottom) { doc.addPage(); y = marginTop; }
+        doc.addImage(part.dataUrl, 'JPEG', marginX, y, drawW, drawH);
+        y += drawH + 8;
+      }
     }
 
     const blob = doc.output('blob');
@@ -5854,10 +5938,11 @@ async function exportDepLogExcel() {
   try {
     await ensureExcelJSLoaded(); // Lazy load: يضمن اكتمال تحميل ExcelJS قبل الاستخدام
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('سجل المعالجات', { views: [{ rightToLeft: true }] });
-    ws.columns = [{ width: 30 },{ width: 12 },{ width: 16 },{ width: 20 },{ width: 45 }];
+    // صفحة من اليمين لليسار + تثبيت صف الترويسة. لا نحدد ارتفاع صفوف (التفاف النص يترك الارتفاع للبرنامج فلا يُخفى محتوى)
+    const ws = wb.addWorksheet('سجل المعالجات', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
+    ws.columns = [{ width: 8 },{ width: 34 },{ width: 10 },{ width: 14 },{ width: 24 },{ width: 50 },{ width: 60 }];
 
-    const headers = ['اسم الخط', 'رقم البرج', 'تاريخ المعالجة', 'المعالج', 'العناصر المعالجة'];
+    const headers = ['تسلسل', 'اسم الخط', 'رقم البرج', 'تاريخ المعالجة', 'المعالج', 'العناصر المعالجة', 'الملاحظات'];
     headers.forEach((label, i) => {
       const cell = ws.getCell(1, i + 1);
       cell.value = label;
@@ -5868,16 +5953,19 @@ async function exportDepLogExcel() {
     rows.forEach((t, rIdx) => {
       const rowNum = rIdx + 2;
       const values = [
+        rIdx + 1, // تسلسل العملية (نفس ترقيم PDF)
         t.line_name || '',
         t.tower_number || '',
-        t.treatment_date || '',
+        t.treatment_date || '', // نص YYYY-MM-DD كما كان
         t.treated_by || '',
-        (t.items_treated || []).map(it => it.label).join('، ')
+        (t.items_treated || []).map(it => it.label).join('، '),
+        treatmentDisplayModel(t).notes // الملاحظات كاملة بأسطرها (العمود دائماً موجود حتى لو فارغاً)
       ];
       values.forEach((val, ci) => {
         const cell = ws.getCell(rowNum, ci + 1);
         cell.value = val;
-        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: ci === 4 };
+        const isText = (ci === 1 || ci === 4 || ci === 5 || ci === 6); // الخط والمنفّذ والعناصر والملاحظات: يمين + التفاف
+        cell.alignment = isText ? { horizontal: 'right', vertical: 'top', wrapText: true } : { horizontal: 'center', vertical: 'top' };
       });
     });
 
@@ -8249,6 +8337,18 @@ function makeBar(pct, color, lbl) {
   return '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;background:#ecf0f1;border-radius:10px;height:18px;overflow:hidden"><div style="width:' + pct + '%;background:' + color + ';height:100%;border-radius:10px"></div></div><div style="min-width:90px;text-align:right;font-weight:700;color:' + color + ';font-size:13px">' + pct + '% — ' + lbl + '</div></div>';
 }
 
+// v333: كتلة الحالة الكهربائية لدائرة واحدة. c = عنصر من health.circuits. النتيجة null تُعرض «لا يوجد تقييم مكتمل» (لا 0 ولا 100).
+function renderElectricalCircuitBlock(label, c, getColor, getLbl) {
+  const bar = (c.score == null)
+    ? '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;background:#ecf0f1;border-radius:10px;height:18px"></div><div style="min-width:90px;text-align:right;font-weight:700;color:#7f8c8d;font-size:13px">لا يوجد تقييم مكتمل</div></div>'
+    : makeBar(c.score, getColor(c.score), getLbl(c.score));
+  let note = 'النسبة محسوبة من ' + c.complete + ' أبراج مكتملة من أصل ' + c.inspected + ' برج مكشوف';
+  if (c.incomplete > 0) note += ' — ' + c.incomplete + ' برج غير مكتمل التقييم';
+  if (c.inferred > 0) note += ' — ' + c.inferred + ' برج نُسبت درجة أسلاكه إلى هذه الدائرة بالاستدلال من الوصف';
+  return '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">' + label + '</div>' + bar +
+    '<div style="font-size:11px;color:#7f8c8d;margin-top:3px">' + note + '</div></div>';
+}
+
 function calcLineHealth(lineName) {
   const allRec = JSON.parse(localStorage.getItem('inspections_cache') || '[]');
   const rec = allRec.filter(r => r.line_name === lineName);
@@ -8287,13 +8387,16 @@ function renderLinesStatus() {
     const getWashLbl = pct => pct>=90?'نظيف':pct>=60?'يحتاج متابعة':'يحتاج غسل';
     if (!health) {
       badge = '<span style="background:#95a5a6;color:white;padding:3px 10px;border-radius:20px;font-size:11px">لم يتم الكشف</span>';
-      elBar = makeBar(0, '#95a5a6', 'لم يتم الكشف');
+      elBar = '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الكهربائية</div>' + makeBar(0, '#95a5a6', 'لم يتم الكشف') + '</div>';
       mBar = makeBar(0, '#95a5a6', 'لم يتم الكشف');
       washBar = makeBar(0, '#95a5a6', 'لم يتم الكشف');
     } else {
       const cov = Math.round(health.coverage*100);
       badge = cov>=95 ? '<span style="background:#1e8449;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف بالكامل</span>' : '<span style="background:#2980b9;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف (' + cov + '%)</span>';
-      elBar = makeBar(health.electricalScore, getColor(health.electricalScore), getLbl(health.electricalScore));
+      elBar = health.isDouble
+        ? renderElectricalCircuitBlock('الحالة الكهربائية — الدائرة الأولى', health.circuits[0], getColor, getLbl) +
+          renderElectricalCircuitBlock('الحالة الكهربائية — الدائرة الثانية', health.circuits[1], getColor, getLbl)
+        : renderElectricalCircuitBlock('الحالة الكهربائية', health.circuits[0], getColor, getLbl);
       mBar = makeBar(health.mechanicalScore, getColor(health.mechanicalScore), getLbl(health.mechanicalScore));
       // حساب مؤشر النظافة: نسبة الأبراج النظيفة
       const recs = lineName ? getLatestRecordsPerTower(lineName) : [];
@@ -8307,11 +8410,14 @@ function renderLinesStatus() {
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">' +
       '<div' + clickAttr + ' style="font-weight:700;font-size:14px;color:#1a5276;' + (lineName?'text-decoration:underline;':'') + '">' + l.name + (lineName?' 🔍':'') + '</div>' +
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:' + vc + ';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">' + l.voltage + ' ك.ف</span>' + badge + '</div></div>' +
-      '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الكهربائية</div>' + elBar + '</div>' +
+      elBar +
       '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الميكانيكية</div>' + mBar + '</div>' +
       '<div><div style="font-size:12px;color:#555;margin-bottom:4px">💧 نظافة العوازل</div>' + washBar + '</div></div>';
   });
-  body.innerHTML = html || '<div class="empty-state">لا توجد بيانات</div>';
+  // v333: المعالجات المحفوظة قد تكون قديمة بعد فشل التحديث — تنبيه صريح (العلم treatmentsLoadFailed الموجود)
+  const staleNote = (typeof treatmentsLoadFailed !== 'undefined' && treatmentsLoadFailed)
+    ? '<div style="color:#92400E;background:#FEF3C7;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px">⚠️ تعذّر تحديث سجل المعالجات — احتساب الأسلاك يعتمد على نسخة محفوظة قد تكون قديمة.</div>' : '';
+  body.innerHTML = staleNote + (html || '<div class="empty-state">لا توجد بيانات</div>');
 }
 
 // ========================
@@ -11510,7 +11616,7 @@ async function renderDepLog() {
     const currentLine = lineSel.value;
     const uniqueLines = [...new Set(treatmentsCache.map(t => t.line_name).filter(Boolean))].sort();
     lineSel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
-      uniqueLines.map(n => `<option value="${n}" ${n===currentLine?'selected':''}>${n}</option>`).join('');
+      uniqueLines.map(n => `<option value="${escapeHtml(n)}" ${n===currentLine?'selected':''}>${escapeHtml(n)}</option>`).join('');
   }
 
   const rows = getDepLogFiltered();
@@ -11521,11 +11627,12 @@ async function renderDepLog() {
 
   body.innerHTML = staleBanner + rows.map(t => {
     const items = t.items_treated||[];
+    const m = treatmentDisplayModel(t);
     const hasCircuit2 = !!(t.insulator_svg_r_2 || t.insulator_svg_s_2 || t.insulator_svg_t_2);
     return `<div class="dep-card" style="border-right-color:#48BB78">
       <div class="dep-card-header">
-        <div class="dep-card-title">✅ ${t.line_name} — برج ${t.tower_number}</div>
-        <div class="dep-card-meta">📅 ${t.treatment_date} | 👤 ${t.treated_by||'—'}</div>
+        <div class="dep-card-title" style="overflow-wrap:anywhere">✅ ${escapeHtml(m.line)} — برج ${escapeHtml(m.tower)}</div>
+        <div class="dep-card-meta" style="overflow-wrap:anywhere">📅 ${escapeHtml(m.date)} | 👤 ${escapeHtml(m.by||'—')}</div>
         ${(currentUser.role==='admin')?`<button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer;margin-left:6px" onclick="openTreatmentEditModal('${t.id}')">✏️ تعديل</button><button class="btn-sm btn-del" onclick="deleteTreatmentRecord('${t.id}')">🗑️ حذف</button>`:''}
       </div>
       ${hasCircuit2?'<div style="font-size:0.72rem;font-weight:700;color:#4A5568;margin-top:10px">الدائرة الأولى</div>':''}
@@ -11540,7 +11647,8 @@ async function renderDepLog() {
         ${t.insulator_svg_s_2?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">S</div>${t.insulator_svg_s_2}</div>`:''}
         ${t.insulator_svg_t_2?`<div style="text-align:center"><div style="font-size:0.72rem;color:#718096;margin-bottom:4px">T</div>${t.insulator_svg_t_2}</div>`:''}
       </div>`:''}
-      ${items.length?`<div class="dep-items" style="margin-top:8px">${items.map(i=>`<span class="dep-item fixed">✅ ${i.label}</span>`).join('')}</div>`:''}
+      ${items.length?`<div class="dep-items" style="margin-top:8px">${items.map(i=>`<span class="dep-item fixed">✅ ${escapeHtml(i && i.label)}</span>`).join('')}</div>`:''}
+      ${m.notes?`<div class="dep-notes" style="margin-top:8px;font-size:0.82rem;color:#4A5568;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">📝 ${escapeHtml(m.notes)}</div>`:''}
     </div>`;
   }).join('');
 }
@@ -11550,12 +11658,12 @@ function getDepLogFiltered() {
   const line = document.getElementById('depLogFilterLine')?.value || '';
   const from = document.getElementById('depLogFilterFrom')?.value || '';
   const to = document.getElementById('depLogFilterTo')?.value || '';
-  return treatmentsCache.filter(t => {
+  return sortTreatmentsByDateDesc(treatmentsCache.filter(t => {
     const mLine = !line || t.line_name === line;
     const mFrom = !from || (t.treatment_date||'') >= from;
     const mTo = !to || (t.treatment_date||'') <= to;
     return mLine && mFrom && mTo;
-  });
+  }));
 }
 
 // ===== حساب قيمة السلسلة الواحدة من العوازل =====
@@ -11597,106 +11705,169 @@ function mechSevScore(sev, maxVal) {
   return maxVal;
 }
 
+// ===== v333: الصحة الكهربائية لكل دائرة بصورة مستقلة =====
+// الأوزان لكل دائرة: عوازلها 60 + أسلاكها 30 (10/طور) + الأرضي المشترك 10. الميكانيكية مشتركة وغير متأثرة.
+const WIRE_SEV_VALID = ['ok', 'simple', 'moderate', 'below_critical', 'critical'];
+const WIRE_TEXT_SCORE = { 'سليم': 10, 'ترهل': 8, 'تلف بسيط': 6, 'تلف شديد': 3, 'منقطع': 0 };
+function _wTxt(v) { return v == null ? '' : String(v).trim(); }
+function _wDamaged(v) { const t = _wTxt(v); return t !== '' && t !== 'سليم'; }
+
+// v333-R: صحة بنية حالة العوازل وفق صيغة التطبيق الفعلية: كائن فيه R وS وT، كل منها مصفوفة غير فارغة عناصرها true/false.
+// لا يُفرض عدد ثابت للوحدات (يختلف بحسب السلاسل والبلاستك/الخزف). أي نقص أو صيغة غير صالحة = بيانات غير مكتملة.
+function isValidInsulatorStateShape(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
+  return ['R', 'S', 'T'].every(ph => Array.isArray(state[ph]) && state[ph].length > 0 && state[ph].every(v => typeof v === 'boolean'));
+}
+
+// نقاط عوازل دائرة واحدة (من 60). تعيد null إن كانت بيانات العوازل مفقودة أو غير مقروءة أو ناقصة (للدائرتين) — لا تُفترض سليمة.
+function calcCircuitInsulatorScore(r, circuit, chainsPerPhase, chainVal) {
+  const c2 = circuit === 2;
+  try {
+    const stateRaw = c2 ? r.insulator_state_2 : r.insulator_state;
+    const cycleRaw = c2 ? r.insulator_cycle_2 : r.insulator_cycle;
+    const typesRaw = c2 ? r.insulator_chain_types_2 : r.insulator_chain_types;
+    const state = stateRaw ? safeParseJSON(stateRaw) : null;
+    if (!isValidInsulatorStateShape(state)) return null;
+    const cycle = cycleRaw ? safeParseJSON(cycleRaw) : null;
+    const cTypes = typesRaw ? safeParseJSON(typesRaw) : null;
+    let insScore = 0;
+    ['R', 'S', 'T'].forEach(phase => {
+      const ps = state[phase];
+      const cy = cycle ? (cycle[phase] || []) : [];
+      const total = ps.length;
+      const perChain = Math.ceil(total / chainsPerPhase);
+      let phaseScore = 0;
+      for (let c = 0; c < chainsPerPhase; c++) {
+        const isSingleUnit = cTypes && cTypes[phase] && (cTypes[phase][c] === 'plastic' || cTypes[phase][c] === 'ceramic');
+        if (isSingleUnit) {
+          // البلاستك/الخزف: إما سليم = chainVal كامل أو متضرر = 0
+          const damaged = ps[c * perChain] === true;
+          phaseScore += damaged ? 0 : chainVal;
+        } else {
+          const start = c * perChain;
+          const end = Math.min(start + perChain, total);
+          const damaged = [];
+          for (let i = start; i < end; i++) {
+            const treated = cy[i] === true;
+            damaged.push(ps[i] && !treated);
+          }
+          phaseScore += calcChainScore(damaged, chainVal);
+        }
+      }
+      insScore += phaseScore;
+    });
+    return insScore;
+  } catch (e) { return null; }
+}
+
+// نقاط أسلاك دائرة واحدة (من 30). الأولوية: معالجة الطور ← درجة الخطورة الصالحة ← وصف الطور.
+// v333-R: غياب الدرجة والوصف لا يثبت السلامة؛ السلامة تثبت فقط بـ: درجة ok، أو وصف سليم/معروف لطور من الدائرة، أو معالجة،
+// أو تحديد المستخدم (wires_circuit) أن الضرر يخص الدائرة الأخرى. غير ذلك ⇒ { score:null, reason }.
+function calcCircuitWiresScore(r, circuit, isDouble) {
+  const c2 = circuit === 2;
+  const sfx = c2 ? '_c2' : '';
+  const own = ['r', 's', 't'].map(p => r['wires_' + p + '1' + sfx]);
+  const treated = ['r', 's', 't'].map(p => r.id != null && isTreatedInDB(r.id, 'wire_' + p + '1' + sfx));
+  const sev = _wTxt(r.sev_wires);
+  const sevValid = WIRE_SEV_VALID.includes(sev);
+  const dmg = own.map(_wDamaged);
+  const anyDmg = dmg.some(Boolean);
+  let wc = _wTxt(r.wires_circuit);
+  if (wc !== '1' && wc !== '2' && wc !== 'both') wc = '';
+
+  let attributed = true, inferred = false;
+  if (isDouble) {
+    if (wc) {
+      attributed = (wc === 'both') || (wc === String(circuit));
+      if (!attributed) {
+        // الدائرة غير المختارة وفيها وصف ضرر حيّ: تعارض — لا تُعرض سليمة بصمت ولا يُمحى الوصف
+        if (own.some((v, i) => _wDamaged(v) && !treated[i])) return { score: null, reason: 'conflict', inferred: false };
+        // المستخدم حدّد صراحة أن الضرر يخص الدائرة الأخرى ⇒ هذه الدائرة خارج الضرر
+        return { score: 30, reason: null, inferred: false };
+      }
+    } else if (sevValid && sev !== 'ok') {
+      // لا تحديد للدائرة: يُستدل من وصف الضرر الخاص بها فقط؛ لا تُنسب الدرجة بلا دليل (ولا تُعد سليمة بغياب الدليل)
+      if (anyDmg) { attributed = true; inferred = true; } else attributed = null;
+    }
+  }
+  // لا درجة صالحة: الوصف وحده يقرر، ويلزم وجود دليل من هذه الدائرة (وصف طور أو معالجة)
+  if (!sevValid && !own.some(v => _wTxt(v) !== '') && !treated.some(Boolean)) {
+    return { score: null, reason: sev !== '' ? 'invalid_severity' : 'no_data', inferred: false };
+  }
+
+  let pts = 0, reason = null;
+  for (let i = 0; i < 3; i++) {
+    if (treated[i]) { pts += 10; continue; }
+    if (sevValid) {
+      if (sev === 'ok') pts += 10;
+      else if (attributed === null) reason = 'unattributed';
+      else pts += (anyDmg && !dmg[i]) ? 10 : wireGroundScore(sev, 10);
+    } else {
+      const t = _wTxt(own[i]);
+      if (t === '') pts += 10;   // طور بلا نص بجوار وصف معروف لطور آخر من الدائرة نفسها
+      else if (WIRE_TEXT_SCORE[t] !== undefined) pts += WIRE_TEXT_SCORE[t];
+      else reason = 'free_text';
+    }
+  }
+  if (reason) return { score: null, reason, inferred };
+  return { score: pts, reason: null, inferred };
+}
+
 function calcLineHealthWithTreatments(lineName) {
   const rec = getLatestRecordsPerTower(lineName);
   if (!rec.length) return null;
   const towers = getLineTowers(lineName);
   const coverage = towers.length > 0 ? rec.length / towers.length : 0;
-
-  let totalElScore = 0, totalMScore = 0;
+  const acc = [1, 2].map(n => ({ n, sum: 0, done: 0, incomplete: 0, inspected: 0, inferred: 0, reasons: {} }));
+  let totalMScore = 0;
 
   rec.forEach(r => {
-    // ===== الحالة الكهربائية للبرج (من 100) =====
     const mode = getInsulatorMode(
       LINE_VOLTAGE[lineName] || 132,
       r.tower_type || '',
       lineName,
       r.tower_number
     );
-
-    // عدد السلاسل وقيمة كل سلسلة لكل طور
     // كل طور = 20 نقطة، السلاسل تقسّمها
     const chainsPerPhase = (mode === 'chain1_10') ? 1
       : (mode === 'chain2_10' || mode === 'chain2_12' || mode === 'v') ? 2
       : 4; // chain4_12 أو straight4
     const chainVal = Math.round(20 / chainsPerPhase); // 20، 10، أو 5
+    const isDouble = isDoubleCircuitLine(lineName, r.insulator_state_2);
+    const groundVal = wireGroundScore(r.sev_ground, 10); // الأرضي مشترك بين الدائرتين
 
-    // حساب نقاط العوازل (60 نقطة)
-    let insScore = 0;
-    try {
-      const state = r.insulator_state ? safeParseJSON(r.insulator_state) : null;
-      const cycle = r.insulator_cycle ? safeParseJSON(r.insulator_cycle) : null;
-      const cTypes = r.insulator_chain_types ? safeParseJSON(r.insulator_chain_types) : null;
-      if (state) {
-        ['R', 'S', 'T'].forEach(phase => {
-          const ps = state[phase] || [];
-          const cy = cycle ? (cycle[phase] || []) : [];
-          const total = ps.length;
-          if (total === 0) { insScore += 20; return; }
-
-          const perChain = Math.ceil(total / chainsPerPhase);
-          let phaseScore = 0;
-          for (let c = 0; c < chainsPerPhase; c++) {
-            const isSingleUnit = cTypes && cTypes[phase] && (cTypes[phase][c] === 'plastic' || cTypes[phase][c] === 'ceramic');
-            if (isSingleUnit) {
-              // البلاستك/الخزف: إما سليم = chainVal كامل أو متضرر = 0
-              const damaged = ps[c * perChain] === true;
-              phaseScore += damaged ? 0 : chainVal;
-            } else {
-              const start = c * perChain;
-              const end = Math.min(start + perChain, total);
-              const damaged = [];
-              for (let i = start; i < end; i++) {
-                const treated = cy[i] === true;
-                damaged.push(ps[i] && !treated);
-              }
-              phaseScore += calcChainScore(damaged, chainVal);
-            }
-          }
-          insScore += phaseScore;
-        });
-      } else {
-        insScore = 60;
+    (isDouble ? [1, 2] : [1]).forEach(n => {
+      const a = acc[n - 1];
+      a.inspected++;
+      const ins = calcCircuitInsulatorScore(r, n, chainsPerPhase, chainVal);
+      const w = calcCircuitWiresScore(r, n, isDouble);
+      if (w.inferred) a.inferred++;
+      if (ins === null || w.score === null) {
+        a.incomplete++;
+        const why = ins === null ? 'insulators_missing' : w.reason;
+        a.reasons[why] = (a.reasons[why] || 0) + 1;
+        return;
       }
-    } catch (e) { insScore = 60; }
-
-    // حساب نقاط الأسلاك (30 نقطة — كل طور 10)
-    const wireScore =
-      wireGroundScore(r.sev_wires, 10) + // نستخدم sev_wires كتقييم كلي للأسلاك
-      wireGroundScore(r.sev_wires, 10) +
-      wireGroundScore(r.sev_wires, 10);
-    // ملاحظة: الكود يخزن حالة كل سلك (r1,s1,t1) كنص — نستخدم sev_wires كتقييم موحّد
-    // إذا فيه قيم فردية نفصلها
-    let wireFinalScore = 0;
-    const wireFields = [r.wires_r1, r.wires_s1, r.wires_t1];
-    const wireMap = { 'سليم': 10, '': 10, 'ترهل': 8, 'تلف بسيط': 6, 'تلف شديد': 3, 'منقطع': 0 };
-    let hasWireData = false;
-    wireFields.forEach(w => {
-      if (w != null && w !== '') {
-        hasWireData = true;
-        wireFinalScore += wireMap[w] !== undefined ? wireMap[w] : 10;
-      } else {
-        wireFinalScore += 10;
-      }
+      a.sum += Math.min(100, ins + w.score + groundVal);
+      a.done++;
     });
 
-    // حساب نقاط الأرضي (10 نقطة)
-    const groundVal = wireGroundScore(r.sev_ground, 10);
-
-    const elScore = Math.min(100, insScore + wireFinalScore + groundVal);
-    totalElScore += elScore;
-
-    // ===== الحالة الميكانيكية للبرج (من 100) =====
+    // ===== الحالة الميكانيكية للبرج (من 100) — مشتركة، دون تغيير =====
     const ironScore = mechSevScore(r.sev_iron, 50);
     const foundScore = mechSevScore(r.sev_foundation, 50);
-    const mScore = Math.min(100, ironScore + foundScore);
-    totalMScore += mScore;
+    totalMScore += Math.min(100, ironScore + foundScore);
   });
 
-  const electricalScore = Math.min(100, Math.max(0, Math.round(totalElScore / rec.length)));
+  const isDoubleLine = isDoubleCircuitLine(lineName) || acc[1].inspected > 0;
+  const fin = a => ({
+    circuit: a.n,
+    score: a.done > 0 ? Math.min(100, Math.max(0, Math.round(a.sum / a.done))) : null, // null = لا يوجد تقييم مكتمل (لا 0 ولا 100)
+    complete: a.done, incomplete: a.incomplete, inspected: a.inspected, inferred: a.inferred, reasons: a.reasons
+  });
+  const circuits = isDoubleLine ? [fin(acc[0]), fin(acc[1])] : [fin(acc[0])];
   const mechanicalScore = Math.min(100, Math.max(0, Math.round(totalMScore / rec.length)));
-
-  return { coverage, electricalScore, mechanicalScore };
+  // للخط المزدوج لا توجد نسبة كهربائية مدمجة (electricalScore = null): الاستهلاك الصحيح عبر circuits
+  return { coverage, electricalScore: isDoubleLine ? null : circuits[0].score, mechanicalScore, isDouble: isDoubleLine, circuits };
 }
 // ========================
 // EMERGENCY DEPARTURES
@@ -12077,6 +12248,59 @@ function sortByLineThenTower(rows, towerField) {
     const lineCompare = (a.line_name||'').localeCompare(b.line_name||'', 'ar');
     if (lineCompare !== 0) return lineCompare;
     return (parseInt(a[towerField])||0) - (parseInt(b[towerField])||0);
+  });
+}
+
+// ===== ترتيب المعالجات (مشترك): سجل المغادرات + تصدير سجل المعالجات + التقرير الموحّد (records-reports.js يحمّل كسولاً بعد هذا الملف) =====
+// الأحدث بتاريخ المعالجة أولاً ← عند التعادل created_at تنازلياً ← عند التعادل id بترتيب ثابت (تنازلي). تاريخ مفقود/غير صالح بعد الصالحة.
+// كل الدوال ترتّب نسخة ولا تلمس المصفوفة الأصلية (treatmentsCache) ولا عناصرها، ولا تدمج ولا تحذف أي عملية.
+function _validTreatDate(v) {
+  if (typeof v !== 'string') return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/.exec(v.trim());
+  if (!m) return '';
+  const y = +m[1], mo = +m[2], d = +m[3];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return (dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d) ? m[1] + '-' + m[2] + '-' + m[3] : '';
+}
+function _treatTimeValue(v) {
+  const n = (typeof v === 'string' && v) ? Date.parse(v) : NaN;
+  return isNaN(n) ? null : n;
+}
+function _cmpIdDesc(a, b) {
+  const ha = a !== undefined && a !== null && a !== '', hb = b !== undefined && b !== null && b !== '';
+  if (ha !== hb) return ha ? -1 : 1; // له id قبل من بلا id
+  if (!ha) return 0;
+  const sa = String(a), sb = String(b);
+  if (/^\d+$/.test(sa) && /^\d+$/.test(sb)) { // أرقام: المقارنة بالطول بعد حذف الأصفار البادئة ثم نصياً (بلا فقد دقة للأرقام الكبيرة)
+    const na = sa.replace(/^0+(?=\d)/, ''), nb = sb.replace(/^0+(?=\d)/, '');
+    if (na.length !== nb.length) return nb.length - na.length;
+    return na < nb ? 1 : na > nb ? -1 : 0;
+  }
+  return sa < sb ? 1 : sa > sb ? -1 : 0;
+}
+function compareTreatmentsByDateDesc(a, b) {
+  const da = _validTreatDate(a.treatment_date), db = _validTreatDate(b.treatment_date);
+  if ((da !== '') !== (db !== '')) return da !== '' ? -1 : 1; // الصالح قبل المفقود/غير الصالح
+  if (da !== db) return da < db ? 1 : -1;
+  const ta = _treatTimeValue(a.created_at), tb = _treatTimeValue(b.created_at);
+  if ((ta !== null) !== (tb !== null)) return ta !== null ? -1 : 1;
+  if (ta !== tb) return tb - ta;
+  return _cmpIdDesc(a.id, b.id);
+}
+function sortTreatmentsByDateDesc(rows) {
+  return rows.slice().sort(compareTreatmentsByDateDesc);
+}
+// نفس ترتيب الخط ثم البرج الحالي (sortByLineThenTower)، وداخل الخط والبرج نفسه: ترتيب تاريخ المعالجة أعلاه
+// (عند تساوي رقم البرج عددياً مع اختلاف نصه، مثل 12 و12A، يُفصل بالنص كي لا تتداخل معالجات برجين مختلفين)
+function sortTreatmentsByLineTowerThenDate(rows) {
+  return rows.slice().sort((a, b) => {
+    const lineCompare = (a.line_name||'').localeCompare(b.line_name||'', 'ar');
+    if (lineCompare !== 0) return lineCompare;
+    const tn = (parseInt(a.tower_number)||0) - (parseInt(b.tower_number)||0);
+    if (tn !== 0) return tn;
+    const sa = String(a.tower_number == null ? '' : a.tower_number), sb = String(b.tower_number == null ? '' : b.tower_number);
+    if (sa !== sb) return sa < sb ? -1 : 1;
+    return compareTreatmentsByDateDesc(a, b);
   });
 }
 

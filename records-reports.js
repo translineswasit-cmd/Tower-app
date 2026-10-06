@@ -1,20 +1,95 @@
 
 // كاش خاص بالتقارير (لا يوجد كاش عام مسبق للاستمارات الرسمية بالتطبيق)
 let reportThermalFormsCache = [];
+let reportThermalFormsLoadFailed = false; // آخر تحديث لاستمارات الحراري فشل: الكاش (إن وُجد) قديم وغير مؤكَّد
+let _repThermalLoadSeq = 0;
+
+// ===== لقطة فلاتر التقرير + رموز التسلسل (v331) =====
+// كل عملية (قائمة الأبراج / العدّاد / التصدير) تأخذ لقطة مستقلة عن DOM قبل أول await وتعمل بها حتى النهاية؛ الطلبات القديمة لا تكتب نتيجتها.
+let _repTowersSeq = 0, _repCountSeq = 0, _repOpenSeq = 0;
+let _repTowersListState = 'idle'; // idle | loading | ready | failed — حالة قائمة «أبراج معينة»
+let _reportExportBusy = false;    // حارس واحد لكل عمليات PDF وExcel والتصدير من المركز
+
+function reportFilterSnapshot() {
+  const lines = getReportSelectedLines();
+  const cats = getReportSelectedCategories();
+  const modeEl = document.querySelector('input[name="repTowersMode"]:checked');
+  return {
+    lines: lines ? lines.slice() : null,
+    from: document.getElementById('repFrom').value,
+    to: document.getElementById('repTo').value,
+    types: getReportSelectedTypes().slice(),
+    categories: cats ? cats.slice() : null,
+    towersMode: modeEl ? modeEl.value : 'all',
+    towerFrom: parseFloat(document.getElementById('repTowerFrom').value),
+    towerTo: parseFloat(document.getElementById('repTowerTo').value),
+    specificTowers: new Set(Array.from(document.querySelectorAll('.repTowerChk:checked')).map(b => b.value))
+  };
+}
+function reportSnapshotKey(sn) { return JSON.stringify([sn.lines, sn.from, sn.to, sn.types, sn.categories, sn.towersMode, sn.towerFrom, sn.towerTo, [...sn.specificTowers].sort()]); }
+function reportListKey(sn) { return JSON.stringify([sn.lines, sn.from, sn.to, sn.types, sn.towersMode]); }
+// رقم التنقل الحالي (pageNavigationRequestSeq من index.html — يزيد في showPage) + هل صفحة المركز هي النشطة؟
+function _repNavSeq() { return typeof pageNavigationRequestSeq !== 'undefined' ? pageNavigationRequestSeq : 0; }
+function _repNavOk(nav) {
+  if (typeof pageNavigationRequestSeq === 'undefined') return true;
+  if (pageNavigationRequestSeq !== nav) return false; // غادر المستخدم (أو غادر وعاد): كتابات هذه العملية قديمة
+  const pg = document.getElementById('page-recordsHub');
+  if (pg && pg.classList && typeof pg.classList.contains === 'function' && !pg.classList.contains('active')) return false;
+  return true;
+}
+// تنبيه حالة استمارات الحراري الرسمية بعد فشل آخر تحديث (يُعرض ضمن رسائل التقدم قبل استعمال الكاش، وفي رسالة النجاح):
+// مع كاش سابق: تُستعمل آخر نسخة محفوظة؛ بلا كاش: الاستمارات غير متاحة ولا تُدرج (لا ندّعي وجود نسخة محفوظة). القراءات الحرارية الخام مصدر آخر غير متأثر.
+function reportThermalStaleNote(sn) {
+  if (!sn.types.includes('thermal') || !reportThermalFormsLoadFailed) return '';
+  return (reportThermalFormsCache || []).length
+    ? ' — ⚠️ بيانات الكشف الحراري لم تُحدَّث (فشل التحديث)، المعروض آخر نسخة محفوظة'
+    : ' — ⚠️ استمارات الكشف الحراري الرسمية غير متاحة بعد فشل التحديث ولن تُدرج بهذا التقرير';
+}
 async function loadReportThermalForms() {
+  // v331: فشل التحديث يُبقي الكاش السابق (لا يفرّغه) ويُرفع علم الفشل لينبّه العدّاد والتصدير أن البيانات لم تُحدَّث؛
+  // نجاح الجلب (حتى بقائمة فارغة) يستبدل الكاش ويصفّر العلم؛ استجابة قديمة تنتهي بعد أحدث لا تستبدل ولا تغيّر العلم.
+  const seq = ++_repThermalLoadSeq;
   try {
-    reportThermalFormsCache = await fetchAllPages('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
-  } catch (e) { reportThermalFormsCache = []; }
+    const rows = await fetchAllPages('thermal_official_forms?select=id,line_name,inspection_date,created_by,rows&order=inspection_date.desc');
+    if (seq !== _repThermalLoadSeq) return;
+    reportThermalFormsCache = rows;
+    reportThermalFormsLoadFailed = false;
+  } catch (e) {
+    if (seq !== _repThermalLoadSeq) return;
+    reportThermalFormsLoadFailed = true;
+  }
 }
 
 async function openReportsPage() {
+  const seq = ++_repOpenSeq;
+  const nav = _repNavSeq();
+  // أي قائمة أبراج/عدّاد جارٍ من جلسة سابقة صار قديماً
+  _repTowersSeq++; _repCountSeq++; _repTowersListState = 'idle';
+
+  // v331: تُصفَّر الفلاتر فوراً (قبل أي await) — فلا تمسح تهيئة قديمة متأخرة اختيارات المستخدم لاحقاً
+  document.getElementById('repFrom').value = '';
+  document.getElementById('repTo').value = '';
+  const allTowersRadio = document.querySelector('input[name="repTowersMode"][value="all"]');
+  if (allTowersRadio) allTowersRadio.checked = true; // حماية: لو تغيّرت بنية أزرار اختيار الأبراج مستقبلاً، لا نُسقط تهيئة الصفحة كلها
+  document.getElementById('repTowerFrom').value = '';
+  document.getElementById('repTowerTo').value = '';
+  document.getElementById('repCategoryAll').checked = true;
+  document.querySelectorAll('.repCatChk').forEach(cb => { cb.checked = false; cb.disabled = true; });
+  document.getElementById('repLinesAll').checked = true;
+  document.querySelectorAll('.repLineChk').forEach(cb => { cb.checked = false; });
+  document.getElementById('repLinesWrap').style.display = 'none';
+
   await Promise.all([
     loadFullRecordsCache(true).catch(()=>{}),
     loadTreatments().catch(()=>{}),
     loadReportThermalForms().catch(()=>{}),
     loadThermalArchive().catch(()=>{})
   ]);
+  // تهيئة أقدم من تهيئة أحدث، أو الصفحة غادرها المستخدم (أو غادر وعاد): لا نكتب شيئاً
+  if (seq !== _repOpenSeq || !_repNavOk(nav)) return;
 
+  // الخطوط التي اختارها المستخدم أثناء انتظار التحميل (إن وُجدت) تُحفظ عبر إعادة بناء القائمة
+  const pickedLines = new Set(Array.from(document.querySelectorAll('.repLineChk:checked')).map(cb => cb.value));
   const lineSet = new Set();
   (fullRecordsCache||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); });
   (treatmentsCache||[]).forEach(t => { if (t.line_name) lineSet.add(t.line_name); });
@@ -27,19 +102,12 @@ async function openReportsPage() {
       <input type="checkbox" class="repLineChk" value="${n.replace(/"/g,'&quot;')}" onchange="onReportLinesPick()">
       <span>${n}</span>
     </label>`).join('');
-  document.getElementById('repLinesAll').checked = true;
-  linesWrap.style.display = 'none';
+  let keptAny = false;
+  if (pickedLines.size) document.querySelectorAll('.repLineChk').forEach(cb => { if (pickedLines.has(cb.value)) { cb.checked = true; keptAny = true; } });
+  document.getElementById('repLinesAll').checked = !keptAny;
+  linesWrap.style.display = keptAny ? 'grid' : 'none';
 
-  document.getElementById('repFrom').value = '';
-  document.getElementById('repTo').value = '';
-  document.querySelector('input[name="repTowersMode"][value="all"]').checked = true;
-  document.getElementById('repTowerFrom').value = '';
-  document.getElementById('repTowerTo').value = '';
-  document.getElementById('repCategoryAll').checked = true;
-  document.querySelectorAll('.repCatChk').forEach(cb => { cb.checked = false; cb.disabled = true; });
-  // حماية: لو تغيّرت بنية أزرار اختيار الأبراج مستقبلاً، لا نُسقط تهيئة الصفحة كلها
-  const allTowersRadio = document.querySelector('input[name="repTowersMode"][value="all"]');
-  if (allTowersRadio) allTowersRadio.checked = true;
+  // الفلاتر الأخرى (تاريخ/تصنيف/نطاق/وضع الأبراج) لا تُصفَّر هنا: صُفّرت عند البدء، وما غيّره المستخدم بعدها يبقى
   onReportTowersModeChange();
 }
 
@@ -82,6 +150,7 @@ function getReportSelectedLines() {
 
 function onReportTowersModeChange() {
   const mode = document.querySelector('input[name="repTowersMode"]:checked').value;
+  _repTowersSeq++; // أي قائمة أبراج جارية صارت قديمة (حتى لو لم يبدأ طلب بديل، كالانتقال إلى «الكل»)
   document.getElementById('repTowersRangeWrap').style.display = mode === 'range' ? 'grid' : 'none';
   document.getElementById('repTowersSpecificWrap').style.display = mode === 'specific' ? '' : 'none';
   if (mode === 'specific') updateReportTowersList();
@@ -108,11 +177,12 @@ async function fetchInspectionsForReport(lines, from, to) {
   return (lines && lines.length > 1) ? rows.filter(r => lines.includes(r.line_name)) : rows;
 }
 
-async function getReportAvailableTowers() {
-  const lines = getReportSelectedLines(); // null = كل الخطوط
-  const from = document.getElementById('repFrom').value;
-  const to = document.getElementById('repTo').value;
-  const types = getReportSelectedTypes();
+async function getReportAvailableTowers(snap) {
+  snap = snap || reportFilterSnapshot();
+  const lines = snap.lines; // null = كل الخطوط
+  const from = snap.from;
+  const to = snap.to;
+  const types = snap.types;
   const towers = new Set();
   if (types.includes('inspection')) {
     const rows = await fetchInspectionsForReport(lines, from, to);
@@ -145,15 +215,45 @@ async function getReportAvailableTowers() {
 }
 
 async function updateReportTowersList() {
+  const seq = ++_repTowersSeq;
+  const nav = _repNavSeq();
   const wrap = document.getElementById('repTowersWrap');
+  _repTowersListState = 'loading';
   wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">⏳ جاري التحميل...</div>';
-  const towers = await getReportAvailableTowers();
-  if (!towers.length) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد أبراج مطابقة</div>'; return; }
-  wrap.innerHTML = towers.map(tn => `
+  updateReportResultCount(); // يعرض «جاري تحديث قائمة الأبراج» بدل عدّاد مؤقت مضلّل (المربعات غائبة أثناء التحميل)
+  const snap = reportFilterSnapshot();
+  const key = reportListKey(snap);
+  // النتيجة تُقبل فقط لو: لم يبدأ طلب أحدث، لم يتغير فلتر مؤثر ولا وضع الأبراج، ولم يغادر المستخدم الصفحة
+  const stillCurrent = () => seq === _repTowersSeq && _repNavOk(nav) && reportListKey(reportFilterSnapshot()) === key && snap.towersMode === 'specific';
+  try {
+    const towers = await getReportAvailableTowers(snap);
+    if (seq !== _repTowersSeq || !_repNavOk(nav)) return; // طلب أحدث/مغادرة: لا نكتب شيئاً (وبلا رسالة قديمة)
+    if (!stillCurrent()) { // تغيّر فلتر دون أن يبدأ طلب بديل: نعيد التحديث بدل ترك قائمة قديمة أو دوران دائم
+      if (document.querySelector('input[name="repTowersMode"]:checked').value === 'specific') updateReportTowersList();
+      return;
+    }
+    if (!towers.length) {
+      wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد أبراج مطابقة</div>';
+    } else {
+      wrap.innerHTML = towers.map(tn => `
     <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
       <input type="checkbox" class="repTowerChk" value="${tn}" checked onchange="updateReportResultCount()">
       <span>برج ${tn}</span>
     </label>`).join('');
+    }
+    _repTowersListState = 'ready';
+    updateReportResultCount(); // العدّاد يُحدَّث بعد نجاح القائمة فقط
+  } catch (e) {
+    console.warn('[tower-app] فشل تحميل قائمة أبراج التقرير', e);
+    if (seq !== _repTowersSeq || !_repNavOk(nav)) return; // فشل طلب قديم لا يغيّر النتيجة الحالية ولا يعرض رسالة قديمة
+    if (!stillCurrent()) { // أصبح الطلب قديماً بتغيّر الفلاتر (أو الوضع) دون طلب بديل: لا نكتب رسالة فشله، ونعيد التحديث بنفس سياسة مسار النجاح
+      if (document.querySelector('input[name="repTowersMode"]:checked').value === 'specific') updateReportTowersList();
+      return;
+    }
+    _repTowersListState = 'failed';
+    wrap.innerHTML = '<div style="font-size:0.8rem;color:#92400E;grid-column:1/-1">⚠️ تعذّر تحميل قائمة الأبراج — <button type="button" class="btn-sm" onclick="updateReportTowersList()">إعادة المحاولة</button></div>';
+    updateReportResultCount();
+  }
 }
 function toggleAllReportTowers() {
   const boxes = document.querySelectorAll('.repTowerChk');
@@ -164,12 +264,12 @@ function toggleAllReportTowers() {
 }
 
 // دالة تحقق موحّدة: هل رقم برج معيّن يمر فلتر الأبراج الحالي (كل / نطاق / معيّنة)؟
-function reportTowerPasses(towerNumber) {
-  const mode = document.querySelector('input[name="repTowersMode"]:checked').value;
+function reportTowerPasses(towerNumber, snap) {
+  const mode = snap ? snap.towersMode : document.querySelector('input[name="repTowersMode"]:checked').value;
   if (mode === 'all') return true;
   if (mode === 'range') {
-    const from = parseFloat(document.getElementById('repTowerFrom').value);
-    const to = parseFloat(document.getElementById('repTowerTo').value);
+    const from = snap ? snap.towerFrom : parseFloat(document.getElementById('repTowerFrom').value);
+    const to = snap ? snap.towerTo : parseFloat(document.getElementById('repTowerTo').value);
     const n = parseFloat(towerNumber);
     if (isNaN(n)) return false;
     if (!isNaN(from) && n < from) return false;
@@ -177,11 +277,12 @@ function reportTowerPasses(towerNumber) {
     return true;
   }
   // specific
-  const selected = new Set(Array.from(document.querySelectorAll('.repTowerChk:checked')).map(b => b.value));
+  const selected = snap ? snap.specificTowers : new Set(Array.from(document.querySelectorAll('.repTowerChk:checked')).map(b => b.value));
   return selected.has(String(towerNumber));
 }
 
 function onReportFilterChange() {
+  _repTowersSeq++; // تغيّر فلتر مؤثر: أي قائمة أبراج جارية صارت قديمة
   if (document.querySelector('input[name="repTowersMode"]:checked').value === 'specific') updateReportTowersList();
   updateReportResultCount();
 }
@@ -209,34 +310,39 @@ function dedupeLatestPerTowerDate(rows, dateField) {
   return [...map.values()];
 }
 
-async function getReportFilteredInspections() {
-  const lines = getReportSelectedLines(); // null = كل الخطوط
-  const from = document.getElementById('repFrom').value;
-  const to = document.getElementById('repTo').value;
+async function getReportFilteredInspections(snap) {
+  snap = snap || reportFilterSnapshot();
+  const lines = snap.lines; // null = كل الخطوط
+  const from = snap.from;
+  const to = snap.to;
   const rows = await fetchInspectionsForReport(lines, from, to);
-  const base = rows.filter(r => reportTowerPasses(r.tower_number));
+  const base = rows.filter(r => reportTowerPasses(r.tower_number, snap));
   // ملاحظة مهمة: لا نفلتر بالتصنيف هنا — كل برج مطابق للخط/التاريخ/نطاق الأبراج يظهر بالتقرير دائماً،
   // والتصنيف المختار يتحكم بس بشنو المعلومات تُعرض بكل بطاقة (سليم أو تفاصيل الضرر) — راجع buildReportInspectionCardCanvas
   return sortByLineThenTower(dedupeLatestPerTowerDate(base, 'inspection_date'), 'tower_number');
 }
-function getReportFilteredTreatments() {
-  const lines = getReportSelectedLines();
-  const from = document.getElementById('repFrom').value;
-  const to = document.getElementById('repTo').value;
-  const categories = getReportSelectedCategories();
+function getReportFilteredTreatments(snap) {
+  snap = snap || reportFilterSnapshot();
+  const lines = snap.lines;
+  const from = snap.from;
+  const to = snap.to;
+  const categories = snap.categories;
   const base = (treatmentsCache||[]).filter(t =>
     (!lines || lines.includes(t.line_name)) &&
     (!from || (t.treatment_date||'') >= from) &&
     (!to || (t.treatment_date||'') <= to) &&
-    reportTowerPasses(t.tower_number)
+    reportTowerPasses(t.tower_number, snap)
   );
-  const latest = dedupeLatestPerTowerDate(base, 'treatment_date');
-  return sortByLineThenTower(latest.filter(t => treatmentMatchesCategories(t, categories)), 'tower_number');
+  // كل عملية معالجة مستقلة تبقى بالتقرير: لا دمج حسب خط/برج/يوم هنا (كان يُسقط معالجات مختلفة لنفس البرج واليوم،
+  // وكان يسبق فلتر التصنيف فيُسقط المعالجة المطابقة للتصنيف). دمج الكشوف (dedupeLatestPerTowerDate) يبقى كما هو في getReportFilteredInspections.
+  // الترتيب: نفس الخط ثم البرج الحاليين، وداخل البرج الواحد تاريخ المعالجة تنازلياً (الدالة المشتركة من index.html — تُحمَّل قبل هذا الملف)
+  return sortTreatmentsByLineTowerThenDate(base.filter(t => treatmentMatchesCategories(t, categories)));
 }
-function getReportFilteredThermalForms() {
-  const lines = getReportSelectedLines();
-  const from = document.getElementById('repFrom').value;
-  const to = document.getElementById('repTo').value;
+function getReportFilteredThermalForms(snap) {
+  snap = snap || reportFilterSnapshot();
+  const lines = snap.lines;
+  const from = snap.from;
+  const to = snap.to;
   // التصنيف يُتجاهل هنا (متفق عليه) — الكشف الحراري بيانات حرارة بس، ماله علاقة بقواعد/حديد/عوازل
   // فلتر الأبراج يُطبَّق على مستوى الصفوف داخل كل استمارة (استمارة واحدة تغطي عدة أبراج)
   return (reportThermalFormsCache||[])
@@ -244,23 +350,24 @@ function getReportFilteredThermalForms() {
     .map(f => ({
       ...f,
       rows: (Array.isArray(f.rows) ? f.rows : [])
-        .filter(row => row.tower_number && reportTowerPasses(row.tower_number))
+        .filter(row => row.tower_number && reportTowerPasses(row.tower_number, snap))
         .sort((a,b) => (parseInt(a.tower_number)||0) - (parseInt(b.tower_number)||0))
     }))
     .filter(f => f.rows.length);
 }
 
 // القراءات الحرارية الخام (من شاشة "كشف حراري ← جديد") — مصدر منفصل عن الاستمارات الرسمية
-function getReportFilteredThermalRaw() {
-  const lines = getReportSelectedLines();
-  const from = document.getElementById('repFrom').value;
-  const to = document.getElementById('repTo').value;
+function getReportFilteredThermalRaw(snap) {
+  snap = snap || reportFilterSnapshot();
+  const lines = snap.lines;
+  const from = snap.from;
+  const to = snap.to;
   return (thermalRecords||[]).filter(r =>
     r.point_type === 'tower' &&
     (!lines || lines.includes(r.line_name)) &&
     (!from || (r.inspection_date||'') >= from) &&
     (!to || (r.inspection_date||'') <= to) &&
-    reportTowerPasses(r.tower_number)
+    reportTowerPasses(r.tower_number, snap)
   );
 }
 
@@ -339,21 +446,42 @@ async function buildThermalNotesCardCanvas(lineName, towerNumber, notes) {
 }
 
 async function updateReportResultCount() {
-  const types = getReportSelectedTypes();
+  const seq = ++_repCountSeq;
+  const nav = _repNavSeq();
   const el = document.getElementById('repResultCount');
-  el.textContent = '⏳ جاري الحساب...';
-  let parts = [];
-  if (types.includes('inspection')) parts.push(`📋 كشف: ${(await getReportFilteredInspections()).length}`);
-  if (types.includes('treatment')) parts.push(`🔧 معالجة: ${getReportFilteredTreatments().length}`);
-  if (types.includes('thermal')) {
-    // نحسب عدد الأبراج المشمولة (من المصدرين معاً: القراءات الخام + صفوف الاستمارات الرسمية)
-    // بدل عدد الاستمارات — لأن التقرير صار يعرض ملاحظة لكل برج لا جدول لكل استمارة
-    const towers = new Set();
-    getReportFilteredThermalRaw().forEach(r => towers.add(r.line_name + '||' + r.tower_number));
-    getReportFilteredThermalForms().forEach(f => (f.rows||[]).forEach(row => towers.add(f.line_name + '||' + row.tower_number)));
-    parts.push(`🌡️ كشف حراري: ${towers.size} برج`);
+  el.onclick = null;
+  const snap = reportFilterSnapshot();
+  const key = reportSnapshotKey(snap);
+  // «أبراج معينة»: لا عدّاد مؤقتاً مضلّلاً أثناء تحديث القائمة (المربعات غائبة فيبدو الاختيار صفراً) — يُحدَّث بعد نجاحها
+  if (snap.towersMode === 'specific' && _repTowersListState !== 'ready') {
+    if (_repTowersListState === 'failed') { el.textContent = '⚠️ تعذّر تحديث قائمة الأبراج — اضغط هنا لإعادة المحاولة'; el.onclick = () => updateReportTowersList(); }
+    else el.textContent = '⏳ جاري تحديث قائمة الأبراج...';
+    return;
   }
-  el.textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
+  const types = snap.types;
+  el.textContent = '⏳ جاري الحساب...';
+  try {
+    let parts = [];
+    if (types.includes('inspection')) parts.push(`📋 كشف: ${(await getReportFilteredInspections(snap)).length}`);
+    if (types.includes('treatment')) parts.push(`🔧 معالجة: ${getReportFilteredTreatments(snap).length}`);
+    if (types.includes('thermal')) {
+      // نحسب عدد الأبراج المشمولة (من المصدرين معاً: القراءات الخام + صفوف الاستمارات الرسمية)
+      // بدل عدد الاستمارات — لأن التقرير صار يعرض ملاحظة لكل برج لا جدول لكل استمارة
+      const towers = new Set();
+      getReportFilteredThermalRaw(snap).forEach(r => towers.add(r.line_name + '||' + r.tower_number));
+      getReportFilteredThermalForms(snap).forEach(f => (f.rows||[]).forEach(row => towers.add(f.line_name + '||' + row.tower_number)));
+      parts.push(`🌡️ كشف حراري: ${towers.size} برج` + (reportThermalFormsLoadFailed ? ((reportThermalFormsCache || []).length ? ' ⚠️ (استمارات الحراري لم تُحدَّث)' : ' ⚠️ (استمارات الحراري غير متاحة بعد فشل التحديث)') : ''));
+    }
+    if (seq !== _repCountSeq || !_repNavOk(nav)) return; // حساب أحدث بدأ، أو غادر المستخدم: لا نكتب نتيجة قديمة
+    if (reportSnapshotKey(reportFilterSnapshot()) !== key) { updateReportResultCount(); return; } // تغيّر فلتر دون طلب بديل: نعيد الحساب
+    el.textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
+  } catch (e) {
+    console.warn('[tower-app] فشل حساب عدّاد التقرير', e);
+    if (seq !== _repCountSeq || !_repNavOk(nav)) return; // فشل طلب قديم لا يظهر
+    if (reportSnapshotKey(reportFilterSnapshot()) !== key) { updateReportResultCount(); return; } // الطلب لم يعد مطابقاً للفلاتر الحالية: لا رسالة فشل قديمة، ونعيد الحساب كما بمسار النجاح
+    el.textContent = '⚠️ تعذّر حساب العدد — اضغط هنا لإعادة المحاولة';
+    el.onclick = () => updateReportResultCount();
+  }
 }
 
 // بطاقة كشف واحدة (كانفاس) — تعرض بس التصنيفات المختارة (أو كل شي لو "الكل")
@@ -389,7 +517,16 @@ async function buildReportInspectionCardCanvas(r, categories) {
 
   if (showAll || categories.includes('foundation')) addCat('🧱 قواعد البرج', r.tower_foundations, r.sev_foundation);
   if (showAll || categories.includes('iron')) { addCat('🔩 تقاطعات الحديد', r.iron_intersections, r.sev_iron); addCat('🔩 ملحقات البرج', r.tower_attachments, r.sev_iron); }
-  if (showAll || categories.includes('wires')) { addCat('〰️ أسلاك R', r.wires_r1, r.sev_wires); addCat('〰️ أسلاك S', r.wires_s1, r.sev_wires); addCat('〰️ أسلاك T', r.wires_t1, r.sev_wires); }
+  if (showAll || categories.includes('wires')) {
+    addCat('〰️ أسلاك R', r.wires_r1, r.sev_wires); addCat('〰️ أسلاك S', r.wires_s1, r.sev_wires); addCat('〰️ أسلاك T', r.wires_t1, r.sev_wires);
+    // أسلاك الدائرة الثانية بتسمية صريحة. تظهر لخط مزدوج، أو لو يوجد وصف محفوظ غير فارغ لها (حتى لو غاب insulator_state_2 أو لم يُعرَّف الخط كمزدوج).
+    // حقل غائب (null/undefined) لا يُعدّ "سليم": لا نخترع حالة، فيُحذف سطره. والفارغ/«سليم» المحفوظ يُعامَل كالدائرة الأولى.
+    const c2Wires = [['R', r.wires_r1_c2], ['S', r.wires_s1_c2], ['T', r.wires_t1_c2]];
+    const hasC2WireText = c2Wires.some(([, v]) => v != null && String(v).trim() !== '');
+    if (isDoubleCircuitLine(r.line_name, r.insulator_state_2) || hasC2WireText) {
+      c2Wires.forEach(([ph, v]) => { if (v != null) addCat(`〰️ أسلاك ${ph} (الدائرة الثانية)`, v, r.sev_wires); });
+    }
+  }
   if (showAll || categories.includes('ground')) { addCat('🌍 الأرضي 1', r.ground_1, r.sev_ground); addCat('🌍 الأرضي 2', r.ground_2, r.sev_ground); }
   // ملاحظة: لا يوجد حقل fire_causes منفصل محفوظ فعلياً بقاعدة البيانات (fire_causes_notes هو الحقل الحقيقي الوحيد) —
   // الإشارة القديمة لـr.fire_causes كانت دائماً فارغة (مرجع لحقل غير موجود)، فما كانت تظهر أي قيمة إطلاقاً
@@ -508,7 +645,7 @@ const REPORT_CATEGORY_EXPORT_COLUMN_LABELS = {
   foundation: ['قواعد البرج'],
   iron: ['تقاطعات الحديد', 'ملحقات البرج'],
   insulator: ['عوازل الدائرة الأولى R', 'عوازل الدائرة الأولى S', 'عوازل الدائرة الأولى T', 'عوازل الدائرة الثانية R', 'عوازل الدائرة الثانية S', 'عوازل الدائرة الثانية T'],
-  wires: ['أسلاك R', 'أسلاك S', 'أسلاك T'],
+  wires: ['أسلاك R', 'أسلاك S', 'أسلاك T', 'أسلاك R (الدائرة الثانية)', 'أسلاك S (الدائرة الثانية)', 'أسلاك T (الدائرة الثانية)'],
   ground: ['الأرضي 1', 'الأرضي 2'],
   fire: ['مسببات الحرائق'],
   road: ['وجود طريق', 'ملاحظات الطريق']
@@ -522,23 +659,62 @@ function getReportExcelColumns(categories) {
   return EXPORT_COLUMNS.filter(c => labels.has(c.label));
 }
 
-async function exportUnifiedReportExcel() {
-  const types = getReportSelectedTypes();
+// ===== حارس التصدير المشترك (v331) =====
+// واحد لكل PDF وExcel والتصدير من المركز: الضغط الثاني لا يبدأ عملاً جديداً. يُحرَّر بـfinally بعد النجاح أو الفشل أو الخروج المبكر.
+async function runReportExport(core) {
+  _reportExportBusy = true;
+  try { await core(); }
+  catch (e) { console.error('[tower-app] فشل غير متوقع بالتصدير', e); showToast('❌ تعذّر إكمال التصدير: ' + (e && e.message ? e.message : e), 'error'); }
+  finally { _reportExportBusy = false; }
+}
+function reportExportIsBusy() {
+  if (!_reportExportBusy) return false;
+  showToast('⏳ التصدير جارٍ — انتظر اكتماله', 'error');
+  return true;
+}
+// «أبراج معينة»: لا يبدأ التصدير والقائمة قيد التحديث أو فشل تحديثها (المربعات غائبة فيبدو الاختيار صفراً)
+function reportExportPreflight(snap) {
+  if (snap.towersMode === 'specific' && _repTowersListState !== 'ready') {
+    showToast(_repTowersListState === 'failed'
+      ? '⚠️ فشل تحديث قائمة الأبراج — أعد المحاولة (اضغط على سطر العدد) ثم صدّر'
+      : '⏳ قائمة الأبراج قيد التحديث — انتظر اكتمالها ثم أعد الضغط على التصدير', 'error');
+    return false;
+  }
+  return true;
+}
+// تصدير Excel: اللقطة تُؤخذ لحظة الضغط (قبل أي await) وتُستعمل لكل الأجزاء حتى لو تغيّرت الفلاتر بعدها
+function exportUnifiedReportExcel() {
+  if (reportExportIsBusy()) return Promise.resolve();
+  const snap = reportFilterSnapshot();
+  if (!reportExportPreflight(snap)) return Promise.resolve();
+  return runReportExport(() => _exportUnifiedReportExcelCore(snap));
+}
+async function _exportUnifiedReportExcelCore(snap) {
+  const types = snap.types;
   if (!types.length) { showToast('⚠️ اختر نوع بيانات واحد على الأقل', 'error'); return; }
-  const categories = getReportSelectedCategories();
-  showToast('⏳ جاري تجهيز البيانات...');
+  const categories = snap.categories;
+  showToast('⏳ جاري تجهيز البيانات...' + reportThermalStaleNote(snap)); // التنبيه قبل اختيار/استعمال كاش الحراري
 
-  const inspections = types.includes('inspection') ? await getReportFilteredInspections() : [];
-  const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
-  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
-  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
+  let inspections, treatments, thermalForms, thermalRaw;
+  try {
+    inspections = types.includes('inspection') ? await getReportFilteredInspections(snap) : [];
+  } catch (e) {
+    console.error('[tower-app] فشل جلب الكشوف للتقرير', e);
+    showToast('❌ تعذّر جلب بيانات الكشوف — تحقق من الاتصال وأعد المحاولة', 'error');
+    return;
+  }
+  treatments = types.includes('treatment') ? getReportFilteredTreatments(snap) : [];
+  thermalForms = types.includes('thermal') ? getReportFilteredThermalForms(snap) : [];
+  thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw(snap) : [];
 
   if (!inspections.length && !treatments.length && !thermalForms.length && !thermalRaw.length) {
     showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
     return;
   }
 
-  await ensureXLSXLoaded(); // Lazy load: يضمن اكتمال تحميل XLSX قبل الاستخدام
+  try { await ensureXLSXLoaded(); } // Lazy load: يضمن اكتمال تحميل XLSX قبل الاستخدام
+  catch (e) { console.error(e); showToast('❌ تعذّر تحميل مكتبة Excel — تحقق من الاتصال وأعد المحاولة', 'error'); return; }
+  try {
   const wb = XLSX.utils.book_new();
 
   if (inspections.length) {
@@ -547,14 +723,18 @@ async function exportUnifiedReportExcel() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'كشف');
   }
   if (treatments.length) {
-    const data = treatments.map(t => ({
+    const data = treatments.map((t, idx) => ({
+      'تسلسل': idx + 1, // نفس ترقيم PDF (المعالجات المختارة فقط، بترتيب التصدير)
       'اسم الخط': t.line_name,
       'رقم البرج': t.tower_number,
       'تاريخ المعالجة': t.treatment_date,
       'المعالج': t.treated_by || '',
-      'العناصر المعالَجة': (t.items_treated||[]).map(i => i.label).join('، ')
+      'العناصر المعالَجة': (t.items_treated||[]).map(i => i.label).join('، '),
+      'الملاحظات': treatmentDisplayModel(t).notes // كاملة بأسطرها، والعمود دائماً موجود
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'معالجات');
+    const wsTreat = XLSX.utils.json_to_sheet(data);
+    wsTreat['!cols'] = [{ wch: 8 }, { wch: 34 }, { wch: 10 }, { wch: 14 }, { wch: 24 }, { wch: 50 }, { wch: 60 }]; // عرض الأعمدة فقط: النسخة المجتمعية لا تدعم التفاف/محاذاة/RTL موثوقاً — لا ندّعيها
+    XLSX.utils.book_append_sheet(wb, wsTreat, 'معالجات');
   }
   if (thermalForms.length || thermalRaw.length) {
     const data = [];
@@ -593,25 +773,41 @@ async function exportUnifiedReportExcel() {
   }
 
   XLSX.writeFile(wb, 'تقرير_' + new Date().toISOString().split('T')[0] + '.xlsx');
-  showToast('✅ تم تصدير Excel');
+  showToast('✅ تم تصدير Excel' + reportThermalStaleNote(snap));
+  } catch (e) { console.error(e); showToast('❌ تعذّر إنشاء ملف Excel', 'error'); }
 }
 
-async function generateUnifiedReportPDF() {
-  const types = getReportSelectedTypes();
+// تصدير PDF: نفس الحارس واللقطة؛ المركز الموحّد (exportHubGroupNow) يمرّ على _generateUnifiedReportPDFCore مباشرة بلقطته الخاصة (بلا حارس مزدوج)
+function generateUnifiedReportPDF() {
+  if (reportExportIsBusy()) return Promise.resolve();
+  const snap = reportFilterSnapshot();
+  if (!reportExportPreflight(snap)) return Promise.resolve();
+  return runReportExport(() => _generateUnifiedReportPDFCore(snap));
+}
+async function _generateUnifiedReportPDFCore(snap) {
+  const types = snap.types;
   if (!types.length) { showToast('⚠️ اختر نوع بيانات واحد على الأقل', 'error'); return; }
-  const categories = getReportSelectedCategories();
+  const categories = snap.categories;
+  showToast('⏳ جاري تجهيز البيانات...' + reportThermalStaleNote(snap)); // التنبيه قبل اختيار/استعمال كاش الحراري (يشمل تصدير المجموعة من المركز)
 
-  const inspections = types.includes('inspection') ? await getReportFilteredInspections() : [];
-  const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
-  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
-  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
+  let inspections, treatments, thermalRaw, thermalForms;
+  try {
+    inspections = types.includes('inspection') ? await getReportFilteredInspections(snap) : [];
+  } catch (e) {
+    console.error('[tower-app] فشل جلب الكشوف للتقرير', e);
+    showToast('❌ تعذّر جلب بيانات الكشوف — تحقق من الاتصال وأعد المحاولة', 'error');
+    return;
+  }
+  treatments = types.includes('treatment') ? getReportFilteredTreatments(snap) : [];
+  thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw(snap) : [];
+  thermalForms = types.includes('thermal') ? getReportFilteredThermalForms(snap) : [];
 
   if (!inspections.length && !treatments.length && !thermalRaw.length && !thermalForms.length) {
     showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
     return;
   }
 
-  showToast('⏳ جاري تحضير التقرير...');
+  showToast('⏳ جاري تحضير التقرير...' + reportThermalStaleNote(snap));
 
   // قائمة موحّدة لكل (خط، برج) مذكور بأي من الأنواع المختارة — بدل أقسام منفصلة، كل برج يطلع
   // مرة وحدة وتحته كل بياناته بالترتيب: كشف ← معالجة ← ملاحظات الكشف الحراري (لو وُجدت)
@@ -627,8 +823,10 @@ async function generateUnifiedReportPDF() {
   thermalForms.forEach(f => (f.rows||[]).forEach(row => addTower(f.line_name, row.tower_number)));
   const towerList = sortByLineThenTower([...towerMap.values()], 'tower_number');
 
+  let stage = 'lib';
   try {
     await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
+    stage = 'draw';
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -649,11 +847,13 @@ async function generateUnifiedReportPDF() {
       y += drawH + 8;
     }
 
-    doc.setFontSize(13); doc.setTextColor(0,0,0);
-    doc.text('Unified Report', pageW/2, 26, { align: 'center' });
-    doc.setFontSize(9);
-    doc.text(new Date().toLocaleDateString('en-GB'), pageW/2, 38, { align: 'center' });
+    doc.setTextColor(0,0,0);
+    pdfDrawArabicTitle(doc, pageW, marginX, 'التقرير الموحّد'); // عنوان عربي عبر مسار الرسم العربي
     y = 50;
+    const drawW = pageW - marginX*2;
+    // أقصى ارتفاع لجزء بطاقة معالجة (بكسل-بطاقة) من مساحة الصفحة الفعلية بعد الهوامش وفاصل البطاقات وعرض الرسم
+    const maxTreatPartH = Math.floor((pageH - marginTop - marginBottom - 8) / (drawW / 760));
+    let treatSeq = 0; // ترقيم المعالجات فقط، متسلسل بلا فجوات بترتيب التصدير (لا ترقيم للكشوف أو الحراري)
 
     for (const { line_name, tower_number } of towerList) {
       const insForTower = inspections.filter(r => r.line_name === line_name && String(r.tower_number) === String(tower_number));
@@ -661,17 +861,22 @@ async function generateUnifiedReportPDF() {
       const thermalNotes = types.includes('thermal') ? getThermalNotesForTower(line_name, tower_number, thermalRaw, thermalForms) : [];
 
       for (const r of insForTower) { for (const card of await buildReportInspectionCardCanvas(r, categories)) await drawCard(card); }
-      for (const t of treatForTower) await drawCard(await buildTreatLogRecordCanvas(t));
+      for (const t of treatForTower) {
+        treatSeq++;
+        const tcard = await buildTreatLogRecordCanvas(t, { seq: treatSeq, maxPartH: maxTreatPartH });
+        for (const part of (tcard.parts || [tcard])) await drawCard(part); // كل أجزاء العملية، لا الأول فقط
+      }
       if (thermalNotes.length) await drawCard(await buildThermalNotesCardCanvas(line_name, tower_number, thermalNotes));
     }
 
     const blob = doc.output('blob');
     const filename = 'تقرير_' + new Date().toISOString().split('T')[0] + '.pdf';
+    stage = 'share';
     await shareOrDownloadFile(blob, filename, 'application/pdf');
-    showToast('✅ تم تجهيز التقرير');
+    showToast('✅ تم تجهيز التقرير' + reportThermalStaleNote(snap));
   } catch (err) {
     console.error(err);
-    showToast('❌ تعذر تجهيز التقرير', 'error');
+    showToast(stage === 'lib' ? '❌ تعذّر تحميل مكتبة PDF — تحقق من الاتصال وأعد المحاولة' : stage === 'share' ? '❌ تعذّر حفظ/مشاركة ملف PDF' : '❌ تعذر تجهيز التقرير', 'error');
   }
 }
 
@@ -801,7 +1006,7 @@ function renderHubDetail() {
 
   } else if (hubBrowseType === 'treat') {
     summary.innerHTML = `
-      <h3 style="margin-top:0">${g.line_name} — ${g.date}</h3>
+      <h3 style="margin-top:0;overflow-wrap:anywhere">${escapeHtml(g.line_name)} — ${escapeHtml(g.date)}</h3>
       <p style="font-size:0.85rem;color:#4A5568">🔧 عدد المعالجات: <b>${g.items.length}</b></p>
       <button class="btn btn-del" style="margin-top:10px" onclick="deleteWholeHubDate()">🗑️ حذف كل معالجات هذا التاريخ</button>
       <button class="btn btn-primary" style="margin-top:6px" onclick="exportHubGroupNow()">📄 تصدير هذا الكشف (PDF)</button>
@@ -809,10 +1014,11 @@ function renderHubDetail() {
     list.innerHTML = g.items.sort((a,b)=>(a.tower_number||0)-(b.tower_number||0)).map(t => `
       <div class="dep-card">
         <div class="dep-card-header">
-          <div class="dep-card-title">🗼 برج ${t.tower_number}</div>
-          <div class="dep-card-meta">👤 ${t.treated_by||'—'}</div>
+          <div class="dep-card-title" style="overflow-wrap:anywhere">🗼 برج ${escapeHtml(t.tower_number)}</div>
+          <div class="dep-card-meta" style="overflow-wrap:anywhere">👤 ${escapeHtml(treatmentDisplayModel(t).by||'—')}</div>
         </div>
-        <div class="dep-items" style="margin-top:8px">${(t.items_treated||[]).map(i=>`<span class="dep-item fixed">✅ ${i.label}</span>`).join('')}</div>
+        <div class="dep-items" style="margin-top:8px">${(t.items_treated||[]).map(i=>`<span class="dep-item fixed">✅ ${escapeHtml(i && i.label)}</span>`).join('')}</div>
+        ${treatmentDisplayModel(t).notes?`<div class="dep-notes" style="margin-top:8px;font-size:0.82rem;color:#4A5568;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">📝 ${escapeHtml(treatmentDisplayModel(t).notes)}</div>`:''}
         <div style="margin-top:8px;display:flex;gap:8px">
           ${(currentUser.role==='admin')?`<button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer" onclick="openTreatmentEditModal('${t.id}')">✏️ تعديل</button><button class="btn-sm btn-del" onclick="hubDeleteSingleTreatment('${t.id}')">🗑️ حذف</button>`:''}
         </div>
@@ -919,20 +1125,19 @@ async function deleteWholeHubDate() {
 
 // تصدير سريع لنفس الخط والتاريخ المعروضين حالياً — يهيّئ فلاتر قسم التصدير تلقائياً ثم يصدّر PDF
 async function exportHubGroupNow() {
-  showHubView('hubHomeView');
-  // نحدد بس هذا الخط بخانات الاختيار المتعددة (نلغي "الكل" ونعلّم خانة هذا الخط تحديداً)
-  document.getElementById('repLinesAll').checked = false;
-  document.getElementById('repLinesWrap').style.display = 'grid';
-  document.querySelectorAll('.repLineChk').forEach(cb => { cb.checked = (cb.value === hubSelectedLine); });
-  document.getElementById('repFrom').value = hubSelectedDate;
-  document.getElementById('repTo').value = hubSelectedDate;
+  // v331: تصدير المجموعة المعروضة كاملةً: لقطة برمجية من هوية المجموعة (خطها وتاريخها ونوعها) — الخط المحدد حصراً، اليوم المحدد،
+  // كل الأبراج، كل التصنيفات. لا تُقرأ فلاتر الصفحة (فلا يتسرّب تصنيف/نطاق من قسم آخر)، ولا تُغيَّر فلاتر الصفحة الظاهرة، ولا يُنقل المستخدم.
   // ترجمة صريحة بين تسميات المركز الموحّد وتسميات قسم التصدير — بدونها كان التصدير من قسم
   // المعالجات يفشل بصمت لأن 'treat' لا تطابق قيمة الـcheckbox 'treatment'
   const HUB_TYPE_TO_REPORT_TYPE = { visual: 'inspection', treat: 'treatment', thermal: 'thermal' };
   const wantedType = HUB_TYPE_TO_REPORT_TYPE[hubBrowseType];
-  document.querySelectorAll('.repTypeChk').forEach(cb => { cb.checked = (cb.value === wantedType); });
-  document.querySelector('input[name="repTowersMode"][value="all"]').checked = true;
-  onReportTowersModeChange();
-  await generateUnifiedReportPDF();
+  if (!hubSelectedLine || !hubSelectedDate || !wantedType) { // هوية ناقصة: لا نحوّلها إلى «كل الخطوط/كل التواريخ»
+    showToast('⚠️ تعذّر تحديد الكشف المطلوب تصديره — ارجع للقائمة وأعد اختيار الخط والتاريخ', 'error');
+    return;
+  }
+  if (reportExportIsBusy()) return;
+  const snap = { lines: [hubSelectedLine], from: hubSelectedDate, to: hubSelectedDate, types: [wantedType], categories: null,
+    towersMode: 'all', towerFrom: NaN, towerTo: NaN, specificTowers: new Set() };
+  await runReportExport(() => _generateUnifiedReportPDFCore(snap));
 }
 
