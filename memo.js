@@ -2,11 +2,12 @@
 // MEMO (مذكرة)
 // ========================
 let editingMemoId = null;
-// الرقم "الرسمي" الموثوق لجلسة تحرير المذكرة الحالية — يُضبَط فقط من generateNextMemoNumber() الناجحة
-// (مذكرة جديدة) أو من السجل المحمَّل فعلياً من السيرفر (تعديل مذكرة موجودة). saveMemo() تعتمد على
-// هذا المتغيّر، مو على قيمة حقل الـDOM مباشرة — يمنع اعتماد رقم غُيِّر يدوياً بالحقل (حتى لو عبر
-// أدوات المطوّر) كرقم رسمي بديل.
+// v335-C5r5: العدد "المعتمد" = الذي أكّده الخادم لهذه المذكرة (null = لم يُحدَّد بعد). لا يُعتمد في الطباعة/التصدير الرسمي إلا هو.
+// حقل العدد قابل للتعديل: الفارغ في مذكرة جديدة = تلقائي (يحدده الخادم عند الحفظ ضمن قفل الترقيم)، وأي رقم مكتوب = طلب يدوي صريح.
+// الرقم المقترح المعروض قبل الحفظ ليس حجزاً ولا يتحول إلى رقم يدوي إلا إذا كتبه المستخدم بنفسه.
 let memoOfficialNumber = null;
+let memoSuggestedNumber = null;
+let memoArchiveStale = { stale: false, at: null };
 let memoTableData = null; // مصفوفة ثنائية اختيارية، null = لا يوجد جدول
 
 function addMemoTable() {
@@ -98,34 +99,74 @@ function showMemoHome() {
   document.getElementById('memoArchiveView').style.display = 'none';
 }
 
+function memoDigits(v) {
+  return String(v == null ? '' : v).replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 1632)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 1776)).trim();
+}
+// نيّة العدد من حقل الشاشة: {mode:'auto'|'manual'|'keep', number?, error?}
+function memoNumberIntent() {
+  const v = memoDigits(document.getElementById('memo_number').value);
+  const existing = !!editingMemoId && memoOfficialNumber !== null;
+  if (existing) {
+    if (v === String(memoOfficialNumber)) return { mode: 'keep' };
+    if (v === '') return { error: 'اكتب رقماً للمذكرة أو أعد رقمها الحالي ' + memoOfficialNumber };
+  } else if (v === '') return { mode: 'auto' };
+  if (!/^[1-9][0-9]{0,14}$/.test(v)) return { error: 'العدد أرقام فقط (بدون أصفار بادئة أو رموز)' };
+  return { mode: 'manual', number: v };
+}
+function memoUpdateNumberHint() {
+  const el = document.getElementById('memoNumberHint'); if (!el) return;
+  const it = memoNumberIntent();
+  let h = '';
+  if (it.error) h = '<span style="color:#c0392b">⚠️ ' + it.error + '</span>';
+  else if (it.mode === 'auto') h = '🔢 <b>تلقائي</b> — يُحدِّد الخادم العدد النهائي عند الحفظ' + (memoSuggestedNumber ? ' (المقترح الآن ' + memoSuggestedNumber + '، وليس محجوزاً)' : ' (يُحدَّد عند الاتصال)');
+  else if (it.mode === 'manual') h = '✍️ <b>عدد يدوي صريح: ' + it.number + '</b> — يُحفظ كما هو إن كان متاحاً، وإلا يُرفض بدون تغيير أي عدد آخر ' + '<a href="#" onclick="memoSetAuto();return false" style="margin-right:8px">↺ تلقائي</a>';
+  else h = '🔒 العدد الحالي <b>' + memoOfficialNumber + '</b> — يبقى كما هو مع تعديل المحتوى، غيّره هنا فقط إن أردت تغييراً صريحاً';
+  el.style.color = '#4A5568'; el.innerHTML = h;
+}
+function memoSetAuto() { const f = document.getElementById('memo_number'); f.value = (editingMemoId && memoOfficialNumber !== null) ? String(memoOfficialNumber) : ''; memoUpdateNumberHint(); }
+function memoSetStatus(html) { const el = document.getElementById('memoSaveStatus'); if (el) el.innerHTML = html || ''; }
+function ensureMemoNumberUI() {
+  const f = document.getElementById('memo_number');
+  f.readOnly = false; f.setAttribute('inputmode', 'numeric'); f.setAttribute('autocomplete', 'off');
+  f.oninput = memoUpdateNumberHint;
+  if (!document.getElementById('memoNumberHint')) {
+    const h = document.createElement('div'); h.id = 'memoNumberHint'; h.style.cssText = 'font-size:0.74rem;margin-top:4px;line-height:1.6';
+    f.parentNode.appendChild(h);
+  }
+  if (!document.getElementById('memoSaveStatus')) {
+    const st = document.createElement('div'); st.id = 'memoSaveStatus'; st.style.cssText = 'font-size:0.8rem;margin:8px 0';
+    const actions = document.querySelector('#memoNewView .form-actions'); if (actions) actions.parentNode.insertBefore(st, actions);
+  }
+}
+// العدد المسموح بظهوره في الطباعة/التصدير الرسمي: المعتمد من الخادم فقط (لا عدد مؤقت ولا مقترح ولا غير محفوظ)
+function memoGuardOfficialOutput() {
+  const v = memoDigits(document.getElementById('memo_number').value);
+  if (memoOfficialNumber === null) { showToast('⚠️ العدد لم يُحدَّد بعد — احفظ المذكرة (والعدد يُحدَّد بالخادم عند توفر الاتصال) ثم اطبع/صدّر', 'error'); return false; }
+  if (v !== String(memoOfficialNumber)) { showToast('⚠️ غيّرت العدد ولم يُحفظ التغيير بعد — احفظ أولاً ليُؤكَّد العدد', 'error'); return false; }
+  return true;
+}
+
 async function showMemoNew() {
   pushLevel(showMemoHome);
   document.getElementById('memoHomeView').style.display = 'none';
   document.getElementById('memoNewView').style.display = 'block';
   document.getElementById('memoArchiveView').style.display = 'none';
-  if (!editingMemoId) {
-    document.getElementById('memo_date').value = new Date().toISOString().split('T')[0];
-    const numberField = document.getElementById('memo_number');
-    numberField.readOnly = true; // النظام وحده يملأ هذا الحقل — يمنع التعديل اليدوي بالواجهة العادية
-    const nextNumber = await generateNextMemoNumber();
-    if (nextNumber !== null) {
-      memoOfficialNumber = nextNumber;
-      numberField.value = nextNumber;
-    } else {
-      memoOfficialNumber = null;
-      numberField.value = '';
-      showToast('⚠️ تعذر جلب عدد المذكرة — يتطلب اتصالاً بالإنترنت قبل الحفظ الرسمي', 'error');
-    }
-    document.getElementById('memo_to').value = 'الى / السيـد المـديـر الـمحتـرم...';
-    document.getElementById('memo_subject').value = '';
-    document.getElementById('memo_body').value = '';
-    document.getElementById('memo_sender_title').value = '';
-    document.getElementById('memo_sender_name').value = '';
-    memoTableData = null;
-    renderMemoTableEditor();
-    memoAttachments = null;
-    renderMemoAttachmentsEditor();
-  }
+  editingMemoId = null; memoOfficialNumber = null;       // «مذكرة جديدة» تبدأ مذكرة جديدة دائماً (سابقاً: يبقى معرّف التعديل السابق)
+  document.getElementById('memo_date').value = new Date().toISOString().split('T')[0];
+  ensureMemoNumberUI(); memoSetStatus('');
+  document.getElementById('memo_number').value = '';
+  document.getElementById('memo_to').value = 'الى / السيـد المـديـر الـمحتـرم...';
+  document.getElementById('memo_subject').value = '';
+  document.getElementById('memo_body').value = '';
+  document.getElementById('memo_sender_title').value = '';
+  document.getElementById('memo_sender_name').value = '';
+  memoTableData = null;
+  renderMemoTableEditor();
+  memoAttachments = null;
+  renderMemoAttachmentsEditor();
+  memoSuggestedNumber = null; memoUpdateNumberHint();
+  memoSuggestedNumber = await generateNextMemoNumber();     // اقتراح فقط، يُعرض ولا يُحجز ولا يُملأ بالحقل
+  if (!editingMemoId) memoUpdateNumberHint();
 }
 
 function showMemoArchive() {
@@ -136,28 +177,16 @@ function showMemoArchive() {
   renderMemoArchive();
 }
 
-// يرجع الرقم التالي كنص عند نجاح فعلي (رقم صالح، أو '1' لو الجدول فارغ حقاً بنجاح حقيقي)،
-// أو null عند أي فشل حقيقي (شبكة/أوفلاين/HTTP/بيانات غير موثوقة) — لا نرجع '1' كتخمين عند الفشل،
-// لأن هذا يظهر كرقم رسمي وهمي بدون أي علاقة بالتسلسل الحقيقي بالسيرفر.
-// ملاحظة: هذا تسلسل من جهة العميل (client-side) وليس ضماناً ذرياً بين عدة أجهزة — الحل النهائي
-// القوي يحتاج تخصيص رقم ذرّي من جهة السيرفر (Server-side atomic allocation) لاحقاً.
+// اقتراح العدد التالي (أعلى عدد صالح محفوظ + 1) — للعرض فقط وليس حجزاً. null عند أي فشل/أوفلاين (لا رقم وهمي).
 async function generateNextMemoNumber() {
   try {
-    const res = await sbFetch('memos?select=memo_number&order=created_at.desc&limit=1');
-    if (!res.ok) return null; // فشل HTTP فعلي — لا نعتمد على أي بيانات مرفَقة
-    const list = await res.json();
-    if (!Array.isArray(list)) return null; // استجابة غير متوقعة/غير موثوقة
-    if (!list.length) return '1'; // نجاح حقيقي وجدول فارغ فعلاً — هذا رقم أول صحيح، مو تخمين
-    const n = parseInt(list[0].memo_number);
-    if (!isNaN(n)) return String(n + 1);
-    return null; // آخر قيمة مخزَّنة غير رقمية — ما نقدر نبني عليها رقماً موثوقاً
-  } catch (e) {
-    return null; // فشل شبكة/أوفلاين
-  }
+    const out = await csCall('app_memo_info');
+    if (out && out.ok === true && out.next != null) return String(out.next);
+  } catch (e) {}
+  return null;
 }
 
 async function saveMemo() {
-  const numberField = document.getElementById('memo_number');
   const date = document.getElementById('memo_date').value;
   const to = document.getElementById('memo_to').value;
   const subject = document.getElementById('memo_subject').value;
@@ -165,51 +194,55 @@ async function saveMemo() {
   const senderTitle = document.getElementById('memo_sender_title').value;
   const senderName = document.getElementById('memo_sender_name').value;
   if (!date || !body.trim()) { showToast('⚠️ اكمل التاريخ ومحتوى المذكرة', 'error'); return; }
-
-  // مصدر الرقم الرسمي الوحيد هو memoOfficialNumber (وليس قيمة حقل الـDOM مباشرة) — يمنع اعتماد
-  // رقم غُيِّر يدوياً (حتى عبر أدوات المطوّر) كرقم رسمي بديل، بغض النظر عن كون الحقل غير فارغ.
-  // مذكرة جديدة بلا رقم موثوق (فتحت أوفلاين مثلاً) — نحاول مرة وحدة نجيب العدد الحقيقي الآن (يغطي
-  // حالة "رجع الاتصال أثناء ما المستخدم يكتب"). لو فشلت المحاولة، نوقف بدون أي POST ولا نمسح شي
-  // كتبه المستخدم. تعديل مذكرة موجودة (editingMemoId) يحتفظ برقمه الأصلي الموثوق دائماً، بدون أي فحص هنا.
-  if (!editingMemoId && !memoOfficialNumber) {
-    const retryNumber = await generateNextMemoNumber();
-    if (retryNumber !== null) {
-      memoOfficialNumber = retryNumber;
-      numberField.value = retryNumber;
-    } else {
-      showToast('⚠️ لا يمكن حفظ المذكرة رسمياً قبل الحصول على العدد — اتصل بالإنترنت ثم حاول من جديد', 'error');
-      return;
-    }
+  const intent = memoNumberIntent();
+  if (intent.error) { showToast('⚠️ ' + intent.error, 'error'); memoUpdateNumberHint(); return; }
+  const payload = { memo_date: date, memo_to: to, subject: subject, content: body, sender_title: senderTitle, sender_name: senderName, table_data: memoTableData, attachments: memoAttachments, number_mode: intent.mode };
+  if (intent.mode === 'manual') payload.memo_number = intent.number;
+  // القيم كاملة + الهوية + نيّة العدد تُحفظ على الجهاز أولاً؛ فشل الحفظ = لا إرسال وتبقى الحقول. الهوية الدائمة تُثبَّت فوراً (حفظ ثانٍ يدمج بنفس المذكرة).
+  const sentDigits = memoDigits(document.getElementById('memo_number').value);
+  let myRef = null;
+  const r = await docqSubmit('memo', editingMemoId, payload, (ref) => { myRef = ref; editingMemoId = ref; });
+  if (!r.ok) {
+    memoSetStatus('<span style="color:#c0392b;font-weight:700">⛔ لم يُحفظ: ' + (r.reason === 'other_user' ? 'هذه المذكرة المعلّقة تخص مستخدماً آخر' : 'تعذّر الحفظ على الجهاز (الذاكرة ممتلئة)') + ' — لم يُرسل شيء وبقيت الحقول</span>');
+    showToast(r.reason === 'other_user' ? '⛔ هذه المذكرة المعلّقة تخص مستخدماً آخر على هذا الجهاز' : '⛔ تعذّر الحفظ على الجهاز — لم يُرسل شيء وبقيت الحقول', 'error');
+    return;
   }
-  const number = memoOfficialNumber;
-
-  const payload = { memo_number: number, memo_date: date, memo_to: to, subject: subject, content: body, sender_title: senderTitle, sender_name: senderName, table_data: memoTableData, attachments: memoAttachments, created_by: currentUser.full_name };
-  try {
-    if (editingMemoId) {
-      const res = await sbFetch(`memos?id=eq.${editingMemoId}`, { method: 'PATCH', body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error();
-      showToast('✅ تم تحديث المذكرة');
-    } else {
-      payload.client_uuid = genUUID();
-      const res = await sbFetch('memos?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error();
-      showToast('✅ تم حفظ المذكرة بالأرشيف');
-    }
-  } catch (e) { showToast('❌ تعذر حفظ المذكرة', 'error'); }
+  if (String(editingMemoId) !== String(myRef)) {          // انتقل المستخدم لمذكرة أخرى أثناء الانتظار: لا نلمس شاشته
+    showToast(r.state === 'confirmed' ? '✅ تم حفظ المذكرة السابقة (مؤكَّدة بالخادم)' : (r.state === 'rejected' ? '⛔ رفض الخادم المذكرة السابقة — بصفحة المعلّقة للمراجعة' : '📱 حُفظت المذكرة السابقة على الجهاز فقط'), r.state === 'rejected' ? 'error' : undefined);
+    return;
+  }
+  if (r.state === 'confirmed' && r.row) {
+    memoOfficialNumber = r.row.memo_number == null ? '' : String(r.row.memo_number);
+    if (memoDigits(document.getElementById('memo_number').value) === sentDigits) document.getElementById('memo_number').value = memoOfficialNumber;     // لم يغيّره المستخدم أثناء الإرسال
+    memoSetStatus(docqStatusHTML('confirmed') + ' — العدد: <b>' + memoOfficialNumber + '</b>');
+    showToast('✅ ' + (intent.mode === 'auto' ? 'تم حفظ المذكرة بالأرشيف — العدد ' + memoOfficialNumber : 'تم حفظ المذكرة بالأرشيف'));
+  } else if (r.state === 'rejected') {
+    memoSetStatus(docqStatusHTML('rejected', r.code));
+    showToast('⛔ ' + (DOCQ_MSG[r.code] || r.code), 'error');
+  } else {
+    memoSetStatus(docqStatusHTML('pending') + (intent.mode === 'auto' ? ' — العدد يُحدَّد عند المزامنة' : ''));
+    showToast('📱 حُفظت المذكرة على الجهاز فقط — لم تُؤكَّد بالخادم بعد');
+  }
+  memoUpdateNumberHint();
 }
 
 let memoArchiveCache = [];
 
 function renderMemoCards(list) {
   const body = document.getElementById('memoArchiveBody');
-  if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد نتائج</div>'; return; }
-  body.innerHTML = list.map(m => {
+  const banner = memoArchiveStale.stale ? docqStaleBanner(memoArchiveStale.at) : '';
+  if (!list.length) { body.innerHTML = banner + '<div class="empty-state">لا توجد نتائج</div>'; return; }
+  body.innerHTML = banner + list.map(m => {
     const preview = m.subject || (m.content || '').split('\n').map(l => l.trim()).filter(l => l)[0] || 'بدون عنوان';
+    const num = (m._pending && m.number_mode === 'manual') ? (m.memo_number + ' (مطلوب)') : (m.memo_number || (m._pending === 'create' ? 'يُحدَّد عند المزامنة' : '—'));
+    const badge = docqBadge(m);
+    const canDel = !(m._pending === 'create' || docqIsLocal(m.id));
     return `
     <div class="dep-card" style="cursor:pointer" onclick="openMemoFromArchive('${m.id}')">
       <div class="dep-card-header">
-        <div class="dep-card-title">📝 ${preview}</div>
-        <div class="dep-card-meta">🔢 العدد: ${m.memo_number||'—'} | 📅 ${m.memo_date} | 👤 ${m.created_by||'—'}</div>
+        <div class="dep-card-title">📝 ${String(preview).replace(/</g, '&lt;')}</div>
+        <div class="dep-card-meta">🔢 العدد: ${String(num).replace(/</g, '&lt;')} | 📅 ${m.memo_date} | 👤 ${String(m.created_by || '—').replace(/</g, '&lt;')}</div>
+        ${badge ? '<div style="font-size:12px;margin-top:4px">' + badge + '</div>' : ''}
       </div>
       <div style="margin-top:8px">
         <button class="btn-sm btn-del" onclick="event.stopPropagation();deleteMemoFromArchive('${m.id}')">🗑️ حذف</button>
@@ -233,22 +266,29 @@ async function renderMemoArchive() {
   body.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   const searchInput = document.getElementById('memoSearchInput');
   if (searchInput) searchInput.value = '';
+  let list, stale = false, at = null;
   try {
-    const res = await sbFetch('memos?select=id,memo_number,memo_date,subject,content,created_by&order=memo_date.desc');
-    const list = await res.json();
-    memoArchiveCache = list;
-    if (!list.length) { body.innerHTML = '<div class="empty-state">لا توجد مذكرات محفوظة بعد</div>'; return; }
-    renderMemoCards(list);
-  } catch (e) { body.innerHTML = '<div class="empty-state">❌ تعذر تحميل الأرشيف</div>'; }
+    const res = await sbFetch('memos?select=id,memo_number,memo_date,subject,content,created_by,client_uuid&order=memo_date.desc');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    list = await res.json();
+    if (!Array.isArray(list)) throw new Error('bad');
+    at = Date.now(); docqCachePut('memo', list, false);
+  } catch (e) { const c = docqCacheGet('memo'); list = c.rows; stale = true; at = c.at; }     // بلا اتصال: آخر نسخة محفوظة على الجهاز (قديمة دائماً) + المعلّقة
+  memoArchiveStale = { stale, at };
+  memoArchiveCache = docqMerge('memo', list);
+  if (!memoArchiveCache.length) { body.innerHTML = (stale ? docqStaleBanner(at) : '') + '<div class="empty-state">لا توجد مذكرات محفوظة بعد</div>'; return; }
+  renderMemoCards(memoArchiveCache);
 }
 
 async function deleteMemoFromArchive(id) {
+  const _m = memoArchiveCache.find(m => String(m.id) === String(id));
+  if (docqIsLocal(id) || (_m && _m._pending === 'create')) { showToast('⚠️ هذه المذكرة لم تُؤكَّد بالخادم بعد: أكمل مزامنتها أو ألغِها من صفحة «المعلّقة»', 'error'); return; }
   if (!confirm('🗑️ تأكيد حذف هذه المذكرة من الأرشيف؟ هذا الإجراء لا يمكن التراجع عنه نهائيًا.')) return;
   try {
     const res = await sbFetch(`memos?id=eq.${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('فشل الحذف');
     showToast('✅ تم حذف المذكرة');
-    memoArchiveCache = memoArchiveCache.filter(m => m.id !== id);
+    memoArchiveCache = memoArchiveCache.filter(m => String(m.id) !== String(id));
     const q = document.getElementById('memoSearchInput');
     filterMemoArchive(q ? q.value : '');
   } catch (e) {
@@ -258,18 +298,36 @@ async function deleteMemoFromArchive(id) {
 
 async function openMemoFromArchive(id) {
   try {
-    const res = await sbFetch(`memos?id=eq.${id}`);
-    const list = await res.json();
-    if (!list.length) { showToast('❌ غير موجود', 'error'); return; }
-    const m = list[0];
-    editingMemoId = m.id;
+    const pend = docqEntries('memo').find(e => docqMatch(e, 'memo', id) && (!currentUser || String(e.uid) === String(currentUser.id)));
+    let m = null, official = null, wantNumber = null;
+    if (docqIsLocal(id)) {
+      if (!pend) { showToast('❌ غير موجود', 'error'); return; }
+      m = Object.assign({}, pend.payload, { id });
+    } else {
+      let base = null;
+      try {
+        const res = await sbFetch(`memos?id=eq.${encodeURIComponent(id)}`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const list = await res.json();
+        if (!Array.isArray(list)) throw new Error('bad');
+        if (!list.length) { showToast('❌ غير موجود', 'error'); return; }
+        base = list[0];
+      } catch (e) {
+        if (!pend) throw e;                       // بلا اتصال: تُفتح فقط المذكرة التي لها تعديل معلّق محفوظ كاملاً على الجهاز
+        base = Object.assign({}, docqCacheGet('memo').rows.find(x => String(x.id) === String(id)) || { id });
+      }
+      m = Object.assign({}, base, pend ? pend.payload : {});
+      official = base.memo_number == null ? (base.memo_number === undefined ? null : '') : String(base.memo_number);
+      if (pend && pend.payload.number_mode === 'manual') wantNumber = pend.payload.memo_number;
+    }
+    editingMemoId = docqIsLocal(id) ? id : (m.id != null ? m.id : id);
+    memoOfficialNumber = official;
     document.getElementById('memoHomeView').style.display = 'none';
     document.getElementById('memoNewView').style.display = 'block';
     document.getElementById('memoArchiveView').style.display = 'none';
-    memoOfficialNumber = m.memo_number || '';
+    ensureMemoNumberUI();
     const numberField = document.getElementById('memo_number');
-    numberField.readOnly = true; // نفس مبدأ المذكرة الجديدة — رقم المذكرة الموجودة لا يُعدَّل يدوياً
-    numberField.value = m.memo_number || '';
+    numberField.value = wantNumber != null ? String(wantNumber) : (pend && pend.payload.number_mode === 'manual' ? String(pend.payload.memo_number) : (official !== null ? official : ''));
     document.getElementById('memo_date').value = m.memo_date || '';
     document.getElementById('memo_to').value = m.memo_to || 'الى / السيـد المـديـر الـمحتـرم...';
     document.getElementById('memo_subject').value = m.subject || '';
@@ -280,6 +338,8 @@ async function openMemoFromArchive(id) {
     renderMemoTableEditor();
     memoAttachments = m.attachments || null;
     renderMemoAttachmentsEditor();
+    memoSetStatus(pend ? docqStatusHTML(pend.rejected ? 'rejected' : 'pending', pend.rejected && pend.rejected.code) : '');
+    memoUpdateNumberHint();
     showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
   } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
 }
@@ -572,6 +632,7 @@ function buildMemoCanvasPNG(widthCss) {
 }
 
 async function exportMemoPDF() {
+  if (!memoGuardOfficialOutput()) return;
   showToast('⏳ جاري تحضير ملف PDF...');
   try {
     const png = buildMemoCanvasPNG(700);
@@ -594,6 +655,7 @@ async function exportMemoPDF() {
 }
 
 function printMemo() {
+  if (!memoGuardOfficialOutput()) return;
   const html = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
     <title></title><style>@page{margin:0}body{padding:30px;margin:0}</style>
     </head><body>${buildMemoBodyHTML()}</body></html>`;
@@ -691,6 +753,7 @@ async function buildMemoDocxBlob() {
 }
 
 async function shareMemoWord() {
+  if (!memoGuardOfficialOutput()) return;
   showToast('⏳ جاري تحضير ملف Word...');
   try {
     try { await ensureDocxLoaded(); } catch (e) { throw new Error('LIB_MISSING'); } // نفس سلوك الفحص القديم بالضبط، بس بمحاولة تحميل فعلية أولاً بدل الاكتفاء بالفحص

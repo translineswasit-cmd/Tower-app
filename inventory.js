@@ -135,6 +135,7 @@ function updateBorrowAvailable() {
   hint.textContent = `📦 المتاح حالياً: ${t.qty_working||0}`;
 }
 
+let _borrowSubmitting = false;
 async function saveBorrowedItem() {
   const toolId = document.getElementById('bw_tool_id').value;
   const qty = parseInt(document.getElementById('bw_qty').value);
@@ -146,24 +147,27 @@ async function saveBorrowedItem() {
   const t = allTools.find(x => x.id === toolId);
   if (!t) { showToast('❌ المادة غير موجودة', 'error'); return; }
   if (qty > (t.qty_working||0)) { showToast(`⚠️ العدد المتاح فقط ${t.qty_working||0}`, 'error'); return; }
-
-  const payload = { tool_id: toolId, tool_name: t.name, qty, borrow_date: date, borrower_name: borrower, returned: false, client_uuid: genUUID() };
+  if (_borrowSubmitting) return;
+  _borrowSubmitting = true;
   try {
-    const res = await sbFetch('inventory_borrowed?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(payload) });
-    if (!res.ok) throw new Error();
-    // خصم العدد المستعار من "تعمل" + إضافته لـ"borrowed_qty" بنفس المادة
-    const newWorking = (t.qty_working||0) - qty;
-    const newBorrowed = (t.borrowed_qty||0) + qty;
-    const patchRes = await sbFetch(`inventory_tools?id=eq.${toolId}`, { method: 'PATCH', body: JSON.stringify({ qty_working: newWorking, borrowed_qty: newBorrowed }) });
-    if (!patchRes.ok) throw new Error();
-    t.qty_working = newWorking; t.borrowed_qty = newBorrowed;
-    showToast('✅ تم تسجيل الاستعارة');
-    closeAddBorrowModal();
-    await loadBorrowedItems();
-    renderTools();
-  } catch (e) {
-    showToast('❌ تعذر حفظ الاستعارة', 'error');
-  }
+    // v335-C5r3: معاملة واحدة بالخادم (سجل الاستعارة + المخزون معاً) بمعرّف عملية يُحفظ على الجهاز قبل الإرسال؛ إعادة الإرسال بعد ضياع الردّ لا تُكرّر الخصم
+    const r = await invTxnSubmit('borrow', { tool_id: toolId, tool_name: t.name, qty, borrow_date: date, borrower_name: borrower });
+    if (r.state === 'done') {
+      t.qty_working = r.result.qty_working; t.borrowed_qty = r.result.borrowed_qty;
+      showToast('✅ تم تسجيل الاستعارة');
+      closeAddBorrowModal();
+      await loadBorrowedItems();
+      renderTools();
+    } else if (r.state === 'queued') {
+      showToast('📦 حُفظت الاستعارة على الجهاز وستُرسل عند توفر الاتصال (تُسجَّل مرة واحدة فقط)');
+      closeAddBorrowModal();
+    } else if (r.state === 'rejected') {
+      showToast('❌ ' + (INV_TXN_MSG[r.code] || 'رُفضت الاستعارة'), 'error');
+      try { await loadInventoryTools(); } catch (e) {}
+    } else {
+      showToast('⛔ تعذّر حفظ العملية على الجهاز (الذاكرة ممتلئة) — لم تُرسل', 'error');
+    }
+  } finally { _borrowSubmitting = false; }
 }
 
 async function markBorrowReturned(id) {
@@ -172,22 +176,21 @@ async function markBorrowReturned(id) {
   if (!b) return;
   if (!confirm(`تأكيد إرجاع ${b.qty} من "${b.tool_name}"؟`)) return;
   const today = new Date().toISOString().split('T')[0];
-  try {
-    const res = await sbFetch(`inventory_borrowed?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ returned: true, return_date: today }) });
-    if (!res.ok) throw new Error();
-    // إرجاع الكمية تلقائياً لـ"تعمل" + إنقاص "borrowed_qty" بنفس المادة
+  // v335-C5r3: الإرجاع + المخزون معاملة واحدة بالخادم؛ لا إرجاع مزدوج؛ لا إنقاص صامت لـ borrowed_qty
+  const r = await invTxnSubmit('return', { borrow_id: id, return_date: today, tool_name: b.tool_name });
+  if (r.state === 'done') {
     const t = allTools.find(x => x.id === b.tool_id);
-    if (t) {
-      const newWorking = (t.qty_working||0) + b.qty;
-      const newBorrowed = Math.max(0, (t.borrowed_qty||0) - b.qty);
-      const patchRes = await sbFetch(`inventory_tools?id=eq.${b.tool_id}`, { method: 'PATCH', body: JSON.stringify({ qty_working: newWorking, borrowed_qty: newBorrowed }) });
-      if (patchRes.ok) { t.qty_working = newWorking; t.borrowed_qty = newBorrowed; }
-    }
+    if (t) { t.qty_working = r.result.qty_working; t.borrowed_qty = r.result.borrowed_qty; }
     showToast('✅ تم تأكيد الإرجاع');
     await loadBorrowedItems();
     renderTools();
-  } catch (e) {
-    showToast('❌ تعذر تأكيد الإرجاع', 'error');
+  } else if (r.state === 'queued') {
+    showToast('📦 حُفظ الإرجاع على الجهاز وسيُرسل عند توفر الاتصال (يُطبَّق مرة واحدة فقط)');
+  } else if (r.state === 'rejected') {
+    showToast('❌ ' + (INV_TXN_MSG[r.code] || 'رُفض الإرجاع'), 'error');
+    try { await loadBorrowedItems(); await loadInventoryTools(); } catch (e) {}
+  } else {
+    showToast('⛔ تعذّر حفظ العملية على الجهاز (الذاكرة ممتلئة) — لم تُرسل', 'error');
   }
 }
 
