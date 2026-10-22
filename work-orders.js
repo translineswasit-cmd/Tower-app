@@ -16,9 +16,18 @@ async function openWorkOrdersHome() {
 }
 
 async function loadWoDrivers() {
-  const res = await sbFetch('work_order_drivers?select=*&order=sort_order.asc');
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  woDriversCache = await res.json();
+  let list;
+  try {
+    const res = await sbFetch('work_order_drivers?select=*&order=sort_order.asc');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    list = await res.json();
+    try { safeSetItem('wo_drivers_cache', JSON.stringify(list)); } catch (e) {}
+  } catch (e) {
+    let c = null; try { c = JSON.parse(localStorage.getItem('wo_drivers_cache') || 'null'); } catch (x) {}
+    if (!Array.isArray(c)) throw e;     // v335-C5r4: بلا اتصال تُستخدم آخر قائمة سائقين محفوظة على الجهاز
+    list = c;
+  }
+  woDriversCache = list;
   const sel = document.getElementById('wo_driver_select');
   sel.innerHTML = '<option value="">-- اختر السائق --</option>' +
     woDriversCache.map(d => `<option value="${d.id}">${d.name} — ${d.car_type||''}</option>`).join('') +
@@ -42,8 +51,10 @@ function switchWorkOrderTab(tab) {
   document.getElementById('woArchiveView').style.display = tab === 'archive' ? '' : 'none';
 }
 
+function setWoStatus(html) { const el = document.getElementById('woSaveStatus'); if (el) el.innerHTML = html || ''; }
 function startNewWorkOrder() {
   editingWorkOrderId = null;
+  setWoStatus('');
   document.getElementById('woCancelEditBtn').style.display = 'none';
   document.getElementById('wo_date').value = new Date().toISOString().split('T')[0];
   document.getElementById('wo_line').value = '';
@@ -148,33 +159,38 @@ async function saveWorkOrder() {
     team_members: team, shared_members: shared,
     created_by: currentUser.full_name || currentUser.username
   };
-
-  try {
-    let res;
-    if (editingWorkOrderId) {
-      res = await sbFetch(`work_orders?id=eq.${editingWorkOrderId}`, { method: 'PATCH', body: JSON.stringify({ ...payload, updated_at: new Date().toISOString() }) });
-    } else {
-      payload.client_uuid = genUUID();
-      res = await sbFetch('work_orders?on_conflict=client_uuid', { method: 'POST', headers: { 'Prefer': 'resolution=ignore-duplicates' }, body: JSON.stringify(payload) });
-    }
-    if (!res.ok) {
-      let detail = '';
-      try { const errBody = await res.json(); detail = errBody && (errBody.message || errBody.hint || errBody.code) ? ` — ${errBody.message || errBody.hint || errBody.code}` : ''; } catch(e) {}
-      throw new Error(`HTTP ${res.status}${detail}`);
-    }
-    showToast(editingWorkOrderId ? '✅ تم تحديث ورقة الواجب' : '✅ تم حفظ ورقة الواجب');
-    startNewWorkOrder();
-  } catch (e) {
-    // نعرض السبب الحقيقي (رمز HTTP وتفاصيله) بدل رسالة عامة تخفي المشكلة — يساعد بتشخيص فوري
-    console.warn('[tower-app] فشل حفظ ورقة الواجب:', e);
-    showToast('❌ تعذر الحفظ: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
+  if (editingWorkOrderId) payload.updated_at = new Date().toISOString();
+  // v335-C5r4: القيم كاملة + هوية ثابتة تُحفظ على الجهاز أولاً؛ فشل الحفظ = لا إرسال وتبقى الحقول. الإرسال/الإعادة بنفس الهوية (صف واحد).
+  const wasEdit = !!editingWorkOrderId;
+  const woSig = () => { const d = getWoDriverInfo(); return JSON.stringify([document.getElementById('wo_date').value, document.getElementById('wo_line').value, document.getElementById('wo_work_type').value, d.name, d.car, woTeamMembers.map(n => (n || '').trim()).filter(Boolean), woSharedMembers.map(m => [(m.name || '').trim(), (m.department || '').trim()]).filter(m => m[0])]); };
+  const sig0 = woSig();
+  let myRef = null;      // الهوية الدائمة تُثبَّت فور الحفظ المحلي وقبل أي await (حفظ ثانٍ أثناء الإرسال يدمج بنفس السجل)
+  const r = await docqSubmit('work_order', editingWorkOrderId, payload, (ref) => { myRef = ref; editingWorkOrderId = ref; });
+  if (!r.ok) {
+    setWoStatus('<span style="color:#c0392b;font-weight:700">⛔ لم يُحفظ: ' + (r.reason === 'other_user' ? 'هذا السجل المعلّق يخص مستخدماً آخر' : 'تعذّر الحفظ على الجهاز (الذاكرة ممتلئة)') + ' — لم يُرسل شيء وبقيت الحقول</span>');
+    showToast(r.reason === 'other_user' ? '⛔ هذا السجل المعلّق يخص مستخدماً آخر على هذا الجهاز' : '⛔ تعذّر الحفظ على الجهاز — لم يُرسل شيء وبقيت الحقول', 'error');
+    return;
   }
+  if (String(editingWorkOrderId) !== String(myRef)) {      // انتقل المستخدم لنموذج آخر أثناء الانتظار: لا نلمس حقوله ولا حالته
+    showToast(r.state === 'confirmed' ? '✅ تم حفظ ورقة الواجب السابقة (مؤكَّد بالخادم)' : (r.state === 'rejected' ? '⛔ رفض الخادم ورقة الواجب السابقة — بصفحة المعلّقة للمراجعة' : '📱 حُفظت ورقة الواجب السابقة على الجهاز فقط — لم تُؤكَّد بالخادم بعد'), r.state === 'rejected' ? 'error' : undefined);
+    return;
+  }
+  if (r.state === 'rejected') {
+    document.getElementById('woCancelEditBtn').style.display = '';      // تبقى الحقول والهوية (editingWorkOrderId ثبتت عند الحفظ المحلي)
+    setWoStatus(docqStatusHTML('rejected', r.code));
+    showToast('⛔ رفضها الخادم — محفوظة على الجهاز للمراجعة', 'error');
+    return;
+  }
+  const st = docqStatusHTML(r.state);
+  showToast(r.state === 'confirmed' ? (wasEdit ? '✅ تم تحديث ورقة الواجب (مؤكَّد بالخادم)' : '✅ تم حفظ ورقة الواجب (مؤكَّد بالخادم)') : '📱 حُفظت على الجهاز فقط — لم تُؤكَّد بالخادم بعد');
+  if (woSig() === sig0) { startNewWorkOrder(); setWoStatus(st); }      // لم تتغيّر الحقول أثناء الإرسال: تفريغ طبيعي
+  else { setWoStatus(st); }                                               // عُدّلت أثناء الإرسال: تبقى القيم الأحدث والهوية للحفظ التالي
 }
 
 async function editWorkOrder(id) {
-  const wo = woSearchResults.find(w => w.id === id);
+  const wo = woSearchResults.find(w => String(w.id) === String(id));
   if (!wo) return;
-  editingWorkOrderId = id;
+  editingWorkOrderId = wo._pending === 'create' ? docqLocalId(wo.client_uuid) : wo.id;
   switchWorkOrderTab('new');
   document.getElementById('woCancelEditBtn').style.display = '';
   document.getElementById('wo_date').value = wo.work_date || '';
@@ -194,20 +210,40 @@ async function editWorkOrder(id) {
   woSharedMembers = Array.isArray(wo.shared_members) ? wo.shared_members.map(m => ({...m})) : [];
   renderWoTeamMembers();
   renderWoSharedMembers();
+  setWoStatus(wo._pending || wo._rejected ? docqStatusHTML(wo._rejected ? 'rejected' : 'pending', wo._rejected && wo._rejected.code) : '');
   showToast('✏️ عدّل الورقة واضغط "حفظ ورقة الواجب"');
 }
 
 async function deleteWorkOrder(id) {
+  const _w = woSearchResults.find(w => String(w.id) === String(id));
+  if (docqIsLocal(id) || (_w && _w._pending === 'create')) { showToast('⚠️ هذه الورقة لم تُؤكَّد بالخادم بعد: أكمل مزامنتها أو ألغِها من صفحة «المعلّقة»', 'error'); return; }
   if (!confirm('🗑️ تأكيد حذف ورقة الواجب هذي؟ هذا الإجراء لا يمكن التراجع عنه.')) return;
   try {
     const res = await sbFetch(`work_orders?id=eq.${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error();
-    woSearchResults = woSearchResults.filter(w => w.id !== id);
+    woSearchResults = woSearchResults.filter(w => String(w.id) !== String(id));
     renderWoSearchResults();
     showToast('🗑️ تم الحذف');
   } catch (e) { showToast('❌ تعذر الحذف', 'error'); }
 }
 
+let woSearchStale = { stale: false, at: null };
+function woLocalFilter(rows, f) {
+  const dn = (f.driverText || '').toLowerCase();
+  return rows.filter(w => {
+    if (f.from && String(w.work_date || '') < f.from) return false;
+    if (f.to && String(w.work_date || '') > f.to) return false;
+    if (f.line && w.line_name !== f.line) return false;
+    if (dn && !String(w.driver_name || '').toLowerCase().includes(dn)) return false;
+    if (f.member) {
+      const needle = f.member;
+      const ok = (Array.isArray(w.team_members) && w.team_members.some(n => (n||'').includes(needle))) ||
+                 (Array.isArray(w.shared_members) && w.shared_members.some(m => (m.name||'').includes(needle)));
+      if (!ok) return false;
+    }
+    return true;
+  });
+}
 async function searchWorkOrders() {
   const from = document.getElementById('wo_search_from').value;
   const to = document.getElementById('wo_search_to').value;
@@ -216,34 +252,41 @@ async function searchWorkOrders() {
   const memberText = document.getElementById('wo_search_member').value.trim();
   document.getElementById('woSearchResultsWrap').innerHTML = '<div class="empty-state">⏳ جاري البحث...</div>';
   document.getElementById('woArchiveActions').style.display = 'none';
+  const f = { from, to, line, driverText, member: memberText };
+  let rows, stale = false, at = null;
   try {
     let query = 'work_orders?select=*&order=work_date.desc';
     if (from) query += `&work_date=gte.${from}`;
     if (to) query += `&work_date=lte.${to}`;
     if (line) query += `&line_name=eq.${encodeURIComponent(line)}`;
     if (driverText) query += `&driver_name=ilike.*${encodeURIComponent(driverText)}*`;
-    let rows = await fetchAllPages(query);
-    // فلترة اسم الموظف تصير محلياً (يبحث بقائمتي الطاقم والمشتركين مع بعض، ما تدعمها PostgREST مباشرة بسهولة على jsonb)
-    if (memberText) {
-      const needle = memberText.trim();
-      rows = rows.filter(w =>
-        (Array.isArray(w.team_members) && w.team_members.some(n => (n||'').includes(needle))) ||
-        (Array.isArray(w.shared_members) && w.shared_members.some(m => (m.name||'').includes(needle)))
-      );
-    }
-    woSearchResults = rows;
-    document.getElementById('woSearchResultCount').textContent = `📋 عدد أوراق الواجب المطابقة: ${rows.length}`;
-    renderWoSearchResults();
-    document.getElementById('woArchiveActions').style.display = rows.length ? 'block' : 'none';
+    rows = await fetchAllPages(query);
+    at = Date.now();
+    docqCachePut('work_order', rows, true);
   } catch (e) {
-    document.getElementById('woSearchResultsWrap').innerHTML = '<div class="empty-state">❌ تعذر البحث، تحقق من الاتصال</div>';
+    // v335-C5r4: بلا اتصال/تعذّر الخادم: بحث محلي بنسخة الجهاز (تُوسَم قديمة دائماً) + السجلات المعلّقة
+    const c = docqCacheGet('work_order');
+    stale = true; at = c.at; rows = c.rows;
+    if (!c.rows.length && !docqEntries('work_order').length) {
+      document.getElementById('woSearchResultsWrap').innerHTML = '<div class="empty-state">❌ تعذر البحث، تحقق من الاتصال (لا توجد نسخة محلية)</div>';
+      return;
+    }
   }
+  // فلترة محلية موحّدة (الاسم داخل jsonb + قيم السجلات المعلّقة المعدّلة) بعد دمج المعلّق فوق المؤكَّد دون إخفاء أي سجل مؤكَّد
+  rows = woLocalFilter(docqMerge('work_order', stale ? woLocalFilter(rows, f) : rows), f)
+    .sort((a, b) => String(b.work_date || '').localeCompare(String(a.work_date || '')));
+  woSearchStale = { stale, at };
+  woSearchResults = rows;
+  document.getElementById('woSearchResultCount').textContent = `📋 عدد أوراق الواجب المطابقة: ${rows.length}` + (stale ? ' (من ذاكرة الجهاز — قد تكون قديمة)' : '');
+  renderWoSearchResults();
+  document.getElementById('woArchiveActions').style.display = rows.length ? 'block' : 'none';
 }
 
 function renderWoSearchResults() {
   const wrap = document.getElementById('woSearchResultsWrap');
-  if (!woSearchResults.length) { wrap.innerHTML = '<div class="empty-state">لا توجد نتائج مطابقة</div>'; return; }
-  wrap.innerHTML = woSearchResults.map(wo => {
+  const _banner = woSearchStale.stale ? docqStaleBanner(woSearchStale.at) : '';
+  if (!woSearchResults.length) { wrap.innerHTML = _banner + '<div class="empty-state">لا توجد نتائج مطابقة</div>'; return; }
+  wrap.innerHTML = _banner + woSearchResults.map(wo => {
     const allMembers = [
       ...(Array.isArray(wo.team_members) ? wo.team_members : []),
       ...(Array.isArray(wo.shared_members) ? wo.shared_members.map(m => `${m.name} (${m.department})`) : [])
@@ -255,6 +298,7 @@ function renderWoSearchResults() {
       </div>
       <p style="font-size:0.82rem;margin-top:6px">🚗 السائق: ${wo.driver_name||'-'} ${wo.driver_car ? '('+wo.driver_car+')' : ''}</p>
       <p style="font-size:0.8rem;margin-top:4px;color:#4A5568">👷 الأفراد (${allMembers.length}): ${allMembers.join('، ')}</p>
+      ${docqBadge(wo) ? `<p style="font-size:0.78rem;margin-top:4px">${docqBadge(wo)}</p>` : ''}
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn btn-secondary btn-sm" onclick="editWorkOrder('${wo.id}')">✏️ تعديل</button>
         <button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="deleteWorkOrder('${wo.id}')">🗑️ حذف</button>

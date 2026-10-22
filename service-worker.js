@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v333-R';
+const CACHE_NAME = 'tower-app-v335-C5r11';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -12,7 +12,35 @@ const CRITICAL_ASSETS = [
   './period-summary.js',
   './daily-report.js',
   './inventory.js',
-  './records-reports.js'
+  './records-reports.js',
+  // v335-C5r6: وحدات الكشف الحراري (تُخزَّن للعمل بدون إنترنت؛ التخزين المسبق ليس تنفيذاً — تُنفَّذ عند الطلب فقط)
+  './thermal-inspection.js',
+  './thermal-archive.js',
+  './thermal-archive-print.js',
+  './official-form.js',
+  './official-form-archive.js',
+  './official-form-export.js',
+  // v335-C5r7: وحدات إحصائيات الموظفين/كادر القسم (تخزين مسبق للعمل بدون إنترنت؛ لا تُنفَّذ إلا عند الطلب)
+  './staff-stats.js',
+  './staff-activity.js',
+  './staff-roster.js',
+  './staff-roster-print.js',
+  // v335-C5r8: وحدات الكشف البصري/المغادرات/المعالجة/التصدير (تخزين مسبق للعمل بدون إنترنت؛ لا تُنفَّذ إلا عند الطلب)
+  './inspection-editor.js',
+  './tower-svg.js',
+  './departures-list.js',
+  './treatment-editor.js',
+  './treatment-history.js',
+  './treatment-log-export.js',
+  './departures-export.js',
+  './records-export.js',
+  // v335-C5r9: وحدات بيانات الخطوط/الحسابات/المغادرات الطارئة/برقية العمل (تخزين مسبق للعمل بدون إنترنت؛ لا تُنفَّذ إلا عند الطلب)
+  './lines-pages.js',
+  './lines-admin.js',
+  './lines-print.js',
+  './accounts.js',
+  './emergency-departures.js',
+  './work-telegram.js'
 ];
 
 // أصول مساندة: مرغوبة لكن فشلها يجب ألا يُسقط التثبيت بالكامل
@@ -22,7 +50,9 @@ const OPTIONAL_ASSETS = [
   './icon-stats.png',
   './icon-lines.png',
   './icon192.png',
-  './icon512.png'
+  './icon512.png',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 const EXTRA_ASSETS = [
