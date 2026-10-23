@@ -1044,6 +1044,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="admin-grid">
     <div class="admin-card"><h3>📊 إحصائيات الكشوفات</h3><div class="admin-stat" id="totalCount">0</div><p>إجمالي السجلات المحفوظة</p></div>
     <div class="admin-card"><h3>👥 الأعضاء</h3><div class="admin-stat" id="totalMembers">0</div><p>عدد الأعضاء المسجلين</p></div>
+    <div class="admin-card" id="migCard"><h3>🗄️ ترحيل الأبراج القديمة</h3><p style="font-size:0.8rem;color:#718096">تهيئة مرة واحدة لحالة الأبراج القديمة في مخزن الحالة (لا يمسّ الكشوف ولا المعالجات). آمن للتكرار والاستئناف.</p><button class="btn btn-primary" id="migBtn" onclick="runTowerStoreMigration()">▶️ ابدأ / استأنف الترحيل</button><button class="btn btn-secondary btn-sm" style="margin-right:6px" onclick="runTowerStoreMigration(true)">🔁 إعادة المحاولة للفاشلة</button><div id="migStatus" style="margin-top:8px;font-size:0.8rem;line-height:1.7"></div></div>
   </div>
 
   <div class="admin-card" style="margin-top:14px">
@@ -2237,6 +2238,7 @@ function csPurgeUserData() {
   try {
     fullRecordsCache = []; fullRecordsCacheLoadedAt = null; rebuildLatestRecordsIndex();
     loadedLineCacheAt = {}; treatmentsCache = [];
+    records = []; filteredRecords = []; _recordsArchiveLoaded = false; try { localStorage.removeItem(DB_KEY); } catch (e2) {}
     previousInspectionForLoad = null; previousTreatmentsForLoad = [];
   } catch (e) {}
 }
@@ -2863,6 +2865,7 @@ let activeInspectionLines = [];
 try { activeInspectionLines = JSON.parse(localStorage.getItem('active_inspection_lines')||'[]'); } catch(e) { activeInspectionLines = []; }
 
 let records = [], filteredRecords = [];
+let _recordsArchiveLoaded = false; // v335-C6: صحيح فقط بعد تحميل الأرشيف صراحةً
 
 let fullRecordsCache = []; // كاش كامل (بدون قيد 6 أشهر) — خاص بحالة الخطوط والمغادرات فقط، يضمن دقة "آخر كشف لكل برج"
 
@@ -3038,7 +3041,7 @@ function enterApp() {
   document.getElementById('headerUserName').textContent = currentUser.full_name || '';
 
   applyRolePermissions();
-  loadRecords();
+  // v335-C6: لا جلب للأرشيف عند الدخول؛ السجلات التاريخية تُحمَّل فقط من شاشات الأرشيف/التقارير الصريحة
   if (navigator.onLine) { loadLinesInfoFromDB(); }   // v335-C5: القراءة تحتاج جلسة، فتُعاد بعد الدخول
   if (navigator.onLine) loadLineTowersCache(); // كاش أبراج الخطوط المعدَّلة (يفشل بصمت أوف لاين، القيم المدمجة بالكود تبقى تشتغل كاحتياط)
 }
@@ -3822,7 +3825,7 @@ function renderTowersGridFromCache(lineName) {
         const level = getTowerCriticalityLevel(rec);
         const meta = TOWER_LEVEL_META[level];
         const complete = rec ? isInspectionComplete(rec) : null;
-        const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) : 'لم يُكشف بعد';
+        const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) : '—';
         const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
         let staleLine = '';
         if (rec && rec.inspection_date) {
@@ -4029,6 +4032,40 @@ function _reconcileRefresh(rows, scopeLine, mySeq, startSeq, keepTowers) {   // 
   return true;
 }
 
+// v335-C6r2: ردّ كتابة مؤكَّد من السيرفر (كشف جديد/معالجة/تصحيح/إلغاء/ملاحظة) يحدّث صف عرض هذا البرج وفهرسه فوراً، دون جلب خط ولا إعادة فتح البرج.
+// الحالة الحالية للبرج = صف الغلاف المؤكَّد (أو لا صف إن كان no_source/بلا صف) + طبقة العمليات/التعديلات المعلّقة بترتيبها. الصفوف المؤكَّدة الأقدم لنفس البرج
+// (بمعرّف) تُستبدل؛ الكشوف المعلّقة بلا معرّف تبقى. طابور غير قابل للقراءة = لا نستبدل حالة محلية ونوسم الكاش غير محسوم (كما في بقية المسارات).
+function _applyConfirmedTowerEnv(line, tower, env) {
+  if (!env || typeof env !== 'object' || !line) return false;
+  const key = String(tower);
+  const same = r => !!r && r.line_name === line && String(r.tower_number) === key;
+  const pend = _readPendingInspectionState();
+  if (!pend.ok) {
+    if (!_cacheUnresolved) { try { reportUnreadableQueues(); } catch (e) {} }
+    _cacheUnresolved = true;
+    return false;
+  }
+  const oldRows = fullRecordsCache.filter(r => same(r) && hasValidInspectionId(r.id));
+  let row = env.row && typeof env.row === 'object' && !Array.isArray(env.row) && hasValidInspectionId(env.row.id) && same(env.row) ? env.row : null;
+  if (row) {
+    const id = String(row.id);
+    const old = oldRows.find(r => String(r.id) === id) || null;
+    let cur = pend.patchesById.has(id) ? _overlayPendingPatches(row, pend.patchesById.get(id)) : row;
+    cur = opsOverlayRow(cur, pend.ops);
+    row = old ? { ...old, ...cur } : cur;
+  }
+  // صفوف هذا البرج بلا معرّف (كشف معلّق/صف اصطناعي لرصد معلّق): تبقى فقط إن كان مصدرها ما زال معلّقاً؛ ما أُكِّد على السيرفر الآن يحلّ محله صف الغلاف
+  const pendingKeys = new Set();
+  pend.pendingNew.forEach(it => { if (it && it.client_uuid) pendingKeys.add(String(it.client_uuid)); });
+  (pend.ops && pend.ops.get(opsTK(line, key)) || []).forEach(e => { if (e && e.id) pendingKeys.add(String(e.id)); });
+  const kept = fullRecordsCache.filter(r => !same(r) || (!hasValidInspectionId(r.id) && (!r.client_uuid || pendingKeys.has(String(r.client_uuid)))));
+  if (row) kept.push(row);
+  else if (!kept.some(same)) opsSyntheticRows(pend.ops, line).forEach(sr => { if (same(sr)) kept.push(sr); });   // لا صف مؤكَّد: يبقى رصد معلّق صفاً اصطناعياً فقط
+  fullRecordsCache = kept;
+  rebuildLatestRecordsIndex();
+  return true;
+}
+
 // يدمج سجلاً كاملاً مجلوباً في fullRecordsCache والفهرس بحسب المعرّف (لا بحسب "أول سجل لنفس البرج"):
 // يُثري نسخة الشبكة المختصرة حتى عند تعادل التاريخ، ولا يمسّ سجلاً محلياً معلّقاً (بلا معرّف) ولا سجلاً آخر لنفس البرج.
 // لو للسجل عمليات معلّقة (معالجة/تعديل بالطابور) تبقى قيم النسخة المحلية فوق قيم السيرفر القديمة.
@@ -4103,20 +4140,10 @@ async function loadFullTowerRecord(lineName, towerNumber) {
 }
 
 async function renderTowersGrid(lineName) {
-  const section = document.getElementById('towersGridSection');
-  const grid = document.getElementById('towersGrid');
-  if (!lineName) { section.style.display = 'none'; renderActiveLinesTabs(); return; }
-  section.style.display = '';
-  document.getElementById('towersGridTitle').textContent = '🗼 أبراج خط: ' + lineName;
-  grid.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات الأبراج...</div>';
-  try {
-    await loadLineRecordsCache(lineName);
-    renderTowersGridFromCache(lineName);
-  } catch (e) {
-    console.warn('[tower-app] فشل تحميل شبكة أبراج الخط', lineName, e);
-    grid.innerHTML = `<div class="empty-state">❌ تعذّر تحميل بيانات هذا الخط<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="renderTowersGrid('${String(lineName).replace(/'/g,"\\'")}')">🔄 إعادة المحاولة</button></div>`;
-    renderActiveLinesTabs();
-  }
+  // v335-C6: فتح الخط = بطاقات من كتالوج الخط/الأبراج فقط (تزامني، بلا أي طلب شبكة). حالة البرج تُقرأ عند فتح بطاقته فقط.
+  // التزامنية تُنهي عدم تطابق العنوان/البطاقات (كان العنوان يُكتب فوراً ثم تُرسم بطاقات خط سابق بعد انتظار القراءة).
+  if (!lineName) { renderTowersGridFromCache(lineName); return; }
+  renderTowersGridFromCache(lineName);
 }
 
 function persistActiveLines() { safeSetItem('active_inspection_lines', JSON.stringify(activeInspectionLines)); }
@@ -5572,7 +5599,7 @@ async function opsSyncOutbox() {
   if (!rd.items.length) return { empty: true };
   if (!navigator.onLine || !csLiveEnabled()) return { offline: true };
   _opsSyncBusy = true;
-  const res = { applied: 0, conflicts: 0, rejected: 0, net: false, auth: false, lines: new Set(), skipped: 0 };
+  const res = { applied: 0, conflicts: 0, rejected: 0, net: false, auth: false, lines: new Set(), skipped: 0, marks: false };
   try {
     const blocked = new Set();
     const items = rd.items.slice().sort((a, b) => a.seq - b.seq);
@@ -5602,7 +5629,8 @@ async function opsSyncOutbox() {
       if (r && r.ok === true) {
         if (!opsRemove(e.id)) { opsUpdate(e.id, x => { x.status = 'pending'; x.err = 'removal_unconfirmed'; }); blocked.add(tk); continue; }
         res.applied++; res.lines.add(e.line);
-        try { if (r.tower && csEnvValid(r.tower, e.line, e.tower)) { csIngest(e.line, e.tower, r.tower, 'server', r.as_of); csRemember(e.line, e.tower, r.tower, r.as_of); } } catch (x) {}
+        try { if (r.tower && csEnvValid(r.tower, e.line, e.tower)) { if (csIngest(e.line, e.tower, r.tower, 'server', r.as_of)) { csRemember(e.line, e.tower, r.tower, r.as_of); _applyConfirmedTowerEnv(e.line, e.tower, r.tower); } } } catch (x) {}
+        if (payload && (payload.kind === 'void' || payload.kind === 'annotate')) res.marks = true;
         try { markLocalTouch({}); } catch (x) {}
         continue;
       }
@@ -5618,9 +5646,9 @@ async function opsSyncOutbox() {
   updatePendingBadge();
   if (res.applied) {
     try { csNoteWrites(); } catch (e) {}
-    for (const ln of res.lines) { try { await loadLineRecordsCache(ln, true); } catch (e) {} }
-    try { await loadTreatments(); } catch (e) {}
-    try { await opsLoadMarks(); } catch (e) {}
+    // v335-C6: ردّ app_op_apply يحمل حالة البرج المحدَّثة (csIngest أعلاه)؛ لا إعادة قراءة لخط كامل
+    // v335-C6r2: لا loadTreatments ولا قراءة واسعة بعد الكتابة؛ علامات الإلغاء/الملاحظة تُحدَّث فقط إن كانت العملية إلغاءً/ملاحظة
+    if (res.marks) { try { await opsLoadMarks(); } catch (e) {} }
     try { if (currentGridLine) renderTowersGridFromCache(currentGridLine); } catch (e) {}
     try { if (depUI) depUI.renderLines(); } catch (e) {}
     showToast('✅ تأكّد على السيرفر: ' + res.applied + ' عملية');
@@ -6234,7 +6262,7 @@ async function loadRecords() {
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const cutoffDate = sixMonthsAgo.toISOString().split('T')[0];
     const data = await fetchAllPages(`inspections?select=*&inspection_date=gte.${cutoffDate}&order=created_at.desc`);
-    records = data;
+    records = data; _recordsArchiveLoaded = true;
     try { await opsLoadMarks(); } catch (e) {}   // v335-C4: إخفاء المصادر الملغاة
     // كاش عرض فقط: نقلّله إلى 120 سجل ونتجاهل فشله بصمت — الأولوية المطلقة لمساحة الطوابير الميدانية
     try { localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 1000))); } catch(e) { try { localStorage.removeItem(DB_KEY); } catch(e2) {} }
@@ -6746,8 +6774,32 @@ async function buildTreatLogRecordCanvas(t, opts) {
   return Object.assign({}, rendered[0], { parts: rendered });
 }
 
+// v335-C6r2: ترحيل الأبراج القديمة إلى مخزن الحالة (مدير فقط، بجلسته الحالية؛ لا توكن يدوي). دفعات صغيرة، تقدّم وأخطاء ظاهرة، قابل للاستئناف.
+let _migRunning = false;
+async function runTowerStoreMigration(retryFailed) {
+  if (_migRunning) return;
+  const st = document.getElementById('migStatus'), btn = document.getElementById('migBtn');
+  if (!currentUser || currentUser.role !== 'admin') { if (st) st.textContent = '⛔ الترحيل من صلاحيات المدير فقط'; return; }
+  _migRunning = true; if (btn) btn.disabled = true;
+  const gen = _csAuthGen; let done = 0; const errs = [];
+  const show = (t) => { if (st && gen === _csAuthGen) st.textContent = t; };
+  try {
+    for (let i = 0; i < 400; i++) {
+      show('⏳ جارٍ الترحيل… تمّت تهيئة ' + done + ' برجاً' + (errs.length ? ' — أخطاء: ' + errs.length : ''));
+      const r = await csCall('app_ops_migrate', { p_line_name: null, p_limit: 25, p_retry_failed: !!(retryFailed && i === 0) });
+      if (gen !== _csAuthGen || !currentUser) return;
+      if (!r || r.ok !== true) { show('❌ توقّف الترحيل: ' + ((r && r.code) || 'network') + ' — يمكن الاستئناف بالضغط على الزر. تمّت تهيئة ' + done + ' برجاً'); return; }
+      done += r.initialised || 0;
+      (r.skipped || []).forEach(x => errs.push(x.line_name + ' / ' + x.tower_number + ': ' + x.error));
+      if (!r.remaining) { show((r.failed_total ? '⚠️ انتهى مع أبراج فاشلة: ' + r.failed_total + ' (زر «إعادة المحاولة للفاشلة»)' : '✅ اكتمل الترحيل') + ' — تمّت تهيئة ' + done + ' برجاً'); break; }
+      if (!r.initialised && !(r.skipped || []).length) { show('⚠️ لا تقدّم: ' + r.remaining + ' برجاً متبقياً'); break; }
+    }
+    if (st && gen === _csAuthGen && errs.length) st.innerHTML += '<br>' + errs.slice(0, 20).map(_csEsc).join('<br>');
+  } finally { _migRunning = false; if (btn) btn.disabled = false; }
+}
+
 function updateAdminStats() {
-  const c = document.getElementById('totalCount'); if (c) c.textContent = records.length;
+  const c = document.getElementById('totalCount'); if (c) c.textContent = _recordsArchiveLoaded ? records.length : '—';
 }
 
 // ========================

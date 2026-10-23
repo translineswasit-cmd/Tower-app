@@ -219,7 +219,19 @@ async function openTowerDetail(lineName, towerNum) {
   document.getElementById('towerDetailView').style.display = '';
   document.getElementById('towerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
   document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
-  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
+  // v335-C6r2: برج واحد = قراءة حالة هذا البرج وحدها (لا loadTreatments ولا إعادة تحميل خط/خطوط). المعالجة تأتي من حالة البرج نفسها.
+  if (csLiveEnabled()) {
+    let f = null; try { f = await _fetchFullTowerRecord(lineName, towerNum); } catch (e) { f = null; }
+    if (!featEntryOk(tok)) return;
+    const live = !!(f && f.ok && f.cs && f.cs.ok && f.cs.source !== 'cache');
+    if (live) _applyConfirmedTowerEnv(lineName, towerNum, f.cs.env);
+    else if (!getLatestRecordForTower(lineName, towerNum)) {
+      document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا البرج من الخادم — تحقق من الاتصال وحاول مرة أخرى</div>';
+      return;
+    } else { try { showToast('⚠️ تعذّرت القراءة الحيّة — المعروض من آخر ما حُمّل على الجهاز', 'error'); } catch (e) {} }
+  } else {
+    await Promise.all([loadTreatments(), loadFullRecordsCache()]);
+  }
   if (!featEntryOk(tok)) return;
   renderTowerDetail(lineName, towerNum);
 }

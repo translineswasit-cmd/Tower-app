@@ -1228,13 +1228,18 @@ async function checkPreviousInspection(lineName, towerNumber) {
   try {
     // v334-R: طابور غير قابل للقراءة = لا يمكن إعادة بناء الحالة الحالية بأمان: حالة صريحة بدل عرض بيانات قد تكون قديمة كأنها مرجع
     if (!_readPendingInspectionState().ok) { _setPrefillState(csFlagOn() ? 'unresolved' : 'unavailable', lineName, towerNumber, 'قائمة المعلّقات على الجهاز غير قابلة للقراءة'); return; }
-    let serverOk = false, serverNone = false, csCacheUsed = false;
+    let serverOk = false, serverNone = false, csCacheUsed = false, towerEnv = null;
     // v334: لا نجلب/نحدّث شبكة الخط هنا إطلاقاً — طلب واحد بسجل واحد هو المرجع الأحدث لهذا البرج
     // v335: القراءة تمر بالمحوّل الموحّد (حالة حيّة محلولة بالخادم)، وعند انقطاع الاتصال لقطة مخزّنة بالجهاز موسومة بذلك
     if (navigator.onLine || csLiveEnabled()) {
       const fetched = await _fetchFullTowerRecord(lineName, towerNumber);
       if (!_prefillIsCurrent(token, lineName, towerNumber)) return;
       const csEnv = fetched.cs && fetched.cs.ok ? fetched.cs.env : null;
+      towerEnv = csEnv;
+      // v335-C6: السجل المقروء حيّاً يدخل الكاش المشترك قبل أي رفض/تحذير تهيئة (كان يدخله تحميل الخط): بطاقة البرج تعرض ما قُرئ فعلاً
+      try { if (fetched.ok && fetched.record && !(fetched.cs && fetched.cs.source === 'cache')) _mergeFullTowerRecord(fetched.record, fetched.startSeq); } catch (e) {}
+      // v335-C6: القراءة تصل بعد بناء واجهة العوازل (لم يعد هناك تحميل للخط مسبقاً): سطر مصدر الحالة يُحدَّث عند وصولها
+      try { const pv = document.getElementById('csProvenance'); if (pv && csEnv) { const pt = csProvenanceText(lineName, towerNumber); pv.textContent = pt; pv.style.display = pt ? '' : 'none'; } } catch (e) {}
       if (csEnv) {
         const geo = csEnv.meta && csEnv.meta.geometry;
         const fromCache = fetched.cs.source === 'cache';
@@ -1270,6 +1275,11 @@ async function checkPreviousInspection(lineName, towerNumber) {
     previousInspectionForLoad = last;
     // معالجات الكشف السابق من الكاش (متزامن): تأثيرات المعالجة والعلامات تعتمد عليه كما كانت، ولا تنتظر أي جلب
     previousTreatmentsForLoad = hasValidInspectionId(last.id) ? (treatmentsCache || []).filter(t => String(t.inspection_id) === String(last.id)) : [];
+    // v335-C6r3: معالجات الكشف السابق تأتي ضمن ردّ قراءة البرج نفسه (source_treatments) — بلا طلب تاريخ منفصل؛ تُستعمل فقط إن كان الكشف السابق هو مصدر الحالة المقروءة
+    try {
+      const cenv = towerEnv && towerEnv.source && String(towerEnv.source.inspection_id) === String(last.id) ? towerEnv : null;
+      if (cenv && Array.isArray(cenv.source_treatments)) previousTreatmentsForLoad = cenv.source_treatments.filter(t => t && typeof t === 'object');
+    } catch (e) {}
     if (_prefillUserEdited) { _setPrefillState('deferred', lineName, towerNumber); return; }
     const pendingTower = (function () { try { return pendingInspectionForTower(lineName, towerNumber); } catch (e) { return { found: false }; } })();
     const notes = [];
@@ -1289,6 +1299,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
 
 async function _fetchPrevTreatments(last, token, lineName, towerNumber) {
   if (!navigator.onLine || !hasValidInspectionId(last.id)) return;
+  if (csLiveEnabled()) return; // v335-C6: فتح البرج = قراءة حالته الحالية فقط؛ لا طلب معالجات تاريخي إضافي (الحالة المعالَجة داخل حالة البرج)
   let rows;
   try {
     const res = await sbFetch(`treatments?inspection_id=eq.${encodeURIComponent(last.id)}&order=created_at.desc`);
@@ -1321,12 +1332,16 @@ const TREAT_FIELD_MAP = {
   road: [{field:'road_access', healthy:'متاح'},{field:'road_access_notes', healthy:''}]
 };
 
+// v335-C6r4: items_treated قد يصل مغلَّفاً (نص JSON داخل نص، شكل قديم صالح): يُفكّ حتى 3 مستويات؛ غير الصالح (ليس مصفوفة كائنات بمفتاح نصي) = لا عناصر
+function _decodeTreatItems(v) {
+  for (let i = 0; i < 4 && typeof v === 'string'; i++) { try { v = JSON.parse(v); } catch (e) { return []; } }
+  return Array.isArray(v) && v.every(x => x && typeof x === 'object' && !Array.isArray(x) && typeof x.key === 'string') ? v : [];
+}
+
 function _prevNoteLine(r, treatments) {
   let line = `كشف سابق بتاريخ ${r.inspection_date} من ${r.created_by_name||'—'}`;
-  if (treatments && treatments.length) {
-    const items = treatments.flatMap(t => (t.items_treated||[]).map(i => i.label)).join('، ');
-    line += ` — تمت معالجة: ${items}`;
-  }
+  const items = (treatments || []).flatMap(t => _decodeTreatItems(t && t.items_treated).map(i => i.label)).filter(l => l != null && l !== '').join('، ');
+  if (items) line += ` — تمت معالجة: ${items}`;
   return line;
 }
 
