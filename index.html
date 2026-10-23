@@ -2147,6 +2147,17 @@ const _csInflight = new Map();
 
 const _csSeq = new Map();
 
+// Card projections are deliberately separate from full tower/prefill records.
+const _csCards = new Map();
+const _csCardLines = new Map();
+const _csCardRequests = new Map();
+function csCardAccept(line, tower, env, ticket) {
+  const key = csKey(line, tower), old = _csCards.get(key);
+  if (old && old.ticket > ticket) return;
+  _csCards.set(key, { status: env.status || env.resolution,
+    record: env.row || null, ticket, rev: env.rev || 0 });
+}
+
 function csKey(line, tower) { return String(line) + '\u0001' + String(tower); }
 
 // ---- العلم: يعمل افتراضياً. ?cs_live=0 على رابط التطبيق يوقفه على هذا الجهاز (يعود مسار القراءة القديم كما كان)، ?cs_live=1 يعيده.
@@ -2228,6 +2239,7 @@ function csAuthLost(code) {
 
 // ---- مسح كل بيانات الحالة الحيّة للمستخدم (ذاكرة + تخزين) ----
 function csPurgeUserData() {
+  _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear();
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -2296,6 +2308,7 @@ function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
     if ((_csApplied.get(key) || 0) > ticket) return false;
     _csApplied.set(key, ticket);
   } else if (_csApplied.has(key) && source === 'cache') return false;   // لقطة محفوظة لا تستبدل قراءة حيّة
+  if (source !== 'cache') csCardAccept(line, tower, env, ticket == null ? ++_csTicket : ticket);
   const meta = env.meta || {};
   const g = meta.geometry || (meta.geometry_mode !== undefined ? { mode: meta.geometry_mode, status: meta.geometry_status, basis: meta.geometry_basis } : null);
   if (g) _csGeom.set(key, { mode: g.mode || null, status: g.status || null, basis: g.basis || null });
@@ -3817,21 +3830,33 @@ function renderTowersGridFromCache(lineName) {
   titleEl.textContent = '🗼 أبراج خط: ' + lineName;
   try {
     const towers = getLineTowers(lineName);
+    const cardLine = _csCardLines.get(lineName);
+    const cardPending = _readPendingInspectionState();
     grid.innerHTML = towers.map(t => {
       // عزل كل برج لحاله: لو سجل برج واحد تالف (تنسيق غريب جاي من قائمة إرسال مؤجل مثلاً)، يطلع
       // بلاطة خطأ لهذا البرج بس، بدل ما ينهار رسم الشبكة كاملة ويجمّد شاشة "جاري التحميل" للأبد
       try {
-        const rec = getLatestRecordForTower(lineName, t.num);
-        const level = getTowerCriticalityLevel(rec);
+        const card = _csCards.get(csKey(lineName, t.num));
+        const detail = _csMem.get(csKey(lineName, t.num));
+        let rec = card ? card.record : detail && detail.env ? detail.env.row : null;
+        const local = getLatestRecordForTower(lineName, t.num);
+        if (cardPending.ok && rec) {
+          const id = String(rec.id || '');
+          if (cardPending.patchesById.has(id)) rec = _overlayPendingPatches(rec, cardPending.patchesById.get(id));
+          rec = opsOverlayRow(rec, cardPending.ops);
+        }
+        if (local && !hasValidInspectionId(local.id)) rec = local;
+        const level = card && card.status === 'needs_review' ? 'none' : getTowerCriticalityLevel(rec);
         const meta = TOWER_LEVEL_META[level];
         const complete = rec ? isInspectionComplete(rec) : null;
-        const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) : '—';
+        const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) :
+          card && card.status === 'no_source' ? 'لم يُكشف بعد' :
+          card && card.status === 'uninitialized' ? 'الحالة لم تُهيّأ بعد' :
+          cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
         const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
-        let staleLine = '';
-        if (rec && rec.inspection_date) {
-          const monthsSince = (Date.now() - new Date(rec.inspection_date).getTime()) / (1000*60*60*24*30.44);
-          if (monthsSince >= 6) staleLine = `⏰ لم يُكشف منذ ${Math.floor(monthsSince)} شهر تقريباً`;
-        }
+        let staleLine = cardLine && cardLine.error && rec ? '⚠️ آخر حالة محفوظة — تعذّر التحديث' : '';
+        if (card && card.status === 'needs_review') staleLine = '⚠️ الحالة تحتاج مراجعة';
+        if (cardLine && cardLine.migrating && !rec) staleLine = 'جارٍ تهيئة المخزن من البيانات الموجودة…';
         const catIconsHTML = buildCategoryIconsHTML(rec);
         return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
           <div class="tower-box-num">${t.num}</div>
@@ -4140,10 +4165,80 @@ async function loadFullTowerRecord(lineName, towerNumber) {
 }
 
 async function renderTowersGrid(lineName) {
-  // v335-C6: فتح الخط = بطاقات من كتالوج الخط/الأبراج فقط (تزامني، بلا أي طلب شبكة). حالة البرج تُقرأ عند فتح بطاقته فقط.
-  // التزامنية تُنهي عدم تطابق العنوان/البطاقات (كان العنوان يُكتب فوراً ثم تُرسم بطاقات خط سابق بعد انتظار القراءة).
   if (!lineName) { renderTowersGridFromCache(lineName); return; }
+  _csCardLines.set(lineName, { loading: true });
   renderTowersGridFromCache(lineName);
+  if (!csLiveEnabled()) {
+    _csCardLines.set(lineName, { error: true });
+    renderTowersGridFromCache(lineName); return;
+  }
+  return csLoadCardSummary(lineName);
+}
+
+async function csLoadCardSummary(line, retry = true) {
+  const existing = _csCardRequests.get(line);
+  if (existing && existing.gen === _csAuthGen && existing.wgen === _csWriteGen && existing.lseq === _localSeq && existing.nav === pageNavigationRequestSeq) return existing.promise;
+  const gen = _csAuthGen, wgen = _csWriteGen, lseq = _localSeq, token = CS_AUTH.token;
+  const nav = pageNavigationRequestSeq, ticket = ++_csTicket;
+  const valid = () => gen === _csAuthGen && token === CS_AUTH.token;
+  const paint = () => { if (valid() && currentGridLine === line && pageNavigationRequestSeq === nav) renderTowersGridFromCache(line); };
+  const request = { gen, wgen, lseq, nav };
+  const active = () => valid() && _csCardRequests.get(line) === request;
+  _csCardRequests.set(line, request);
+  request.promise = (async () => {
+    try {
+      if (!navigator.onLine) throw new Error('offline');
+      const numbers = getLineTowers(line).map(t => String(t.num));
+      let result = await csCall('app_line_card_summary', { p_line_name: line, p_tower_numbers: numbers });
+      if (!active()) return;
+      // One-time legacy initialisation uses the existing admin-only, resumable RPC.
+      // It never edits inspection/treatment history; later visits read only the store.
+      if (result.ok && result.uninitialized > 0 && currentUser && currentUser.role === 'admin') {
+        _csCardLines.set(line, { loading: true, migrating: true }); paint();
+        const migrationLines = Array.isArray(result.initialization_lines) && result.initialization_lines.length ? result.initialization_lines : [line];
+        for (const migrationLine of migrationLines) {
+        for (let batch = 0; batch < Math.ceil(numbers.length / 25) + 1; batch++) {
+          if (!valid() || currentGridLine !== line || pageNavigationRequestSeq !== nav) return;
+          const migration = await csCall('app_ops_migrate', { p_line_name: migrationLine, p_limit: 25, p_retry_failed: false }, { timeout: 65000 });
+          if (!active()) return;
+          if (!migration.ok) throw new Error(migration.code || 'migration');
+          if (!migration.remaining || !migration.initialised) break;
+        }
+        }
+        result = await csCall('app_line_card_summary', { p_line_name: line, p_tower_numbers: numbers });
+      }
+      if (!active()) return;
+      if (_csWriteGen !== wgen || _localSeq !== lseq) {
+        if (_csCardRequests.get(line) === request) _csCardRequests.delete(line);
+        if (retry && currentGridLine === line && pageNavigationRequestSeq === nav) return csLoadCardSummary(line, false);
+        _csCardLines.set(line, { error: true }); paint(); return;
+      }
+      if (!result || !result.ok || result.line_name !== line || !result.towers || typeof result.towers !== 'object' || Array.isArray(result.towers)) throw new Error('summary');
+      // Validate the complete requested set before committing any card. A partial
+      // response is a failed read, never evidence that a tower has no inspection.
+      for (const number of numbers) {
+        const card = result.towers[number];
+        if (!card || !['no_source','uninitialized','no_blockers','needs_review'].includes(card.status) ||
+            ((card.status === 'no_blockers' || card.status === 'needs_review') && (!card.record || card.record.line_name !== line || String(card.record.tower_number) !== number))) throw new Error('invalid_summary');
+      }
+      for (const number of numbers) {
+        const card = result.towers[number], key = csKey(line, number), old = _csCards.get(key);
+        if (old && old.ticket > ticket) continue;
+        _csCards.set(key, { status: card.status, record: card.record, rev: card.rev, ticket });
+        // A detail request started before this newer store snapshot must retry,
+        // rather than hand an older state to the editor after cards have changed.
+        if (card.status !== 'uninitialized') _csApplied.set(key, Math.max(_csApplied.get(key) || 0, ticket));
+      }
+      _csCardLines.set(line, { loading: false }); paint();
+    } catch (e) {
+      if (!active()) return;
+      _csCardLines.set(line, { error: true }); paint();
+      if (currentGridLine === line && pageNavigationRequestSeq === nav) showToast('⚠️ تعذّر تحديث ملخّص الحالة. أعد اختيار الخط للمحاولة.', 'error');
+    } finally {
+      if (_csCardRequests.get(line) === request) _csCardRequests.delete(line);
+    }
+  })();
+  return request.promise;
 }
 
 function persistActiveLines() { safeSetItem('active_inspection_lines', JSON.stringify(activeInspectionLines)); }
