@@ -7,19 +7,102 @@ async function loadReportThermalForms() {
   } catch (e) { reportThermalFormsCache = []; }
 }
 
+let _reportLineNames = [];   // v335-C6r7: أسماء الخطوط من الخادم (بلا قراءة حالة)
+
+// v335-C6r8: بيانات التقرير الثانوية (المعالجات / استمارات الحراري الرسمية / القراءات الحرارية الخام).
+// كل طلب مرتبط بنطاق ثابت مُلتقَط عند البدء (خطوط/تواريخ/أنواع) وبهوية الجلسة الحالية (جيل المصادقة + الرمز + المستخدم + عصر المسح).
+// يُرجع reportEnsureAux حزمة مُصدَّقة لنطاقها {ok, failed, stale, scope, rows:{treat,forms,raw}}؛ المستهلك يستعمل الحزمة لا الخانة العامة.
+// الخانة العامة _reportAux كاش فقط: لا تُكتب إلا من ردّ جلسة سليمة وهو أحدث طلب بدأ لتلك الخانة، وتُمسح عند مسح بيانات المستخدم.
+// الحالة: null = لم تُحمَّل، {ok:true, rows} = حُمّلت (قد تكون فارغة فعلاً)، {ok:false} = فشلت. الفشل لا يُعرض صفراً.
+let _reportAux = { treat: null, forms: null, raw: null };
+const _reportAuxTicket = { treat: 0, forms: 0, raw: 0 };
+let _reportCountSeq = 0, _reportTowersSeq = 0, _reportExportSeq = 0;
+const REPORT_AUX_TTL = 120000;
+function reportPurgeDerived() {
+  reportInvalidateAux();
+  _reportLineNames = [];
+  _reportBasis = { kind: 'historical', stale: false, liveOff: false };
+}
+function _reportSess() { return { gen: _csAuthGen, tok: CS_AUTH.token, uid: currentUser ? String(currentUser.id) : null, epoch: _reportEpoch }; }
+function _reportSessOk(s) { return !!s && s.gen === _csAuthGen && s.tok === CS_AUTH.token && s.epoch === _reportEpoch && !!currentUser && String(currentUser.id) === s.uid; }
+function _reportAuxScopeKey(lines, from, to) { return (lines ? lines.slice().sort().join('|') : '*') + '#' + (from || '') + '#' + (to || ''); }
+// بصمة كل مرشّحات التقرير الحالية (خطوط/تواريخ/أنواع/تصنيفات/نمط الأبراج): تغيّرها أثناء الانتظار = ردّ لنطاق آخر
+function reportScopeSig() {
+  const mode = (document.querySelector('input[name="repTowersMode"]:checked') || {}).value || 'all';
+  return JSON.stringify([getReportSelectedLines(), document.getElementById('repFrom').value, document.getElementById('repTo').value, getReportSelectedTypes(), getReportSelectedCategories(), mode,
+    document.getElementById('repTowerFrom').value, document.getElementById('repTowerTo').value, mode === 'specific' ? Array.from(document.querySelectorAll('.repTowerChk:checked')).map(b => b.value) : null]);
+}
+function reportCaptureScope() {
+  return Object.freeze({ lines: getReportSelectedLines(), from: document.getElementById('repFrom').value, to: document.getElementById('repTo').value, types: getReportSelectedTypes(), sig: reportScopeSig(), listSig: reportListSig(), sess: _reportSess() });
+}
+// بصمة قائمة الأبراج: الخطوط + التواريخ + الأنواع فقط (اختيار الأبراج نفسه لا يعيد بناء القائمة)
+function reportListSig() { return JSON.stringify([getReportSelectedLines(), document.getElementById('repFrom').value, document.getElementById('repTo').value, getReportSelectedTypes()]); }
+async function _reportAuxFetch(table, extra, dateCol, lines, from, to) {
+  // thermal_official_forms: the server allow-list (40_data_access) permits no line/date filter on this table, so it is read whole (only when the thermal type is selected) and scoped on the client by getReportFilteredThermalForms
+  if (table === 'thermal_official_forms') { lines = null; from = ''; to = ''; }
+  const out = [];
+  const parts = [];
+  if (from) parts.push(`${dateCol}=gte.${from}`);
+  if (to) parts.push(`${dateCol}=lte.${to}`);
+  if (extra) parts.push(extra);
+  const tail = parts.length ? '&' + parts.join('&') : '';
+  const targets = lines && lines.length ? lines : [null];
+  for (const ln of targets) {
+    const q = `${table}?select=${table === 'thermal_official_forms' ? 'id,line_name,inspection_date,created_by,rows' : '*'}` + (ln ? `&line_name=eq.${encodeURIComponent(ln)}` : '') + tail;
+    (await fetchAllPages(q)).forEach(r => out.push(r));
+  }
+  return out;
+}
+// يضمن تحميل ما تحتاجه الأنواع المختارة لنطاق مُلتقَط. stale=true: انتهت الجلسة/المسح أثناء الانتظار (النتيجة لا تُستهلك).
+async function reportEnsureAux(types, force, scope) {
+  scope = scope || reportCaptureScope();
+  const { lines, from, to, sess } = scope;
+  const key = _reportAuxScopeKey(lines, from, to);
+  const failed = []; const rows = { treat: [], forms: [], raw: [] };
+  const run = async (slot, fn) => {
+    const c = _reportAux[slot];
+    if (!force && c && c.ok && c.key === key && (Date.now() - c.at) <= REPORT_AUX_TTL) { rows[slot] = c.rows; return true; }
+    const my = ++_reportAuxTicket[slot];
+    let res;
+    try { res = { ok: true, key, at: Date.now(), rows: await fn() }; } catch (e) { res = { ok: false, key, at: Date.now(), rows: [] }; }
+    if (!_reportSessOk(sess)) return null;                                    // جلسة/مسح تغيّر: لا يُكتب شيء
+    if (my === _reportAuxTicket[slot]) _reportAux[slot] = res;               // الأحدث بدءاً فقط يملأ الكاش
+    rows[slot] = res.rows;
+    return res.ok;
+  };
+  let stale = false;
+  if (types.includes('treatment')) {
+    const r = await run('treat', async () => { const out = await _reportAuxFetch('treatments', 'order=created_at.desc', 'treatment_date', lines, from, to); if (csLiveEnabled() && !(await _reportEnsureMarks(force))) throw new Error('report_marks_unavailable'); return out; });
+    if (r === null) stale = true; else if (!r) failed.push('treatment');
+  }
+  if (!stale && types.includes('thermal')) {
+    const r1 = await run('forms', () => _reportAuxFetch('thermal_official_forms', 'order=inspection_date.desc', 'inspection_date', lines, from, to));
+    const r2 = r1 === null ? null : await run('raw', () => _reportAuxFetch('thermal_inspections', 'point_type=eq.tower&order=inspection_date.desc', 'inspection_date', lines, from, to));
+    if (r1 === null || r2 === null) stale = true; else if (!r1 || !r2) failed.push('thermal');
+  }
+  if (!_reportSessOk(sess)) stale = true;
+  return { ok: !failed.length && !stale, failed, stale, scope, rows };
+}
+// جلسة + نطاق + تذكرة تصدير ما زالت هي الحالية (يُستدعى بعد كل انتظار وقبل الإخراج مباشرة)
+function reportExportValid(scope, seq) { return seq === _reportExportSeq && reportScopeCurrent(scope); }
+function reportScopeChangedText() { return '⚠️ تغيّرت المرشّحات أو الجلسة أثناء تجهيز التقرير — لم يُصدَّر شيء، أعد التصدير'; }
+function reportAuxText(failed) {
+  const names = { treatment: 'المعالجات', thermal: 'الكشف الحراري' };
+  return '⚠️ تعذّر تحميل ' + failed.map(f => names[f] || f).join(' و') + ' — لا يُعرض صفراً ولا يُصدَّر تقرير ناقص';
+}
+// ردّ ما زال صالحاً لهذا النطاق: الجلسة نفسها والمرشّحات لم تتغيّر
+function reportScopeCurrent(scope, listOnly) { return !!scope && _reportSessOk(scope.sess) && (listOnly ? reportListSig() === scope.listSig : reportScopeSig() === scope.sig); }
+// يُبطل كاش التقارير الثانوي (بعد حذف/تعديل) ويمنع أي طلب جارٍ من إعادة ملئه
+function reportInvalidateAux() { _reportAux = { treat: null, forms: null, raw: null }; Object.keys(_reportAuxTicket).forEach(k => { _reportAuxTicket[k]++; }); }
+// v335-C6r7: الدخول = الهيكل + الخيارات + أسماء الخطوط فقط. المعالجات والاستمارات الحرارية والأرشيف الحراري والكشوفات لا تُقرأ هنا؛
+// تُجلب عند حاجة التقرير/الإجراء المحدد وبنطاقه (reportEnsureAux / fetchInspectionsForReport).
 async function openReportsPage() {
-  await Promise.all([
-    loadFullRecordsCache(true).catch(()=>{}),
-    loadTreatments().catch(()=>{}),
-    loadReportThermalForms().catch(()=>{}),
-    loadThermalArchive().catch(()=>{})
-  ]);
+  reportInvalidateAux();
+  await (csLiveEnabled() ? csLineNames().then(r => { if (r && r.ok) _reportLineNames = r.lines.slice(); }) : loadFullRecordsCache(true)).catch(()=>{});
 
   const lineSet = new Set();
   (fullRecordsCache||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); });
-  (treatmentsCache||[]).forEach(t => { if (t.line_name) lineSet.add(t.line_name); });
-  (reportThermalFormsCache||[]).forEach(f => { if (f.line_name) lineSet.add(f.line_name); });
-  (thermalRecords||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); }); // القراءات الخام أيضاً
+  if (csLiveEnabled()) { _reportLineNames.forEach(n => lineSet.add(n)); Object.keys(LINES_DATA || {}).forEach(n => lineSet.add(n)); }
   const uniqueLines = [...lineSet].sort((a,b) => a.localeCompare(b, 'ar'));
   const linesWrap = document.getElementById('repLinesWrap');
   linesWrap.innerHTML = uniqueLines.map(n => `
@@ -40,7 +123,10 @@ async function openReportsPage() {
   // حماية: لو تغيّرت بنية أزرار اختيار الأبراج مستقبلاً، لا نُسقط تهيئة الصفحة كلها
   const allTowersRadio = document.querySelector('input[name="repTowersMode"][value="all"]');
   if (allTowersRadio) allTowersRadio.checked = true;
-  onReportTowersModeChange();
+  // الدخول لا يحسب عدداً ولا يقرأ بيانات: يُحسب عند أول تغيير مرشّح أو إجراء
+  document.getElementById('repTowersRangeWrap').style.display = 'none';
+  document.getElementById('repTowersSpecificWrap').style.display = 'none';
+  document.getElementById('repResultCount').textContent = 'ℹ️ اختر الخطوط/الأنواع — يُحسب العدد وتُقرأ البيانات عند التغيير أو عند التصدير';
 }
 
 function onReportCategoryAllToggle() {
@@ -98,8 +184,8 @@ function getReportSelectedTypes() {
 // v335-C4: أساس التقرير. بلا تاريخ (من/إلى فارغان) = "الحالة الحالية" من الحالة الحيّة المعتمدة (نفس fullRecordsCache + طبقة العمليات المعلّقة المحلية، بلا حاسبة حالة ثانية).
 // بتاريخ = "تاريخي": كشوفات الفترة كما سُجّلت (جدول inspections) ولا تعكس المعالجات اللاحقة. الأصل في قاعدة البيانات لا يُلمس أبداً: الإلغاء الكامل إخفاء فقط.
 let _reportBasis = { kind: 'historical', stale: false, liveOff: false };
-function reportBasisText(ascii) {
-  const b = _reportBasis;
+function reportBasisText(ascii, basis) {
+  const b = basis || _reportBasis;
   if (ascii) return b.kind === 'current' ? ('Basis: CURRENT state (after treatments)' + (b.stale ? ' - MAY BE STALE (refresh failed)' : '')) : ('Basis: HISTORICAL (inspections as recorded; later treatments not reflected)' + (b.liveOff ? ' - live state off' : ''));
   return b.kind === 'current'
     ? '📍 الأساس: الحالة الحالية (بعد المعالجات)' + (b.stale ? ' — ⚠️ قد تكون قديمة: تعذّر التحديث الحيّ' : '')
@@ -113,19 +199,49 @@ async function _reportEnsureMarks(force) {
   try { await opsLoadMarks(); } catch (e) {}
   return !!(_opsMarks.ok && _opsMarks.at >= t0);
 }
-async function fetchInspectionsForReport(lines, from, to, force) {
+// v335-C6r7: التقرير الحالي يقرأ نطاقه فقط (الخطوط المحددة، أو كل الخطوط عند التقرير الشامل الصريح) بقراءة تفصيلية وحداثة لكل خط؛
+// نجاح النقل لا يعني اكتمال التغطية: برج غير مهيّأ/قيد الإصلاح داخل النطاق يمنع تقريراً «حالياً» كاملاً (PDF/Excel/أعداد) بسبب واضح، وخط غير ذي صلة خارج النطاق لا يمنعه.
+function reportCoverageError(cov) {
+  const e = new Error('report_coverage_incomplete'); e.coverage = cov; return e;
+}
+function reportErrorText(e) {
+  const m = String(e && e.message);
+  if (m === 'report_coverage_incomplete') {
+    const c = e.coverage || {};
+    return '⚠️ التقرير الحالي غير مكتمل التغطية: ' + csCoverageText(c) +
+      ((c.incomplete || []).length ? ' — الخطوط: ' + c.incomplete.slice(0, 4).join('، ') + (c.incomplete.length > 4 ? '…' : '') : '') + ' — لا يُصدَّر تقرير حالي ناقص. يمكن إصدار تقرير تاريخي لنفس الفترة.';
+  }
+  if (m === 'report_current_unavailable') return '⚠️ تعذّر تحميل الحالة الحالية — لن يُنشأ تقرير غير مكتمل';
+  return '⚠️ تعذّر التحقق من الكشوفات الملغاة — لن يُنشأ تقرير غير مُصفّى';
+}
+async function fetchInspectionsForReport(lines, from, to, force, out) {
   if (!(await _reportEnsureMarks(force))) throw new Error('report_marks_unavailable');
-  let rows;
+  let rows, basisNow = null;
   if (!from && !to && csLiveEnabled()) {
     const t0 = Date.now();
-    try { await loadFullRecordsCache(!!force); } catch (e) {}
-    const okAt = fullRecordsCacheLoadedAt;
-    const fresh = !!okAt && okAt >= t0 - (force ? 0 : 120000) && !_cacheUnresolved;
-    if (!fresh && !(fullRecordsCache && fullRecordsCache.length)) throw new Error('report_current_unavailable');
-    _reportBasis = { kind: 'current', stale: !fresh, liveOff: false };
-    rows = (fullRecordsCache || []).filter(r => r && (!lines || lines.includes(r.line_name)));
+    const scope = lines && lines.length ? lines.slice() : null;
+    // v335-C6r7: تماسك الملخّص/التفصيل. بعد القراءة كل صف بمعرّف ضمن النطاق يجب أن يكون تفصيلياً (ملاحظات/دورات من نفس إصدار الملخّص).
+    // خط فقد تفصيله (ملخّص بإصدار أحدث / ردّ أقدم أُهمل / ختم أُبطل) يُعاد قراءته تفصيلاً مرة واحدة بالقوة، وإلا لا تقرير حالي.
+    let sres = null, names = [], cov = null, scopeRows = [], lacking = [];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const only = attempt > 0 ? lacking : scope;
+      try { sres = await csLoadScope(only, attempt > 0 ? true : !!force, 'detail'); } catch (e) { sres = null; }
+      if (sres && (sres.aborted || sres.stale)) throw new Error('report_current_unavailable');
+      if (attempt === 0) names = sres && sres.lines && sres.lines.length ? sres.lines : (scope || []);
+      cov = csScopeCoverage(names, 'detail');
+      scopeRows = (fullRecordsCache || []).filter(r => r && (!lines || lines.includes(r.line_name)));
+      lacking = names.filter(ln => cov.unread.includes(ln) || scopeRows.some(r => r.line_name === ln && hasValidInspectionId(r.id) && !_rowHasDetail(r)));
+      if (!lacking.length) break;
+    }
+    if (!names.length || lacking.length) throw new Error('report_current_unavailable');          // خط من النطاق بلا تفصيل متماسك: لا أساس حالياً
+    const fresh = !!sres && sres.ok && names.every(ln => (loadedLineDetailAt[ln] || 0) >= t0 - (force ? 0 : 120000)) && !_cacheUnresolved;
+    if (cov.incomplete.length) throw reportCoverageError(cov);
+    _reportBasis = { kind: 'current', stale: !fresh, liveOff: false, coverage: cov, lines: names };
+    basisNow = _reportBasis;
+    rows = scopeRows;
   } else {
     _reportBasis = { kind: 'historical', stale: false, liveOff: !from && !to };
+    basisNow = _reportBasis;
     if (!from && !to && !lines) {
       rows = await fetchAllPages('inspections?select=*&order=created_at.desc');
     } else {
@@ -137,15 +253,16 @@ async function fetchInspectionsForReport(lines, from, to, force) {
       if (lines && lines.length > 1) rows = rows.filter(r => lines.includes(r.line_name));
     }
   }
-  return rows.filter(r => !(csLiveEnabled() && opsIsVoided(r.id)));   // إلغاء كامل = إخفاء (الأصل باقٍ في قاعدة البيانات)
+  if (out && typeof out === 'object') out.basis = basisNow;   // v335-C6r8c: أساس هذه القراءة نفسها (لا المتغيّر العام المشترك)
+  return rows.filter(r => !(csLiveEnabled() && opsIsVoided(r.id))).map(r => Object.assign({}, r, { _basis: basisNow }));   // إلغاء كامل = إخفاء (الأصل باقٍ في قاعدة البيانات)
 }
 // يُرجع المصفوفة أو null بعد تنبيه صريح (لا تقرير كامل غير مُصفّى بصمت)
-async function reportLoadInspections(types, force) {
+async function reportLoadInspections(types, force, out) {
   try {
     if (!(await _reportEnsureMarks(force))) throw new Error('report_marks_unavailable');
-    return types.includes('inspection') ? await getReportFilteredInspections(force) : [];
+    return types.includes('inspection') ? await getReportFilteredInspections(force, out) : [];
   } catch (e) {
-    showToast(String(e && e.message) === 'report_current_unavailable' ? '⚠️ تعذّر تحميل الحالة الحالية — لن يُنشأ تقرير غير مكتمل' : '⚠️ تعذّر التحقق من الكشوفات الملغاة — لن يُنشأ تقرير غير مُصفّى', 'error');
+    showToast(reportErrorText(e), 'error');
     return null;
   }
 }
@@ -154,9 +271,10 @@ async function reportLoadInspections(types, force) {
 // ---- v335-C4: عرض حالة المكوّن في التقارير (لا حاسبة حالة ثانية) ----
 // التقرير الحالي: يُستعمل حكم الخادم المخزَّن عند الاستيعاب (condition/data_status/applicability) + طبقة المعلّقات المحلية (opsPendingObserved / csPendingTreated).
 // التقرير التاريخي: لا يُستعمل أي حكم «اليوم»؛ الفارغ/المفقود = «غير مسجَّل» لا «سليم».
-function reportIsCurrent() { return _reportBasis && _reportBasis.kind === 'current'; }
+// v335-C6r8c: صف التقرير يحمل أساسه المُلتقَط (_basis)؛ الأساس العام المشترك احتياط فقط
+function reportIsCurrent(r) { const b = (r && r._basis) || _reportBasis; return !!b && b.kind === 'current'; }
 function reportAuthComp(r, key) {
-  if (!reportIsCurrent() || !r || typeof csComps !== 'function') return null;
+  if (!reportIsCurrent(r) || !r || typeof csComps !== 'function') return null;
   const info = csComps(r.line_name, r.tower_number);
   if (!info || info.sid == null || String(info.sid) !== String(r.id)) return null;   // الحكم يخصّ صف المصدر الحالي نفسه فقط
   return { comp: info.byK[key] || null, complete: !!info.complete };
@@ -166,7 +284,7 @@ function reportPendTreated(r, key) { try { const p = csPendingTreated(r.id); ret
 // 'defect' | 'treated' | 'healthy' | 'unknown' | 'invalid' | 'na'
 function reportTextStatus(r, key, text) {
   const t = (text == null ? '' : String(text)).trim();
-  if (reportIsCurrent()) {
+  if (reportIsCurrent(r)) {
     const po = reportPendObserved(r, key);
     if (!po) {
       const a = reportAuthComp(r, key);
@@ -194,7 +312,7 @@ function reportPhaseInfo(r, circuit, ph) {
   const arr = st && typeof st === 'object' && Array.isArray(st[ph]) ? st[ph] : null;
   const shape = !arr || !arr.length ? 'unknown' : (opsIsBoolArr(arr) ? 'ok' : 'invalid');
   let comp = null;
-  if (reportIsCurrent() && !reportPendObserved(r, key)) { const a = reportAuthComp(r, key); comp = a && a.comp; }
+  if (reportIsCurrent(r) && !reportPendObserved(r, key)) { const a = reportAuthComp(r, key); comp = a && a.comp; }
   if (comp) {
     if (comp.ap === 'not_applicable') return { st: 'na' };
     if (comp.ds === 'invalid') return { st: 'invalid' };
@@ -205,7 +323,7 @@ function reportPhaseInfo(r, circuit, ph) {
   }
   if (shape !== 'ok') return { st: shape };
   if (arr.some(Boolean)) return { st: 'damaged', arr };
-  if (reportIsCurrent() && reportPendTreated(r, key)) return { st: 'treated', arr };
+  if (reportIsCurrent(r) && reportPendTreated(r, key)) return { st: 'treated', arr };
   return { st: 'healthy', arr };
 }
 function reportCircuitInsEval(r, circuit, label) {
@@ -237,7 +355,7 @@ function reportCell(c, r) {
     return ({ na: 'غير منطبق', invalid: 'بيانات غير صالحة', unknown: 'غير معروف / غير مسجَّل', healthy: 'سليم', treated: '✔ تمت المعالجة (لا ضرر متبقٍ)' })[pi.st] || c.get(r);
   }
   const m = REPORT_CELL_KEYS[c.label];
-  if (m && reportIsCurrent()) {
+  if (m && reportIsCurrent(r)) {
     const raw = m[0] === 'fire' ? reportFireText(r) : r[m[1]];
     const t = (raw == null ? '' : String(raw)).trim();
     const st = reportTextStatus(r, m[0], raw);
@@ -250,34 +368,36 @@ function reportCell(c, r) {
   return c.get(r);
 }
 
-async function getReportAvailableTowers() {
-  const lines = getReportSelectedLines(); // null = كل الخطوط
-  const from = document.getElementById('repFrom').value;
-  const to = document.getElementById('repTo').value;
-  const types = getReportSelectedTypes();
+// v335-C6r8: يرجع null إن تغيّر النطاق/الجلسة أثناء الانتظار (ردّ قديم لا يُستهلك)
+async function getReportAvailableTowers(scope) {
+  scope = scope || reportCaptureScope();
+  const { lines, from, to, types } = scope;
   const towers = new Set();
+  const aux = await reportEnsureAux(types, false, scope);
+  if (aux.stale || !reportScopeCurrent(scope, true)) return null;
+  if (!aux.ok) showToast(reportAuxText(aux.failed), 'error');
   if (types.includes('inspection')) {
     let rows;
     try { rows = await fetchInspectionsForReport(lines, from, to); }
-    catch (e) { showToast('⚠️ تعذّر تحميل قائمة الأبراج (الحالة/الإلغاءات غير متاحة)', 'error'); rows = []; }
+    catch (e) { showToast(String(e && e.message) === 'report_coverage_incomplete' ? reportErrorText(e) : '⚠️ تعذّر تحميل قائمة الأبراج (الحالة/الإلغاءات غير متاحة)', 'error'); rows = []; }
     rows.forEach(r => { if (r.tower_number != null) towers.add(String(r.tower_number)); });
   }
   if (types.includes('treatment')) {
-    (treatmentsCache||[]).forEach(t => {
+    (aux.rows.treat || []).forEach(t => {
       if (!opsIsVoided(t.id) && (!lines || lines.includes(t.line_name)) && (!from || (t.treatment_date||'') >= from) && (!to || (t.treatment_date||'') <= to) && t.tower_number != null) {
         towers.add(String(t.tower_number));
       }
     });
   }
   if (types.includes('thermal')) {
-    (reportThermalFormsCache||[]).forEach(f => {
+    (aux.rows.forms || []).forEach(f => {
       if (lines && !lines.includes(f.line_name)) return;
       if (from && (f.inspection_date||'') < from) return;
       if (to && (f.inspection_date||'') > to) return;
       (Array.isArray(f.rows) ? f.rows : []).forEach(row => { if (row.tower_number) towers.add(String(row.tower_number)); });
     });
     // القراءات الخام أيضاً — بدونها ما تظهر بقائمة الاختيار الأبراج اللي إلها قراءة ميدانية بس
-    (thermalRecords||[]).forEach(r => {
+    (aux.rows.raw || []).forEach(r => {
       if (r.point_type !== 'tower') return;
       if (lines && !lines.includes(r.line_name)) return;
       if (from && (r.inspection_date||'') < from) return;
@@ -285,13 +405,16 @@ async function getReportAvailableTowers() {
       if (r.tower_number != null) towers.add(String(r.tower_number));
     });
   }
+  if (!reportScopeCurrent(scope, true)) return null;
   return [...towers].sort((a,b) => (parseInt(a)||0) - (parseInt(b)||0) || a.localeCompare(b));
 }
 
 async function updateReportTowersList() {
   const wrap = document.getElementById('repTowersWrap');
   wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">⏳ جاري التحميل...</div>';
-  const towers = await getReportAvailableTowers();
+  const mySeq = ++_reportTowersSeq;
+  const towers = await getReportAvailableTowers(reportCaptureScope());
+  if (towers === null || mySeq !== _reportTowersSeq) return;   // v335-C6r8: ردّ لنطاق/جلسة قديمة لا يكتب القائمة
   if (!towers.length) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد أبراج مطابقة</div>'; return; }
   wrap.innerHTML = towers.map(tn => `
     <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
@@ -353,22 +476,22 @@ function dedupeLatestPerTowerDate(rows, dateField) {
   return [...map.values()];
 }
 
-async function getReportFilteredInspections(force) {
+async function getReportFilteredInspections(force, out) {
   const lines = getReportSelectedLines(); // null = كل الخطوط
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
-  const rows = await fetchInspectionsForReport(lines, from, to, force);
+  const rows = await fetchInspectionsForReport(lines, from, to, force, out);
   const base = rows.filter(r => reportTowerPasses(r.tower_number));
   // ملاحظة مهمة: لا نفلتر بالتصنيف هنا — كل برج مطابق للخط/التاريخ/نطاق الأبراج يظهر بالتقرير دائماً،
   // والتصنيف المختار يتحكم بس بشنو المعلومات تُعرض بكل بطاقة (سليم أو تفاصيل الضرر) — راجع buildReportInspectionCardCanvas
   return sortByLineThenTower(dedupeLatestPerTowerDate(base, 'inspection_date'), 'tower_number');
 }
-function getReportFilteredTreatments() {
+function getReportFilteredTreatments(auxRows) {
   const lines = getReportSelectedLines();
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const categories = getReportSelectedCategories();
-  const base = (treatmentsCache||[]).filter(t =>
+  const base = (auxRows || []).filter(t =>
     !(csLiveEnabled() && opsIsVoided(t.id)) &&   // v335-C4: إلغاء كامل فقط؛ الإلغاء الجزئي لا يُخفي المعالجة كلها
     (!lines || lines.includes(t.line_name)) &&
     (!from || (t.treatment_date||'') >= from) &&
@@ -378,13 +501,13 @@ function getReportFilteredTreatments() {
   const latest = dedupeLatestPerTowerDate(base, 'treatment_date');
   return sortByLineThenTower(latest.filter(t => treatmentMatchesCategories(t, categories)), 'tower_number');
 }
-function getReportFilteredThermalForms() {
+function getReportFilteredThermalForms(auxRows) {
   const lines = getReportSelectedLines();
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   // التصنيف يُتجاهل هنا (متفق عليه) — الكشف الحراري بيانات حرارة بس، ماله علاقة بقواعد/حديد/عوازل
   // فلتر الأبراج يُطبَّق على مستوى الصفوف داخل كل استمارة (استمارة واحدة تغطي عدة أبراج)
-  return (reportThermalFormsCache||[])
+  return (auxRows || [])
     .filter(f => (!lines || lines.includes(f.line_name)) && (!from || (f.inspection_date||'') >= from) && (!to || (f.inspection_date||'') <= to))
     .map(f => ({
       ...f,
@@ -396,11 +519,11 @@ function getReportFilteredThermalForms() {
 }
 
 // القراءات الحرارية الخام (من شاشة "كشف حراري ← جديد") — مصدر منفصل عن الاستمارات الرسمية
-function getReportFilteredThermalRaw() {
+function getReportFilteredThermalRaw(auxRows) {
   const lines = getReportSelectedLines();
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
-  return (thermalRecords||[]).filter(r =>
+  return (auxRows || []).filter(r =>
     r.point_type === 'tower' &&
     (!lines || lines.includes(r.line_name)) &&
     (!from || (r.inspection_date||'') >= from) &&
@@ -484,23 +607,29 @@ async function buildThermalNotesCardCanvas(lineName, towerNumber, notes) {
 }
 
 async function updateReportResultCount() {
-  const types = getReportSelectedTypes();
+  // v335-C6r8: النطاق والجلسة مُلتقَطان عند البدء؛ ردّ قديم (نطاق آخر/طلب أحدث/جلسة منتهية) لا يكتب العدد ولا يُظهر فشله.
+  const scope = reportCaptureScope(); const types = scope.types; const mySeq = ++_reportCountSeq;
+  const mine = () => mySeq === _reportCountSeq && reportScopeCurrent(scope);
   const el = document.getElementById('repResultCount');
   el.textContent = '⏳ جاري الحساب...';
   let parts = [];
+  const aux = await reportEnsureAux(types, false, scope);
+  if (aux.stale || !mine()) return;
   if (types.includes('inspection')) {
-    try { parts.push(`📋 كشف: ${(await getReportFilteredInspections()).length} — ${reportBasisText(false)}`); }
-    catch (e) { parts.push('⚠️ تعذّر تحميل الكشوفات (الحالة الحالية/الإلغاءات غير متاحة)'); }
+    try { const n = (await getReportFilteredInspections()).length; if (!mine()) return; parts.push(`📋 كشف: ${n} — ${reportBasisText(false)}`); }
+    catch (e) { if (!mine()) return; parts.push(String(e && e.message) === 'report_coverage_incomplete' ? reportErrorText(e) : '⚠️ تعذّر تحميل الكشوفات (الحالة الحالية/الإلغاءات غير متاحة)'); }
   }
-  if (types.includes('treatment')) parts.push(`🔧 معالجة: ${getReportFilteredTreatments().length}`);
-  if (types.includes('thermal')) {
+  if (types.includes('treatment')) parts.push(aux.failed.includes('treatment') ? '🔧 معالجة: ⚠️ تعذّر التحميل' : `🔧 معالجة: ${getReportFilteredTreatments(aux.rows.treat).length}`);
+  if (types.includes('thermal') && aux.failed.includes('thermal')) parts.push('🌡️ كشف حراري: ⚠️ تعذّر التحميل');
+  else if (types.includes('thermal')) {
     // نحسب عدد الأبراج المشمولة (من المصدرين معاً: القراءات الخام + صفوف الاستمارات الرسمية)
     // بدل عدد الاستمارات — لأن التقرير صار يعرض ملاحظة لكل برج لا جدول لكل استمارة
     const towers = new Set();
-    getReportFilteredThermalRaw().forEach(r => towers.add(r.line_name + '||' + r.tower_number));
-    getReportFilteredThermalForms().forEach(f => (f.rows||[]).forEach(row => towers.add(f.line_name + '||' + row.tower_number)));
+    getReportFilteredThermalRaw(aux.rows.raw).forEach(r => towers.add(r.line_name + '||' + r.tower_number));
+    getReportFilteredThermalForms(aux.rows.forms).forEach(f => (f.rows||[]).forEach(row => towers.add(f.line_name + '||' + row.tower_number)));
     parts.push(`🌡️ كشف حراري: ${towers.size} برج`);
   }
+  if (!mine()) return;
   el.textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
 }
 
@@ -572,7 +701,7 @@ async function buildReportInspectionCardCanvas(r, categories) {
       // كل دائرة متضررة تُبنى كصورة مستقلة (forceSingleCircuit=true) بعنوانها الخاص — بدل صورة واحدة مدمجة
       const img = buildInsulatorExportPNG(ev.stateJSON, r.voltage, r.tower_type, r.line_name, c === 2 ? r.insulator_cycle_2 : r.insulator_cycle, null, null, r.tower_number, c === 2 ? r.insulator_chain_types_2 : r.insulator_chain_types, null, true);
       if (img) insuratorImageCards.push(await buildInsulatorImageCard(r, img, names[c]));
-      if (!matNote && reportIsCurrent()) {
+      if (!matNote && reportIsCurrent(r)) {
         const inf = (typeof csTowerInfo === 'function') ? csTowerInfo(r.line_name, r.tower_number) : null;
         if (inf && ['missing', 'incomplete', 'invalid'].indexOf(inf.materialsStatus) >= 0) { matNote = true; lines.push('⚠️ مادة السلاسل غير معروفة/غير مكتملة بالحالة الحيّة — الرسم لا يدلّ على نوع المادة'); }
       }
@@ -673,11 +802,17 @@ async function exportUnifiedReportExcel() {
   const categories = getReportSelectedCategories();
   showToast('⏳ جاري تجهيز البيانات...');
 
-  const inspections = await reportLoadInspections(types, true);
+  const scopeE = reportCaptureScope(); const seqE = ++_reportExportSeq;
+  const basisE = {};
+  const inspections = await reportLoadInspections(types, true, basisE);
   if (inspections === null) return;
-  const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
-  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
-  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
+  const auxE = await reportEnsureAux(types, true, scopeE);
+  // v335-C6r8: تغيّر المرشّحات/الجلسة أو تصدير أحدث أثناء التحضير = إلغاء صريح (لا خلط نطاقات ولا ناتج فارغ كاذب)
+  if (auxE.stale || seqE !== _reportExportSeq || !reportScopeCurrent(scopeE)) { showToast(reportScopeChangedText(), 'error'); return; }
+  if (!auxE.ok) { showToast(reportAuxText(auxE.failed), 'error'); return; }
+  const treatments = types.includes('treatment') ? getReportFilteredTreatments(auxE.rows.treat) : [];
+  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms(auxE.rows.forms) : [];
+  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw(auxE.rows.raw) : [];
 
   if (!inspections.length && !treatments.length && !thermalForms.length && !thermalRaw.length) {
     showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
@@ -685,6 +820,7 @@ async function exportUnifiedReportExcel() {
   }
 
   await ensureXLSXLoaded(); // Lazy load: يضمن اكتمال تحميل XLSX قبل الاستخدام
+  if (!reportExportValid(scopeE, seqE)) { showToast(reportScopeChangedText(), 'error'); return; }   // v335-C6r8c: بعد انتظار المكتبة
   const wb = XLSX.utils.book_new();
 
   if (inspections.length) {
@@ -738,8 +874,9 @@ async function exportUnifiedReportExcel() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'كشف حراري');
   }
 
-  if (types.includes('inspection')) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 'أساس بيانات الكشف': reportBasisText(false) }]), 'أساس التقرير');
-  XLSX.writeFile(wb, 'تقرير_' + (types.includes('inspection') ? (_reportBasis.kind === 'current' ? 'حالي_' : 'تاريخي_') : '') + new Date().toISOString().split('T')[0] + '.xlsx');
+  if (types.includes('inspection')) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 'أساس بيانات الكشف': reportBasisText(false, basisE.basis) }]), 'أساس التقرير');
+  if (!reportExportValid(scopeE, seqE)) { showToast(reportScopeChangedText(), 'error'); return; }   // v335-C6r8c: فوراً قبل كتابة الملف
+  XLSX.writeFile(wb, 'تقرير_' + (types.includes('inspection') ? ((basisE.basis || _reportBasis).kind === 'current' ? 'حالي_' : 'تاريخي_') : '') + new Date().toISOString().split('T')[0] + '.xlsx');
   showToast('✅ تم تصدير Excel');
 }
 
@@ -748,11 +885,16 @@ async function generateUnifiedReportPDF() {
   if (!types.length) { showToast('⚠️ اختر نوع بيانات واحد على الأقل', 'error'); return; }
   const categories = getReportSelectedCategories();
 
-  const inspections = await reportLoadInspections(types, true);
+  const scopeP = reportCaptureScope(); const seqP = ++_reportExportSeq;
+  const basisP = {};
+  const inspections = await reportLoadInspections(types, true, basisP);
   if (inspections === null) return;
-  const treatments = types.includes('treatment') ? getReportFilteredTreatments() : [];
-  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw() : [];
-  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms() : [];
+  const auxP = await reportEnsureAux(types, true, scopeP);
+  if (auxP.stale || seqP !== _reportExportSeq || !reportScopeCurrent(scopeP)) { showToast(reportScopeChangedText(), 'error'); return; }
+  if (!auxP.ok) { showToast(reportAuxText(auxP.failed), 'error'); return; }
+  const treatments = types.includes('treatment') ? getReportFilteredTreatments(auxP.rows.treat) : [];
+  const thermalRaw = types.includes('thermal') ? getReportFilteredThermalRaw(auxP.rows.raw) : [];
+  const thermalForms = types.includes('thermal') ? getReportFilteredThermalForms(auxP.rows.forms) : [];
 
   if (!inspections.length && !treatments.length && !thermalRaw.length && !thermalForms.length) {
     showToast('⚠️ لا توجد بيانات مطابقة لإصدار تقرير', 'error');
@@ -775,8 +917,11 @@ async function generateUnifiedReportPDF() {
   thermalForms.forEach(f => (f.rows||[]).forEach(row => addTower(f.line_name, row.tower_number)));
   const towerList = sortByLineThenTower([...towerMap.values()], 'tower_number');
 
+  // v335-C6r8c: كل انتظار غير متزامن (مكتبة/بطاقات/مشاركة) يُتبع بإعادة التحقق من الجلسة والنطاق وتذكرة التصدير؛ الإبطال يوقف الإخراج
+  const stopIfStale = () => { if (!reportExportValid(scopeP, seqP)) { const e = new Error('report_export_aborted'); e.aborted = true; throw e; } };
   try {
     await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
+    stopIfStale();
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
     const pageW = doc.internal.pageSize.getWidth();
@@ -790,6 +935,7 @@ async function generateUnifiedReportPDF() {
       if (y > marginTop && y + h > pageH - marginBottom) { doc.addPage(); y = marginTop; }
     }
     async function drawCard(card) {
+      stopIfStale();
       const drawW = pageW - marginX*2;
       const drawH = card.h * (drawW / card.w);
       ensureSpace(drawH + 8);
@@ -800,7 +946,7 @@ async function generateUnifiedReportPDF() {
     doc.setFontSize(13); doc.setTextColor(0,0,0);
     doc.text('Unified Report', pageW/2, 26, { align: 'center' });
     doc.setFontSize(9);
-    doc.text(new Date().toLocaleDateString('en-GB') + (types.includes('inspection') ? '  |  ' + reportBasisText(true) : ''), pageW/2, 38, { align: 'center' });
+    doc.text(new Date().toLocaleDateString('en-GB') + (types.includes('inspection') ? '  |  ' + reportBasisText(true, basisP.basis) : ''), pageW/2, 38, { align: 'center' });
     y = 50;
 
     for (const { line_name, tower_number } of towerList) {
@@ -813,11 +959,14 @@ async function generateUnifiedReportPDF() {
       if (thermalNotes.length) await drawCard(await buildThermalNotesCardCanvas(line_name, tower_number, thermalNotes));
     }
 
+    stopIfStale();
     const blob = doc.output('blob');
-    const filename = 'تقرير_' + (types.includes('inspection') ? (_reportBasis.kind === 'current' ? 'حالي_' : 'تاريخي_') : '') + new Date().toISOString().split('T')[0] + '.pdf';
+    const filename = 'تقرير_' + (types.includes('inspection') ? ((basisP.basis || _reportBasis).kind === 'current' ? 'حالي_' : 'تاريخي_') : '') + new Date().toISOString().split('T')[0] + '.pdf';
+    stopIfStale();
     await shareOrDownloadFile(blob, filename, 'application/pdf');
     showToast('✅ تم تجهيز التقرير');
   } catch (err) {
+    if (err && err.aborted) { showToast(reportScopeChangedText(), 'error'); return; }
     console.error(err);
     showToast('❌ تعذر تجهيز التقرير', 'error');
   }
@@ -1017,6 +1166,7 @@ async function hubDeleteSingleTreatment(id) {
 async function hubDeleteOfficialForm(id) {
   await deleteOfficialFormFromArchive(id);
   await loadReportThermalForms();
+  reportInvalidateAux();
   renderHubDetail();
 }
 async function hubDeleteRawThermal(id) {
@@ -1026,6 +1176,7 @@ async function hubDeleteRawThermal(id) {
     const res = await sbFetch(`thermal_inspections?id=eq.${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error();
     thermalRecords = thermalRecords.filter(r => r.id !== id);
+    reportInvalidateAux();
     showToast('🗑️ تم الحذف');
     renderHubDetail();
   } catch (e) { showToast('❌ تعذر الحذف', 'error'); }
@@ -1062,6 +1213,7 @@ async function deleteWholeHubDate() {
     records = records.filter(r => !succeededIds.includes(r.id));
   }
   else treatmentsCache = treatmentsCache.filter(t => !succeededIds.includes(t.id));
+  reportInvalidateAux();
   const success = succeededIds.length;
   showToast(success === n ? `🗑️ تم حذف ${success} من ${n}` : `⚠️ تم حذف ${success} من ${n} فقط — راجع سجل المتصفح لمعرفة السبب`, success === n ? undefined : 'error');
   goBackFromOperation(); // نرجع لقائمة التواريخ لأن هذا التاريخ ما عاد موجود

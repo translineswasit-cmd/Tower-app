@@ -109,10 +109,13 @@ async function openDepExportModalImpl() {
 
   const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar'));
   const linesWithOpenDeps = uniqueLines.filter(name => getActiveDepartureTowers(name).length > 0);
+  // v335-C6r7: أبراج غير معروفة الحالة (غير مهيّأة/قيد الإصلاح) في خط مقروء: لا «لا توجد مغادرات» مطلقة، ولا يُسمح بتصدير الخط حتى تكتمل تغطيته
+  const _covAll = csLiveEnabled() ? csScopeCoverage(uniqueLines, 'summary') : null;
+  const _covNote = _covAll && _covAll.incomplete.length ? '<div style="font-size:0.78rem;color:#822727;background:#FFF5F5;border-radius:8px;padding:8px;margin-bottom:8px">⚠️ ' + csCoverageText(_covAll) + ' — خطوط: ' + _covAll.incomplete.slice(0, 4).join('، ') + (_covAll.incomplete.length > 4 ? '…' : '') + ' — الخط الناقص لا يُصدَّر كاملاً</div>' : '';
   if (!linesWithOpenDeps.length) {
-    wrap.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات مفتوحة</div>';
+    wrap.innerHTML = _covNote + (_covNote ? '<div class="empty-state">لا مغادرات مفتوحة بين الأبراج المعروفة</div>' : '<div class="empty-state">✅ لا توجد مغادرات مفتوحة</div>');
   } else {
-    wrap.innerHTML = linesWithOpenDeps.map(name => `
+    wrap.innerHTML = _covNote + linesWithOpenDeps.map(name => `
       <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5">
         <input type="checkbox" class="depExportLineChk" value="${name.replace(/"/g,'&quot;')}" onchange="updateDepExportTowerList()">
         <span>${name}</span>
@@ -209,6 +212,14 @@ async function exportOpenDeparturesPDF() {
   showToast(`⏳ جاري تحضير PDF لـ${selectedTowers.length} برج...`);
   // تأخير بسيط لإظهار التوست قبل بدء العملية الثقيلة
   await new Promise(r => setTimeout(r, 100));
+  // v335-C6r7: التصدير تقرير صريح: يقرأ تفاصيل الخطوط المحددة فقط (دورات/ملاحظات/اسم الفني/ملاحظة الطريق)، ويُمنع إن كانت تغطية أي منها غير مكتملة (لا برج يختفي بصمت)
+  if (csLiveEnabled()) {
+    const _ls = Object.keys(byLine);
+    let _sr = null; try { _sr = await csLoadScope(_ls, true, 'detail'); } catch (e) { _sr = null; }
+    const _cov = csScopeCoverage(_ls, 'detail');
+    if (!_sr || !_sr.ok || _cov.unread.length) { showToast('⚠️ تعذّر تحميل الحالة الحالية للخطوط المحددة — لن يُنشأ تصدير غير مكتمل', 'error'); return; }
+    if (_cov.incomplete.length) { showToast('⚠️ تغطية الحالة غير مكتملة: ' + csCoverageText(_cov) + ' (' + _cov.incomplete.slice(0, 3).join('، ') + ') — لن يُصدَّر تقرير مغادرات حالي ناقص', 'error'); return; }
+  }
 
   try {
     await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام

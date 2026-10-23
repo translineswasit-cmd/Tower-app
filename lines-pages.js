@@ -1,4 +1,4 @@
-/* lines-pages.js — v335-C5r9
+/* lines-pages.js — v335-C6r6 (line status: no all-lines read on open; per-line / explicit all-lines read)
    صفحتا «بيانات الخطوط» و«حالة الخطوط» وتفاصيل أبراج الخط (عرض فقط). مزوّدات البيانات (linesInfoCache، getLineTowers، calcLineHealthWithTreatments) تبقى في index.html.
    يُحمَّل ويُنفَّذ مرة واحدة فقط عند الطلب الفعلي؛ لا يعمل عند بدء التطبيق. سكربت كلاسيكي يشارك الربط العام مع index.html. */
 function showLinesInfoImpl() {
@@ -18,7 +18,8 @@ async function showLinesStatusImpl(tok) {
   document.getElementById('linesStatusView').style.display = '';
   document.getElementById('linesStatusBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   try {
-    await Promise.all([loadTreatments(), loadFullRecordsCache()]);
+    // v335-C6r6: الحالة الحيّة = شاشة الدخول لا تقرأ حالة الخطوط (لا loadTreatments ولا الخطوط الـ33)؛ كل خط يُقرأ بطلب منه أو بطلب «قراءة الكل» الصريح
+    if (!csLiveEnabled()) await Promise.all([loadTreatments(), loadFullRecordsCache()]);
     if (!featEntryOk(tok)) return;   // غادر المستخدم الصفحة/تغيّرت الجلسة/طُلب غيرها أثناء الجلب: لا نرسم
     renderLinesStatus();
   } catch (err) {
@@ -106,6 +107,14 @@ function renderLinesStatus() {
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
     const _n400 = l.name+' 400 ك.ف', _n132 = l.name+' 132 ك.ف';
     const lineName = (LINES_DATA[_n400]||lineTowersCache[_n400]) ? _n400 : ((LINES_DATA[_n132]||lineTowersCache[_n132]) ? _n132 : null);
+    if (lineName && csLiveEnabled() && !loadedLineCacheAt[lineName]) {      // لم يُقرأ بعد: ليس «لم يتم الكشف» ولا «سليم»
+      html += '<div class="form-card" style="margin-bottom:12px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">' +
+        '<div style="font-weight:700;font-size:14px;color:#1a5276">' + l.name + '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:' + vc + ';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">' + l.voltage + ' ك.ف</span>' +
+        '<span style="background:#EDF2F7;color:#4A5568;padding:3px 10px;border-radius:20px;font-size:11px">لم تُقرأ حالته بعد</span>' +
+        '<button class="btn btn-secondary btn-sm" onclick="loadLineStatusOne(\'' + lineName.replace(/'/g,"\\'") + '\')">قراءة الحالة</button></div></div></div>';
+      return;
+    }
     const health = lineName ? calcLineHealthWithTreatments(lineName) : null;
     let badge, elBar, mBar, washBar;
     const getColor = s => s>=80?'#1e8449':s>=60?'#f39c12':'#c0392b';
@@ -132,6 +141,8 @@ function renderLinesStatus() {
       const washPct = withWash.length > 0 ? Math.round(cleanCount / withWash.length * 100) : 100;
       washBar = makeBar(washPct, getWashColor(washPct), getWashLbl(washPct));
     }
+    const _cv = lineName ? ((_csLineEnv.get(lineName) || {}).coverage) : null;   // v335-C6r6: تغطية مخزن الحالة — لا يُدّعى اكتمال تقرير ناقص
+    if (_cv && _cv.complete === false) badge += ' <span style="background:#C53030;color:#fff;padding:3px 10px;border-radius:20px;font-size:11px">⚠️ تغطية غير مكتملة: ' + _cv.uninitialised + ' برج غير مهيّأ</span>';
     const clickAttr = lineName ? ` onclick="openLineTowerDetails('${lineName.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
     html += '<div class="form-card" style="margin-bottom:12px;padding:14px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">' +
@@ -144,7 +155,24 @@ function renderLinesStatus() {
   // v333: المعالجات المحفوظة قد تكون قديمة بعد فشل التحديث — تنبيه صريح (العلم treatmentsLoadFailed الموجود)
   const staleNote = (typeof treatmentsLoadFailed !== 'undefined' && treatmentsLoadFailed)
     ? '<div style="color:#92400E;background:#FEF3C7;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px">⚠️ تعذّر تحديث سجل المعالجات — احتساب الأسلاك يعتمد على نسخة محفوظة قد تكون قديمة.</div>' : '';
-  body.innerHTML = staleNote + (html || '<div class="empty-state">لا توجد بيانات</div>');
+  const allBtn = csLiveEnabled() ? '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-secondary btn-sm" id="linesStatusAllBtn" onclick="loadAllLinesStatus()">📊 قراءة حالة كل الخطوط</button><span style="font-size:0.74rem;color:#718096">اقرأ خطاً واحداً من بطاقته، أو كل الخطوط بطلب صريح.</span></div>' : '';
+  body.innerHTML = staleNote + allBtn + (html || '<div class="empty-state">لا توجد بيانات</div>');
+}
+
+// قراءة خط واحد من مخزن الحالة ثم إعادة رسم الصفحة (طلب واحد)
+async function loadLineStatusOne(lineName) {
+  const tok = featTok('lpg', true);
+  try { await loadLineRecordsCache(lineName, true); } catch (e) { try { showToast('⚠️ تعذّرت قراءة حالة الخط من الخادم', 'error'); } catch (e2) {} return; }
+  if (!featEntryOk(tok)) return;
+  renderLinesStatus();
+}
+// قراءة صريحة لكل الخطوط (تقرير شامل بالحالة الحالية)
+async function loadAllLinesStatus() {
+  const tok = featTok('lpg', true);
+  const btn = document.getElementById('linesStatusAllBtn'); if (btn) { btn.disabled = true; btn.textContent = '⏳ جارٍ قراءة كل الخطوط…'; }
+  try { await loadFullRecordsCache(true); } catch (e) {}
+  if (!featEntryOk(tok)) return;
+  renderLinesStatus();
 }
 
 // ========================
@@ -160,7 +188,9 @@ async function openLineTowerDetails(lineName) {
   document.getElementById('lineTowerListView').style.display = '';
   document.getElementById('lineTowerListTitle').textContent = '🗼 أبراج خط ' + lineName;
   document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
-  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
+  if (csLiveEnabled()) {   // v335-C6r6: الخط المختار وحده (طلب واحد) — لا loadTreatments ولا بقية الخطوط
+    try { await loadLineRecordsCache(lineName, true); } catch (e) { if (!featEntryOk(tok)) return; if (!loadedLineCacheAt[lineName]) { document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا الخط من الخادم — تحقق من الاتصال وحاول مرة أخرى</div>'; return; } }
+  } else await Promise.all([loadTreatments(), loadFullRecordsCache()]);
   if (!featEntryOk(tok)) return;
   renderLineTowerList(lineName);
 }
@@ -183,11 +213,14 @@ function renderLineTowerList(lineName) {
 
   if (!towers.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات أبراج لهذا الخط</div>'; return; }
 
-  let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
+  let html = (typeof csLineBanner === 'function' ? csLineBanner(lineName) : '') + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
   towers.forEach(t => {
     const r = recByTower[t.num];
     let statusBadge, borderColor;
-    if (!r) {
+    const _inf = (typeof csTowerInfo === 'function' && csLiveEnabled()) ? csTowerInfo(lineName, t.num) : null;
+    if (!r && _inf && _inf.status === 'uninitialized') {
+      statusBadge = '⚠️ غير مهيّأ'; borderColor = '#E53E3E';
+    } else if (!r) {
       statusBadge = '⚪ لم يُكشف'; borderColor = '#BDC3C7';
     } else {
       const deps = extractDepsFromRecord(r);

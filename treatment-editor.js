@@ -45,8 +45,8 @@ function goToTreatThisTowerImpl(lineName, towerNum) {
       lineSel.appendChild(opt);
     }
     lineSel.value = lineName;
-    onTreatLineChange();
-    setTimeout(() => {
+    Promise.resolve(onTreatLineChange()).then(() => {   // v335-C6r7: اختيار الخط يقرأ ملخّصه أولاً؛ بعده يُختار البرج
+      if (document.getElementById('treatLine').value !== lineName) return;
       const towerSel = document.getElementById('treatTower');
       if (![...towerSel.options].some(o => o.value === towerNum)) {
         const opt = document.createElement('option'); opt.value = towerNum; opt.textContent = 'برج ' + towerNum;
@@ -55,7 +55,7 @@ function goToTreatThisTowerImpl(lineName, towerNum) {
       towerSel.value = towerNum;
       towerSel.disabled = false;
       onTreatTowerChange();
-    }, 50);
+    });
   }, 50);
 }
 
@@ -67,9 +67,12 @@ function populateTreatLines() {
   const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
   // نستخدم فهرس "آخر سجل لكل برج" بدل مسح كل التاريخ — أسرع بكثير (لا يكبر مع تراكم الكشوفات
   // القديمة) وأدق أيضاً (يعكس الحالة الحالية فقط، مو كشف قديم انصلح لاحقاً)
-  const linesWithDeps = Object.keys(latestRecordsIndex).filter(lineName =>
-    Object.values(latestRecordsIndex[lineName]).some(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
-  ).sort();
+  // v335-C6r7: الحالة الحيّة = أسماء كل خطوط التطبيق فوراً دون أي قراءة (لا يُعرف أي خط فيه مغادرات قبل قراءته)؛ الخط المختار يُقرأ وحده في onTreatLineChange
+  const linesWithDeps = csLiveEnabled()
+    ? Array.from(new Set(Object.keys(LINES_DATA || {}).concat(Object.keys(latestRecordsIndex)))).sort()
+    : Object.keys(latestRecordsIndex).filter(lineName =>
+        Object.values(latestRecordsIndex[lineName]).some(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
+      ).sort();
   linesWithDeps.forEach(name => {
     const opt = document.createElement('option');
     opt.value = name; opt.textContent = name;
@@ -88,15 +91,40 @@ function onTreatLineChange() {
   const towerSel = document.getElementById('treatTower');
   towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
   if (!lineName) { towerSel.disabled = true; return; }
+  if (csLiveEnabled()) return _treatLoadLineTowers(lineName, _treatSelectSeq);   // v335-C6r7: قراءة ملخّص الخط المختار وحده (طلب واحد) ثم ملء الأبراج
+  _treatFillTowers(lineName, null);
+}
+
+// v335-C6r7: أبراج الخط ذات المغادرات من ملخّص الخط المقروء. coverage غير مكتملة = أبراج غير مهيّأة/قيد الإصلاح: تُعلَن ولا تُعدّ خالية من المغادرات.
+function _treatFillTowers(lineName, coverage) {
+  const towerSel = document.getElementById('treatTower');
+  towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
   // نفس التحسين: من فهرس آخر سجل لهذا الخط بس، بدل مسح كل الكشوفات التاريخية له
   const bucket = latestRecordsIndex[lineName] || {};
   const towersWithDeps = Object.values(bucket)
     .filter(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
     .map(r => r.tower_number)
     .sort((a,b) => parseInt(a)-parseInt(b));
-  if (!towersWithDeps.length) { towerSel.innerHTML = '<option value="">-- لا توجد مغادرات --</option>'; towerSel.disabled = true; return; }
+  const unk = coverage && coverage.complete === false ? ((coverage.uninitialised || 0) + (coverage.card_pending || 0)) : 0;
+  const unkTxt = unk ? ' — ⚠️ ' + unk + ' برج غير معروف الحالة (غير مهيّأ/قيد الإصلاح)' : '';
+  if (!towersWithDeps.length) { towerSel.innerHTML = '<option value="">' + (unk ? '-- لا مغادرات بين الأبراج المعروفة' + unkTxt : '-- لا توجد مغادرات') + ' --</option>'; towerSel.disabled = true; return; }
+  if (unk) towerSel.options[0].textContent = '-- اختر رقم البرج' + unkTxt + ' --';
   towersWithDeps.forEach(tn => { const o = document.createElement('option'); o.value = tn; o.textContent = 'برج ' + tn; towerSel.appendChild(o); });
   towerSel.disabled = false;
+}
+
+async function _treatLoadLineTowers(lineName, mySeq) {
+  const towerSel = document.getElementById('treatTower');
+  towerSel.innerHTML = '<option value="">⏳ جارٍ قراءة الخط…</option>'; towerSel.disabled = true;
+  let res = null, err = false;
+  try { res = await loadLineRecordsCache(lineName, true, 'summary'); } catch (e) { err = true; }
+  // اختيار آخر (خط/برج) تقدّم أثناء القراءة: الردّ القديم لا يملأ القائمة الجديدة
+  if (mySeq !== _treatSelectSeq || document.getElementById('treatLine').value !== lineName) return;
+  if (err || (res && res.ok === false)) {
+    if (!loadedLineCacheAt[lineName]) { towerSel.innerHTML = '<option value="">⚠️ تعذّرت قراءة الخط — أعد اختيار الخط للمحاولة</option>'; towerSel.disabled = true; return; }
+    try { showToast('⚠️ تعذّر تحديث الخط — المعروض من آخر ما حُمّل', 'error'); } catch (e2) {}
+  }
+  _treatFillTowers(lineName, res && res.coverage || ((_csLineCov[lineName] || {}).sum || {}).coverage || null);
 }
 
 let _treatSelectSeq = 0;
@@ -118,6 +146,8 @@ async function onTreatTowerChange() {
   const r = navigator.onLine ? (await loadFullTowerRecord(lineName, towerNum)) || getLatestRecordForTower(lineName, towerNum) : getLatestRecordForTower(lineName, towerNum);
   // لا نقبل السجل إلا لو بقي الاختيار نفسه: التسلسل لم يتقدّم والخط والبرج الحاليان يطابقان ما بدأ به الطلب
   if (mySeq !== _treatSelectSeq || document.getElementById('treatLine').value !== lineName || document.getElementById('treatTower').value !== towerNum) return;
+  { const _ti = csLiveEnabled() ? csTowerInfo(lineName, towerNum) : null;   // v335-C6r7: برج غير مهيّأ في المخزن: صريح، ولا تُبنى معالجة من صف قديم محفوظ
+    if (_ti && _ti.basis === 'uninitialized') { showToast('⚠️ ' + csReasonsText(['uninitialized']), 'error'); return; } }
   if (!r) return;
   const late = treatmentBlockReason(lineName, towerNum, r); // نفس الحراس مع معرّف السجل المجلوب (id صالح + لا عمليات معلّقة له)
   if (late) { showToast(late, 'error'); return; }

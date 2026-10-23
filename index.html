@@ -1044,7 +1044,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="admin-grid">
     <div class="admin-card"><h3>📊 إحصائيات الكشوفات</h3><div class="admin-stat" id="totalCount">0</div><p>إجمالي السجلات المحفوظة</p></div>
     <div class="admin-card"><h3>👥 الأعضاء</h3><div class="admin-stat" id="totalMembers">0</div><p>عدد الأعضاء المسجلين</p></div>
-    <div class="admin-card" id="migCard"><h3>🗄️ ترحيل الأبراج القديمة</h3><p style="font-size:0.8rem;color:#718096">تهيئة مرة واحدة لحالة الأبراج القديمة في مخزن الحالة (لا يمسّ الكشوف ولا المعالجات). آمن للتكرار والاستئناف.</p><button class="btn btn-primary" id="migBtn" onclick="runTowerStoreMigration()">▶️ ابدأ / استأنف الترحيل</button><button class="btn btn-secondary btn-sm" style="margin-right:6px" onclick="runTowerStoreMigration(true)">🔁 إعادة المحاولة للفاشلة</button><div id="migStatus" style="margin-top:8px;font-size:0.8rem;line-height:1.7"></div></div>
+    <div class="admin-card" id="migCard"><h3>🗄️ ترحيل الأبراج القديمة</h3><p style="font-size:0.8rem;color:#718096">تهيئة مرة واحدة لحالة الأبراج القديمة في مخزن الحالة (لا يمسّ الكشوف ولا المعالجات). آمن للتكرار والاستئناف.</p><button class="btn btn-primary" id="migBtn" onclick="runTowerStoreMigration()">▶️ ابدأ / استأنف الترحيل</button><button class="btn btn-secondary btn-sm" style="margin-right:6px" onclick="runTowerStoreMigration(true)">🔁 إعادة المحاولة للفاشلة</button><button class="btn btn-secondary btn-sm" style="margin-right:6px" onclick="runStoreReadiness()">🔎 فحص الجاهزية</button><button class="btn btn-secondary btn-sm" style="margin-right:6px" onclick="runCardsBackfill()">🗂️ تعبئة البطاقات</button><div id="migStatus" style="margin-top:8px;font-size:0.8rem;line-height:1.7"></div></div>
   </div>
 
   <div class="admin-card" style="margin-top:14px">
@@ -2154,8 +2154,114 @@ const _csCardRequests = new Map();
 function csCardAccept(line, tower, env, ticket) {
   const key = csKey(line, tower), old = _csCards.get(key);
   if (old && old.ticket > ticket) return;
-  _csCards.set(key, { status: env.status || env.resolution,
-    record: env.row || null, ticket, rev: env.rev || 0 });
+  // v335-C6r6: a card never moves to an older store revision (a verified/accepted revision beats any older one, including revision 0 = not in the store); cached snapshot entries are always replaceable
+  const rev = env.rev || 0;
+  if (old && !old.cached && old.rev > rev) return;
+  _csCards.set(key, { status: env.status || env.resolution, record: csCardRecord(env.row, line, tower), ticket, rev, at: new Date().toISOString() });
+  csSnapSchedule(line);   // accepted write / detail read: the durable snapshot follows without re-reading the line
+}
+
+// ---- v335-C6r6: durable per-user / per-line CARD snapshots (IndexedDB). Derived display data only: never the pending queues, never the detailed prefill records. ----
+// Record: { key, v, uid, line, savedAt, towers:{ [num]: { status, rev, record, at, failed? } } } where `at` = when that card was last verified by the server (or accepted from a confirmed write).
+// Painting from a snapshot is always labelled "cached" until a session-validated refresh succeeds. Everything async is guarded by the auth generation, the snapshot
+// generation (purge) and the user id; denial / quota / unsupported IndexedDB only disables persistence (the in-memory path keeps working).
+const CS_SNAP_DB = 'tower_cs_cards', CS_SNAP_STORE = 'lines', CS_SNAP_V = 1;
+const CS_CARD_KEYS = ['id','inspection_date','created_at','voltage','sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire','insulator_washing','iron_intersections','tower_foundations','tower_attachments','ground_1','ground_2','fire_causes','fire_causes_notes','road_access','road_access_notes','insulator_state','line_name','tower_number'];
+let _csSnapDbP = null, _csSnapOff = false, _csSnapGen = 0;
+const _csSnapTimers = new Map();
+const _csSnapDiag = { reads: 0, writes: 0, hydrated: 0, denied: false, quota: false };
+function csCardRecord(row, line, tower) {          // only what a card displays (a detailed envelope row is far larger)
+  if (!row || typeof row !== 'object') return null;
+  const o = {}; CS_CARD_KEYS.forEach(k => { if (k in row) o[k] = row[k]; });
+  o.line_name = row.line_name != null ? row.line_name : line; o.tower_number = row.tower_number != null ? row.tower_number : String(tower);
+  return o;
+}
+function csSnapOpen() {
+  if (_csSnapOff) return Promise.resolve(null);
+  if (_csSnapDbP) return _csSnapDbP;
+  _csSnapDbP = new Promise(res => {
+    try {
+      if (typeof indexedDB === 'undefined' || !indexedDB) { _csSnapOff = true; _csSnapDiag.denied = true; return res(null); }
+      const rq = indexedDB.open(CS_SNAP_DB, CS_SNAP_V);
+      rq.onupgradeneeded = () => { try { const db = rq.result; if (!db.objectStoreNames.contains(CS_SNAP_STORE)) db.createObjectStore(CS_SNAP_STORE, { keyPath: 'key' }); } catch (e) {} };
+      rq.onsuccess = () => { const db = rq.result; db.onversionchange = () => { try { db.close(); } catch (e) {} _csSnapDbP = null; }; res(db); };
+      rq.onerror = () => { _csSnapOff = true; _csSnapDiag.denied = true; res(null); };
+      rq.onblocked = () => res(null);
+    } catch (e) { _csSnapOff = true; _csSnapDiag.denied = true; res(null); }
+  });
+  return _csSnapDbP;
+}
+function csSnapKey(uid, line) { return String(uid) + '\u0001' + String(line); }
+function csSnapIdbOp(mode, fn) {                     // resolves { ok, value } and never throws
+  return csSnapOpen().then(db => new Promise(res => {
+    if (!db) return res({ ok: false });
+    try {
+      const tx = db.transaction(CS_SNAP_STORE, mode), st = tx.objectStore(CS_SNAP_STORE);
+      let value; const rq = fn(st); if (rq) rq.onsuccess = () => { value = rq.result; };
+      tx.oncomplete = () => res({ ok: true, value });
+      tx.onabort = () => { const err = tx.error; if (err && (err.name === 'QuotaExceededError' || /quota/i.test(String(err.message || '')))) { _csSnapDiag.quota = true; _csSnapOff = true; } res({ ok: false }); };
+      tx.onerror = () => {};
+    } catch (e) { if (e && e.name === 'QuotaExceededError') { _csSnapDiag.quota = true; _csSnapOff = true; } res({ ok: false }); }
+  }));
+}
+function csSnapValid(rec, uid, line) {
+  return !!rec && typeof rec === 'object' && rec.v === CS_SNAP_V && String(rec.uid) === String(uid) && rec.line === line && rec.towers && typeof rec.towers === 'object' && !Array.isArray(rec.towers);
+}
+// Read the snapshot for the current user + line and paint it as CACHED. Never overwrites anything already in memory (memory is always newer or equal).
+async function csSnapHydrate(line) {
+  const gen = _csAuthGen, sg = _csSnapGen, tok = CS_AUTH.token, uid = currentUser && currentUser.id;
+  if (!uid || !tok) return false;
+  _csSnapDiag.reads++;
+  const r = await csSnapIdbOp('readonly', st => st.get(csSnapKey(uid, line)));
+  if (!r.ok || gen !== _csAuthGen || sg !== _csSnapGen || tok !== CS_AUTH.token || !currentUser || String(currentUser.id) !== String(uid)) return false;
+  const rec = r.value;
+  if (!rec) return false;
+  if (!csSnapValid(rec, uid, line)) { csSnapIdbOp('readwrite', st => st.delete(csSnapKey(uid, line))); return false; }   // other schema / foreign record: dropped
+  const ls = _csCardLines.get(line);
+  if (ls && ls.verified) return false;                // the verified response already arrived: nothing older may be painted over it
+  let n = 0;
+  getLineTowers(line).forEach(t => {
+    const key = csKey(line, t.num), e = rec.towers[String(t.num)];
+    if (!e || _csCards.has(key) || typeof e.status !== 'string') return;
+    if (!['no_source', 'uninitialized', 'card_pending', 'no_blockers', 'needs_review'].includes(e.status)) return;
+    _csCards.set(key, { status: e.status, record: e.record && typeof e.record === 'object' ? e.record : null, ticket: 0, rev: e.rev || 0, cached: true, at: e.at || rec.savedAt || null, failed: !!e.failed });
+    n++;
+  });
+  if (n) {
+    _csSnapDiag.hydrated += n;
+    const cur = _csCardLines.get(line) || {};
+    _csCardLines.set(line, Object.assign({}, cur, { cached: true, cachedAt: rec.savedAt || null }));
+    if (currentGridLine === line) renderTowersGridFromCache(line);
+  }
+  return n > 0;
+}
+function csSnapSchedule(line) {
+  if (_csSnapOff || !currentUser || !currentUser.id) return;
+  if (_csSnapTimers.has(line)) return;
+  const gen = _csAuthGen, sg = _csSnapGen, uid = currentUser.id;
+  _csSnapTimers.set(line, setTimeout(() => {
+    _csSnapTimers.delete(line);
+    if (gen !== _csAuthGen || sg !== _csSnapGen || !currentUser || String(currentUser.id) !== String(uid)) return;
+    csSnapPersistNow(line, uid, sg);
+  }, 250));
+}
+async function csSnapPersistNow(line, uid, sg) {
+  const towers = {}; let n = 0;
+  getLineTowers(line).forEach(t => {
+    const c = _csCards.get(csKey(line, t.num));
+    if (!c || c.status === 'card_pending') return;
+    towers[String(t.num)] = { status: c.status, rev: c.rev || 0, record: c.record || null, at: c.at || null, failed: !!c.failed }; n++;
+  });
+  if (!n) return;
+  if (sg !== _csSnapGen || !currentUser || String(currentUser.id) !== String(uid)) return;
+  const rec = { key: csSnapKey(uid, line), v: CS_SNAP_V, uid: String(uid), line, savedAt: new Date().toISOString(), towers };
+  _csSnapDiag.writes++;
+  await csSnapIdbOp('readwrite', st => { if (sg !== _csSnapGen) return null; return st.put(rec); });   // a purge between scheduling and execution turns this into a no-op
+}
+function csSnapPurgeAll() {
+  _csSnapGen++;
+  _csSnapTimers.forEach(t => clearTimeout(t)); _csSnapTimers.clear();
+  try { csSnapIdbOp('readwrite', st => st.clear()); } catch (e) {}
 }
 
 function csKey(line, tower) { return String(line) + '\u0001' + String(tower); }
@@ -2238,8 +2344,10 @@ function csAuthLost(code) {
 }
 
 // ---- مسح كل بيانات الحالة الحيّة للمستخدم (ذاكرة + تخزين) ----
+let _reportEpoch = 0;   // v335-C6r8: يزيد عند مسح بيانات المستخدم؛ أي ردّ تقرير بدأ قبله يُهمَل
 function csPurgeUserData() {
-  _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear();
+  _reportEpoch++; try { if (typeof reportPurgeDerived === 'function') reportPurgeDerived(); } catch (e) {}   // v335-C6r8: كاشات التقارير المشتقة
+  _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear(); csSnapPurgeAll();
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -2249,7 +2357,7 @@ function csPurgeUserData() {
   // نسخ السجلات المقروءة بهذه الجلسة بالذاكرة: لا تنتقل لمستخدم آخر. الطوابير المحلية المعلّقة لا تُمسّ إطلاقاً.
   try {
     fullRecordsCache = []; fullRecordsCacheLoadedAt = null; rebuildLatestRecordsIndex();
-    loadedLineCacheAt = {}; treatmentsCache = [];
+    loadedLineCacheAt = {}; loadedLineDetailAt = {}; _csLineCov = {}; fullRecordsDetailLoadedAt = null; treatmentsCache = [];
     records = []; filteredRecords = []; _recordsArchiveLoaded = false; try { localStorage.removeItem(DB_KEY); } catch (e2) {}
     previousInspectionForLoad = null; previousTreatmentsForLoad = [];
   } catch (e) {}
@@ -2265,6 +2373,8 @@ function csNoteWrites() {
   _csInfo.forEach(v => { v.stale = true; });
   fullRecordsCacheLoadedAt = null;
   Object.keys(loadedLineCacheAt || {}).forEach(k => { delete loadedLineCacheAt[k]; });
+  Object.keys(loadedLineDetailAt || {}).forEach(k => { delete loadedLineDetailAt[k]; });
+  _csLineCov = {}; fullRecordsDetailLoadedAt = null;
 }
 
 // ---- كاش لكل مستخدم (للقراءات المفصّلة فقط) ----
@@ -2310,11 +2420,15 @@ function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
   } else if (_csApplied.has(key) && source === 'cache') return false;   // لقطة محفوظة لا تستبدل قراءة حيّة
   if (source !== 'cache') csCardAccept(line, tower, env, ticket == null ? ++_csTicket : ticket);
   const meta = env.meta || {};
-  const g = meta.geometry || (meta.geometry_mode !== undefined ? { mode: meta.geometry_mode, status: meta.geometry_status, basis: meta.geometry_basis } : null);
-  if (g) _csGeom.set(key, { mode: g.mode || null, status: g.status || null, basis: g.basis || null });
-  else _csGeom.delete(key);
-  const mats = meta.materials || null;
   const prevInfo = _csInfo.get(key);
+  // v335-C6r7: a SUMMARY envelope (card layer: no components / meta / cycles) never erases detail already read for the SAME store revision, and never lets detail of an OLDER revision survive
+  const sumLv = env.level === 'summary';
+  const keepD = sumLv && !!prevInfo && !!prevInfo.version && prevInfo.version === (env.version || null) ? prevInfo : null;
+  const g = sumLv ? null : (meta.geometry || (meta.geometry_mode !== undefined ? { mode: meta.geometry_mode, status: meta.geometry_status, basis: meta.geometry_basis } : null));
+  if (sumLv) { if (!keepD) _csGeom.delete(key); }
+  else if (g) _csGeom.set(key, { mode: g.mode || null, status: g.status || null, basis: g.basis || null });
+  else _csGeom.delete(key);
+  const mats = sumLv ? null : (meta.materials || null);
   _csInfo.set(key, {
     line, tower: String(tower), source: source || 'server', asOf: asOf || null, cachedAt: cachedAt || null,
     basis: env.basis || null, status: env.status || null, resolution: env.resolution || 'resolved',
@@ -2323,19 +2437,23 @@ function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
     sourceInspectionId: env.source ? env.source.inspection_id : null,
     sourceDate: env.source ? env.source.inspection_date : null,
     version: env.version || null,
-    materialsStatus: mats ? mats.status : (meta.materials_status || null),
-    materials: mats, prefillReady: meta.prefill_ready === undefined ? null : !!meta.prefill_ready,
-    blockers: Array.isArray(meta.prefill_blockers) ? meta.prefill_blockers : [],
-    geometryStatus: g ? (g.status || null) : null,
-    integrity: [],
+    materialsStatus: sumLv ? (keepD ? keepD.materialsStatus : null) : (mats ? mats.status : (meta.materials_status || null)),
+    materials: sumLv ? (keepD ? keepD.materials : null) : mats,
+    prefillReady: sumLv ? (keepD ? keepD.prefillReady : null) : (meta.prefill_ready === undefined ? null : !!meta.prefill_ready),
+    blockers: sumLv ? (keepD ? keepD.blockers : []) : (Array.isArray(meta.prefill_blockers) ? meta.prefill_blockers : []),
+    geometryStatus: sumLv ? (keepD ? keepD.geometryStatus : null) : (g ? (g.status || null) : null),
+    integrity: sumLv && keepD && keepD.integrity ? keepD.integrity : [],
+    level: sumLv ? 'summary' : 'detail',
     stale: false
   });
-  if (env.row && typeof env.row === 'object' && 'insulator_cycle' in env.row) {   // قراءة برج مفصّلة: تحقق من الحالة والدورات والهندسة الفعلية
+  if (sumLv) {
+    if (!keepD) _csComps.delete(key);                      // components of another revision are not this tower's state
+  } else if (env.row && typeof env.row === 'object' && 'insulator_cycle' in env.row) {   // قراءة برج مفصّلة: تحقق من الحالة والدورات والهندسة الفعلية
     try { _csInfo.get(key).integrity = csPrefillIntegrity(env, line, tower); } catch (e) { _csInfo.get(key).integrity = ['validator_error']; }
   } else if (prevInfo && prevInfo.version && prevInfo.version === (env.version || null) && prevInfo.integrity) {
     _csInfo.get(key).integrity = prevInfo.integrity;       // قراءة خطّية بلا دورات: لا تمحو حكماً سابقاً على نفس الإصدار
   }
-  try {
+  if (!sumLv) try {
     if (Array.isArray(env.components)) { const byK = {}; env.components.forEach(c => { if (c && typeof c.k === 'string') byK[c.k] = { cond: c.cond, ds: c.ds, ap: c.ap }; });
       _csComps.set(key, { sid: env.source && env.source.inspection_id != null ? String(env.source.inspection_id) : null, complete: env.basis === 'operations', byK }); }
     else _csComps.delete(key);
@@ -2379,7 +2497,9 @@ const CS_REASON_AR = {
   component_invalid: 'مكوّن محفوظ غير صالح',
   sub_field_invalid: 'تفاصيل عوازل غير متسقة',
   cycle_regressed_vs_previous: 'دورات المعالجة أقل من الكشف الذي قبله',
-  cycle_lost_vs_previous: 'دورات المعالجة مفقودة مقارنة بالكشف السابق'
+  cycle_lost_vs_previous: 'دورات المعالجة مفقودة مقارنة بالكشف السابق',
+  uninitialized: 'حالة هذا البرج لم تُهيَّأ بعد في مخزن الحالة الحالية (تهيئة المدير مطلوبة) — لا تُعدّ سليمة ولا غير مكشوفة، ولا تُحسب حالة حالية من التاريخ',
+  card_pending: 'ملخّص هذا البرج قيد الإصلاح بعد عدم تطابق مع المخزن — لا يُعرض حتى يُصلَح'
 };
 
 function csReasonsText(reasons) {
@@ -2436,24 +2556,29 @@ async function csTower(line, tower) {
 }
 
 // خط كامل (أو أبراج محددة) بطلب واحد لا طلب لكل برج. عند too_many نقسّم أبراج الخط المعروفة على دفعات. نفس حراسات csTower.
-async function csLine(line, towers) {
+// v335-C6r7: level 'summary' (default for card layers: departures / line status / treatment selection) reads the compact current-store projection (app_line_summary: no components / cycles / chains);
+// level 'detail' (explicit reports) reads the full current-store envelope (app_line_state). Both return the store coverage of the requested scope.
+async function csLine(line, towers, level) {
   if (!csLiveEnabled()) return { ok: false, code: 'disabled' };
-  const key = 'L\u0001' + String(line) + '\u0001' + (towers ? towers.join(',') : '*');
+  const lv = level === 'detail' ? 'detail' : 'summary', rpcName = lv === 'detail' ? 'app_line_state' : 'app_line_summary';
+  const key = 'L\u0001' + lv + '\u0001' + String(line) + '\u0001' + (towers ? towers.join(',') : '*');
   const inflight = _csInflight.get(key);
   if (inflight && inflight.localSeq === _localSeq && inflight.wgen === _csWriteGen && inflight.gen === _csAuthGen && inflight.token === CS_AUTH.token) return inflight.p;
   const my = (_csSeq.get(key) || 0) + 1; _csSeq.set(key, my);
   const ticket = ++_csTicket, gen = _csAuthGen, wgen = _csWriteGen, lseq = _localSeq;
   const tok = CS_AUTH.token, uid = currentUser.id;
   const p = (async () => {
-    let r = await csRpc('app_line_state', { p_token: tok, p_line_name: line, p_towers: towers || null });
+    let r = await csRpc(rpcName, { p_token: tok, p_line_name: line, p_towers: towers || null });
     if (r.ok === false && r.code === 'too_many' && !towers) {
       const nums = (typeof getLineTowers === 'function' ? getLineTowers(line) : []).map(t => String(t.num));
       if (nums.length) {
-        const merged = { ok: true, towers: {}, as_of: null };
+        const merged = { ok: true, towers: {}, as_of: null, coverage: { requested: 0, initialised: 0, uninitialised: 0, no_source: 0, card_pending: 0, complete: true } };
         for (let i = 0; i < nums.length; i += 300) {
-          const part = await csRpc('app_line_state', { p_token: tok, p_line_name: line, p_towers: nums.slice(i, i + 300) });
+          const part = await csRpc(rpcName, { p_token: tok, p_line_name: line, p_towers: nums.slice(i, i + 300) });
           if (!part.ok) { r = part; merged.ok = false; break; }
           Object.assign(merged.towers, part.towers); merged.as_of = part.as_of;
+          if (part.coverage) { ['requested', 'initialised', 'uninitialised', 'no_source', 'card_pending'].forEach(k => { merged.coverage[k] += part.coverage[k] || 0; }); merged.coverage.complete = merged.coverage.complete && part.coverage.complete !== false; }
+          else merged.coverage = null;
         }
         if (merged.ok) r = merged;
       }
@@ -2469,8 +2594,9 @@ async function csLine(line, towers) {
         else omitted.push(String(num));   // v335-C3: برج طُبّق له ردّ أحدث (تفصيلي أو خطّي): لا يعود هذا الغلاف الأقدم، لكنه يُعلَن «محذوفاً من الردّ لحداثة غيره» فلا يُعدّ الباقي لقطة كاملة
       });
       const prev = _csLineEnv.get(line);
-      if (!omitted.length && (!prev || (prev.ticket || 0) <= ticket)) _csLineEnv.set(line, { asOf: r.as_of || null, at: Date.now(), towers: towersOut, ticket });
-      return { ok: true, towers: towersOut, asOf: r.as_of, source: 'server', superseded: false, omitted };
+      const coverage = r.coverage && typeof r.coverage === 'object' ? r.coverage : null;   // v335-C6r6: how much of the requested scope is really in the current-state store
+      if (!omitted.length && (!prev || (prev.ticket || 0) <= ticket) && !towers) _csLineEnv.set(line, { asOf: r.as_of || null, at: Date.now(), towers: towersOut, ticket, coverage, level: lv });
+      return { ok: true, towers: towersOut, asOf: r.as_of, source: 'server', superseded: false, omitted, coverage, level: lv };
     }
     if (CS_AUTH_TERMINAL.indexOf(r.code) >= 0) { csAuthLost(r.code); return { ok: false, code: r.code, authLost: true }; }
     return { ok: false, code: r.net ? 'network' : (r.code || 'error'), net: !!r.net };
@@ -2496,7 +2622,7 @@ function csRowsFromLine(towers) {
   const rows = [];
   Object.keys(towers || {}).forEach(num => {
     const env = towers[num];
-    if (env && env.row && typeof env.row === 'object' && env.row.id != null && env.row.line_name != null) rows.push(env.row);
+    if (env && env.row && typeof env.row === 'object' && env.row.id != null && env.row.line_name != null) rows.push(Object.assign({}, env.row, { _lv: env.level === 'summary' ? 'summary' : 'detail', _ver: env.version || null }));   // v335-C6r7: المستوى والإصدار الفعليان للغلاف
   });
   return rows;
 }
@@ -2736,6 +2862,12 @@ function csPendingTreated(inspectionId) {
 // ---- شرائط العرض: مصدر الحالة + الأبراج غير المحسومة ----
 function _csEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
+// v335-C6r7: نص تغطية غير مكتملة (أبراج غير مهيّأة / ملخّصها قيد الإصلاح) — يُستعمل في التقارير والتصدير وشرائط الخط
+function csUnknownCount(c) { return c ? (c.uninitialised || 0) + (c.card_pending || 0) : 0; }
+function csCoverageText(c) {
+  const un = (c && c.uninitialised) || 0, cp = (c && c.card_pending) || 0;
+  return (un ? un + ' برج غير مهيّأ في مخزن الحالة (تهيئة المدير مطلوبة)' : '') + (un && cp ? '، ' : '') + (cp ? cp + ' برج ملخّصه قيد الإصلاح' : '');
+}
 function csLineBanner(line) {
   if (!csFlagOn() || !CS_AUTH.token) return '';
   let h = '';
@@ -2744,6 +2876,7 @@ function csLineBanner(line) {
   if (le && le.asOf) h += `<div style="${st}background:#EDF2F7;color:#2D3748">⚡ حالة حيّة من السيرفر — ${_csEsc(new Date(le.asOf).toLocaleTimeString('ar'))}</div>`;
   else h += `<div style="${st}background:#FEF3C7;color:#92400E">📴 المعروض من آخر تحميل محفوظ بالجهاز — لم تُقرأ الحالة الحيّة الآن</div>`;
   if (csQueuesUnreadable()) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ قائمة المعلّقات على الجهاز غير قابلة للقراءة — قد لا تشمل الحالة المعروضة العمل المعلّق. لم يُحذف شيء.</div>`;
+  if (le && le.coverage && le.coverage.complete === false) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ تغطية غير مكتملة: ${_csEsc(csCoverageText(le.coverage))} من ${le.coverage.requested} برج — هذه الأبراج حالتها غير معروفة (ليست سليمة ولا غير مكشوفة)؛ المعروض يخصّ الأبراج المعروفة فقط — ${currentUser && currentUser.role === 'admin' ? 'نفّذ «ترحيل الأبراج القديمة» من لوحة الإدارة' : 'اطلب من المدير تنفيذ الترحيل'}</div>`;
   const un = csUnresolvedTowers(line);
   if (un.length) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ ${un.length} برج بحالة غير محسومة (${_csEsc(un.slice(0, 12).map(x => x.tower).join('، '))}${un.length > 12 ? '…' : ''}) — افتح البرج لمعرفة السبب. لا تُعدّ هذه الأبراج معالجة بالكامل.</div>`;
   return h;
@@ -2883,6 +3016,7 @@ let _recordsArchiveLoaded = false; // v335-C6: صحيح فقط بعد تحميل
 let fullRecordsCache = []; // كاش كامل (بدون قيد 6 أشهر) — خاص بحالة الخطوط والمغادرات فقط، يضمن دقة "آخر كشف لكل برج"
 
 let fullRecordsCacheLoadedAt = null;
+let fullRecordsDetailLoadedAt = null;   // v335-C6r7: قراءة تفصيلية لكل الخطوط (تقرير شامل صريح) اكتملت
 
 let allUsers = [];
 
@@ -3818,6 +3952,18 @@ function getLatestRecordForTower(lineName, towerNum) {
   return (latestRecordsIndex[lineName] || {})[String(towerNum)] || null;
 }
 
+// v335-C6r6: one honest line above the cards: verified now / cached and being verified / not verified (offline or failed) / how many towers still need the admin initialisation
+function csCardLineStrip(lineName, cardLine) {
+  const st = 'grid-column:1/-1;font-size:0.74rem;border-radius:8px;padding:6px 10px;line-height:1.7;';
+  let h = '';
+  if (cardLine && cardLine.verified && cardLine.verifiedAt) h += `<div style="${st}background:#EDF2F7;color:#2D3748">✅ تم التحقق من الخادم — ${_csEsc(new Date(cardLine.verifiedAt).toLocaleTimeString('ar'))}</div>`;
+  else if (cardLine && cardLine.error) h += `<div style="${st}background:#FEF3C7;color:#92400E">${cardLine.offline ? '📴 دون اتصال' : '⚠️ تعذّر التحقق من الخادم'} — المعروض آخر حالة محفوظة على الجهاز${cardLine.cachedAt ? ' (' + _csEsc(new Date(cardLine.cachedAt).toLocaleString('ar')) + ')' : ''}</div>`;
+  else if (cardLine && cardLine.cached && cardLine.loading) h += `<div style="${st}background:#FEF3C7;color:#92400E">📴 بيانات مخزّنة بالجهاز — جارٍ التحقق من الخادم…</div>`;
+  if (cardLine && cardLine.uninitialized > 0) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ ${cardLine.uninitialized} برج لم تُهيّأ حالته في المخزن${cardLine.failed ? ' (منها ' + cardLine.failed + ' فشلت تهيئتها)' : ''}${currentUser && currentUser.role === 'admin' ? ' — نفّذ «ترحيل الأبراج القديمة» من لوحة الإدارة' : ' — اطلب من المدير تنفيذ ترحيل الأبراج القديمة'}</div>`;
+  if (cardLine && cardLine.pending > 0) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ ${cardLine.pending} بطاقة قيد التجهيز${currentUser && currentUser.role === 'admin' ? ' — نفّذ «تعبئة البطاقات» من لوحة الإدارة' : ''}</div>`;
+  return h;
+}
+
 // رسم شبكة الأبراج من الذاكرة المحلية مباشرة — بدون أي طلب شبكة. تُستخدم بعد الحفظ الناجح
 // (فوري، ما يحتاج ننتظر السيرفر لأننا أصلاً حدّثنا fullRecordsCache محلياً بالسجل الجديد)
 function renderTowersGridFromCache(lineName) {
@@ -3832,7 +3978,7 @@ function renderTowersGridFromCache(lineName) {
     const towers = getLineTowers(lineName);
     const cardLine = _csCardLines.get(lineName);
     const cardPending = _readPendingInspectionState();
-    grid.innerHTML = towers.map(t => {
+    grid.innerHTML = csCardLineStrip(lineName, cardLine) + towers.map(t => {
       // عزل كل برج لحاله: لو سجل برج واحد تالف (تنسيق غريب جاي من قائمة إرسال مؤجل مثلاً)، يطلع
       // بلاطة خطأ لهذا البرج بس، بدل ما ينهار رسم الشبكة كاملة ويجمّد شاشة "جاري التحميل" للأبد
       try {
@@ -3851,12 +3997,15 @@ function renderTowersGridFromCache(lineName) {
         const complete = rec ? isInspectionComplete(rec) : null;
         const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) :
           card && card.status === 'no_source' ? 'لم يُكشف بعد' :
-          card && card.status === 'uninitialized' ? 'الحالة لم تُهيّأ بعد' :
+          card && card.status === 'uninitialized' ? (card.failed ? 'فشلت تهيئة هذا البرج — راجع المدير' : 'الحالة لم تُهيّأ بعد') :
+          card && card.status === 'card_pending' ? 'البطاقة قيد التجهيز (يلزم إجراء المدير)' :
           cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
         const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
-        let staleLine = cardLine && cardLine.error && rec ? '⚠️ آخر حالة محفوظة — تعذّر التحديث' : '';
+        // v335-C6r6: a card that was not verified by the server in this open is never presented as fresh
+        const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && !!card && card.status !== 'no_source';
+        let staleLine = '';
+        if (rec && unverified) staleLine = cardLine.error ? (cardLine.offline ? '📴 دون اتصال — آخر حالة محفوظة' : '⚠️ آخر حالة محفوظة — تعذّر التحديث') : '📴 مخزّنة بالجهاز — جارٍ التحقق';
         if (card && card.status === 'needs_review') staleLine = '⚠️ الحالة تحتاج مراجعة';
-        if (cardLine && cardLine.migrating && !rec) staleLine = 'جارٍ تهيئة المخزن من البيانات الموجودة…';
         const catIconsHTML = buildCategoryIconsHTML(rec);
         return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
           <div class="tower-box-num">${t.num}</div>
@@ -3887,7 +4036,9 @@ function renderTowersGridFromCache(lineName) {
 // كان يحتمل نرسم ببيانات قديمة لو دخلت على الخط أول مرة بنفس الجلسة
 // كاش تحميل لكل خط لحاله: متى آخر مرة حمّلنا بيانات هذا الخط بالذات — يمنع إعادة التحميل المتكرر
 // خلال دقيقتين، بس بشكل مستقل لكل خط (بدل مؤقت واحد عام لكل الخطوط)
-let loadedLineCacheAt = {}; // { [lineName]: timestamp }
+let loadedLineCacheAt = {}; // { [lineName]: timestamp } — v335-C6r7: آخر قراءة حيّة للخط بأي مستوى (ملخّص أو تفصيل)
+let loadedLineDetailAt = {}; // { [lineName]: timestamp } — آخر قراءة تفصيلية (تقارير) لهذا الخط
+let _csLineCov = {};         // { [lineName]: { sum:{coverage,at}, detail:{coverage,at} } } — تغطية مخزن الحالة لآخر قراءة ناجحة لكل خط (النقل الناجح ≠ تغطية كاملة)
 
 // يحمّل آخر حالة لأبراج خط واحد بس (بدل كل الـ33 خط دفعة وحدة) — هذا يقلّل حجم التحميل من ~8.5
 // ميجا لكل الخطوط إلى ~260 كيلوبايت لخط واحد بالمتوسط (خط وحد = ~3% بس من إجمالي كل الأبراج)،
@@ -3908,26 +4059,76 @@ const GRID_SELECT_FIELDS = ['id','line_name','tower_number','tower_type','voltag
   // v333: تحديد الدائرة المقصودة بمغادرة الأسلاك + أنواع سلاسل عوازل الدائرة الثانية (مؤكَّدان بتعريف latest_inspections) — لحساب الصحة الكهربائية لكل دائرة
   'wires_circuit','insulator_chain_types_2'].join(',');
 
-async function loadLineRecordsCache(lineName, force) {
+// v335-C6r7: level 'summary' (افتراضي: بطاقات المغادرات/حالة الخط/اختيار المعالجة) = الإسقاط المضغوط بلا مكوّنات/دورات/سلاسل؛ 'detail' = غلاف المخزن الكامل (التقارير الصريحة فقط).
+// الحداثة لكل مستوى منفصلة (قراءة التفصيل تُرضي الملخّص لا العكس). تُرجع { ok, level, coverage }: coverage من مخزن الحالة (غير مكتملة = أبراج غير مهيّأة/إسقاطها قيد الإصلاح لا تُعدّ سليمة ولا غير مكشوفة).
+async function loadLineRecordsCache(lineName, force, level) {
+  const lv = level === 'detail' ? 'detail' : 'summary';
   const now = Date.now();
-  if (!force && loadedLineCacheAt[lineName] && (now - loadedLineCacheAt[lineName]) < 120000) {
-    return; // بيانات هذا الخط حديثة، لا حاجة لإعادة التحميل
+  const freshAt = lv === 'detail' ? loadedLineDetailAt[lineName] : loadedLineCacheAt[lineName];
+  if (!force && freshAt && (now - freshAt) < 120000) {
+    return { ok: true, level: lv, cached: true, coverage: ((_csLineCov[lineName] || {})[lv === 'detail' ? 'detail' : 'sum'] || {}).coverage || null }; // بيانات هذا الخط حديثة، لا حاجة لإعادة التحميل
   }
   const mySeq = ++_readSeq, startSeq = _localSeq; // v334-R: لقطة بدء القراءة
-  let rows, keepTowers = null;
+  let rows, keepTowers = null, coverage = null;
   if (csLiveEnabled()) {
     // v335: قراءة حيّة موحّدة للخط بطلب واحد (لا طلب لكل برج)؛ فشلها يُظهر خطأ الشبكة المعتاد ولا يرجع لقراءة مجهولة بديلة
-    let cl = await csLine(lineName, null);
-    if (!cl.ok && cl.code === 'stale_write') cl = await csLine(lineName, null); // v335-C2
-    if (cl.ok && cl.omitted && cl.omitted.length) cl = await csLine(lineName, null);   // v335-C3: ردّ ناقص لحداثة أبراج أخرى: قراءة واحدة طازجة
+    let cl = await csLine(lineName, null, lv);
+    if (!cl.ok && cl.code === 'stale_write') cl = await csLine(lineName, null, lv); // v335-C2
+    if (cl.ok && cl.omitted && cl.omitted.length) cl = await csLine(lineName, null, lv);   // v335-C3: ردّ ناقص لحداثة أبراج أخرى: قراءة واحدة طازجة
     if (!cl.ok) throw new Error('cs:' + cl.code);
-    rows = csRowsFromLine(cl.towers); keepTowers = cl.omitted && cl.omitted.length ? new Set(cl.omitted) : null;
+    rows = csRowsFromLine(cl.towers); keepTowers = cl.omitted && cl.omitted.length ? new Set(cl.omitted) : null; coverage = cl.coverage || null;
   } else {
     rows = await fetchAllPages(`latest_inspections?select=${GRID_SELECT_FIELDS}&line_name=eq.${encodeURIComponent(lineName)}`);
   }
   // v334-R: لا نستبدل الكاش بصفوف السيرفر مباشرة — تُطابَق مع العمليات المعلّقة (تعديل/معالجة/كشف جديد) والتغييرات المحلية الأحدث،
   // ولا يمحو الصف المختصر تفاصيل نسخة كاملة إلا إذا كانت متوافقة تماماً معه. باقي الخطوط لا تُمسّ.
-  if (_reconcileRefresh(rows, lineName, mySeq, startSeq, keepTowers)) loadedLineCacheAt[lineName] = now;
+  if (!_reconcileRefresh(rows, lineName, mySeq, startSeq, keepTowers)) return { ok: false, level: lv, coverage };
+  if (_lastReconcile.superseded) return { ok: true, level: lv, coverage, superseded: true };   // v335-C6r7: ردّ أقدم من قراءة طُبّقت فعلاً: لم يُطبَّق ولا يُختم حديثاً (التغطية والحداثة لقراءة أخرى)
+  loadedLineCacheAt[lineName] = now;
+  if (lv === 'detail') loadedLineDetailAt[lineName] = now;
+  { const prevCov = _csLineCov[lineName] || {}; _csLineCov[lineName] = Object.assign({}, prevCov, { sum: { coverage, at: now } }, lv === 'detail' ? { detail: { coverage, at: now } } : {}); }   // تغطية كل مستوى منفصلة
+  return { ok: true, level: lv, coverage };
+}
+
+// v335-C6r7: تغطية نطاق من الخطوط (names) من آخر قراءات ناجحة: لا تُعدّ القراءة الناجحة نقلاً كاملةً للنطاق.
+// complete=false إن كان خط لم يُقرأ بعد، أو فيه أبراج غير مهيّأة / إسقاطها قيد الإصلاح. خط خارج النطاق لا يؤثّر.
+function csScopeCoverage(names, level) {
+  const out = { complete: true, requested: 0, initialised: 0, uninitialised: 0, card_pending: 0, no_source: 0, unread: [], incomplete: [] };
+  (names || []).forEach(ln => {
+    const e = (_csLineCov[ln] || {})[level === 'detail' ? 'detail' : 'sum'];
+    if (!e) { out.unread.push(ln); out.complete = false; return; }
+    const c = e.coverage; if (!c) return;
+    ['requested', 'initialised', 'uninitialised', 'card_pending', 'no_source'].forEach(k => { out[k] += c[k] || 0; });
+    if (c.complete === false) { out.complete = false; out.incomplete.push(ln); }
+  });
+  return out;
+}
+
+// v335-C6r7: يقرأ نطاقاً محدداً من الخطوط فقط (أو كلها عند names=null وبطلب صريح)، 3 بالتوازي، وبحداثة لكل خط. لا يلمس خطاً خارج النطاق.
+async function csLoadScope(names, force, level) {
+  const lv = level === 'detail' ? 'detail' : 'summary';
+  let lines = names && names.length ? Array.from(new Set(names)) : null;
+  if (!lines) {
+    const r = await csLineNames();
+    if (!r.ok) return { ok: false, code: r.code || 'error', stale: !!r.stale, authLost: !!r.authLost, lines: [], failed: [], coverage: null, level: lv };
+    lines = r.lines.slice();
+  }
+  const failed = []; let idx = 0, aborted = null;
+  async function worker() {
+    while (idx < lines.length && !aborted) {
+      const ln = lines[idx++];
+      try {
+        const res = await loadLineRecordsCache(ln, !!force, lv);
+        if (!res || res.ok === false) failed.push(ln);
+      } catch (e) {
+        const code = String(e && e.message || '').replace(/^cs:/, '');
+        if (code === 'session_changed' || CS_AUTH_TERMINAL.indexOf(code) >= 0) { aborted = code; return; }
+        failed.push(ln);
+      }
+    }
+  }
+  await Promise.all([worker(), worker(), worker()]);
+  return { ok: !failed.length && !aborted, code: aborted, aborted: !!aborted, lines, failed, coverage: csScopeCoverage(lines, lv), level: lv };
 }
 
 // v334: مقارنة حداثة كشفين: تاريخ الكشف ثم created_at. لا تفترض أي ترتيب مسبق للقائمة (>0 = a أحدث من b)
@@ -3948,6 +4149,22 @@ function pickLatestInspection(list) {
   });
   return best;
 }
+
+// v335-C6r7: وسم مستوى/إصدار صفوف الحالة الحيّة. صف app_line_state (تقارير) يحمل الملاحظات والدورات ولا يحمل insulator_svg_r عمداً،
+// فلا يُعرَّف كصف كامل بالقاعدة القديمة. الوسم يأتي من الغلاف الفعلي: _lv = 'detail' | 'summary'، _ver = إصدار المخزن ('o'+rev).
+function _rowRev(v) { const m = /^o(\d+)$/.exec(String(v == null ? '' : v)); return m ? Number(m[1]) : null; }
+function _rowHasDetail(r) {
+  if (!r || typeof r !== 'object') return false;
+  if (isFullInspectionRecord(r)) return true;
+  return r._lv === 'detail' && Object.prototype.hasOwnProperty.call(r, 'insulator_cycle');
+}
+// يُبطل حداثة التفصيل لخط (أو كل الخطوط إن ln=null) بما فيها الأختام العامة: القراءة التالية تجلبه من جديد
+function _dropDetailFreshness(ln) {
+  const lines = ln == null ? Object.keys(loadedLineDetailAt || {}) : [ln];
+  lines.forEach(l => { delete loadedLineDetailAt[l]; if (_csLineCov[l]) delete _csLineCov[l].detail; });
+  fullRecordsDetailLoadedAt = null;
+}
+let _lastReconcile = { superseded: false };
 
 // السجل الكامل (select=*) يحمل insulator_cycle وinsulator_svg_r دائماً (ولو null)؛ صف الشبكة المختصر لا يحمل أياً منهما.
 // الشرطان معاً: PATCH المعالجة وحده قد يضيف insulator_cycle لصف مختصر فلا يجعله كاملاً.
@@ -4004,6 +4221,7 @@ function _reconcileRefresh(rows, scopeLine, mySeq, startSeq, keepTowers) {   // 
     _cacheUnresolved = true;
     if (oldAll.some(inScope)) return false; // حالة محلية موجودة: لا نستبدلها بقراءة لا يمكن مطابقتها
     // لا حالة محلية نحميها: نعرض صفوف السيرفر كما هي لكن الكاش يبقى "غير محسوم"
+    _dropDetailFreshness(scopeLine);   // v335-C6r7: الصفوف استُبدلت كما هي: لا حداثة تفصيلية باقية
     fullRecordsCache = scopeLine === null ? rows.slice() : oldAll.filter(r => r.line_name !== scopeLine).concat(rows);
     rebuildLatestRecordsIndex();
     return false;
@@ -4023,8 +4241,17 @@ function _reconcileRefresh(rows, scopeLine, mySeq, startSeq, keepTowers) {   // 
     if (old && (_localTouched.get('id:' + id) || 0) > startSeq) { out.push(old); outIds.add(id); return; } // تغيير محلي أحدث من بدء القراءة
     let cur = id && pend.patchesById.has(id) ? _overlayPendingPatches(row, pend.patchesById.get(id)) : row;
     cur = opsOverlayRow(cur, pend.ops);   // v335-C4: الحالة المؤكَّدة + العمليات المعلّقة بترتيبها
-    // صف مختصر + نسخة كاملة محلية متوافقة (نفس الإصدار تماماً) = نحتفظ بالتفاصيل؛ غير متوافقة = الصف الحالي فقط بلا دمج
-    if (old && isFullInspectionRecord(old) && !isFullInspectionRecord(cur) && _versionsCompatible(old, cur)) cur = { ...old, ...cur };
+    // v335-C6r7: صف مختصر + تفصيل محلي لنفس الكشف: نفس إصدار المخزن بالضبط = نحتفظ بالتفاصيل (ملاحظات/دورات)؛
+    // إصدار أحدث = الصف الجديد وحده (لا يُجمع مع ملاحظات/دورات قديمة) وتُبطَل حداثة تفصيل الخط؛ ردّ بإصدار أقدم من التفصيل المحفوظ لا يكتب فوقه ولا يُبطله.
+    if (old && _rowHasDetail(old) && !_rowHasDetail(cur) && !(cur && cur._lv === 'detail')) {
+      const ro = _rowRev(old._ver), rc = _rowRev(cur._ver);
+      if (ro != null && rc != null) {
+        if (rc < ro) { out.push(old); outIds.add(id); return; }
+        if (rc === ro) cur = { ...old, ...cur, _lv: old._lv || 'detail', _ver: old._ver };
+      } else if (_versionsCompatible(old, cur)) cur = { ...old, ...cur };
+    } else if (old && cur && cur._lv === 'detail' && old._ver != null && cur._ver != null && _rowRev(cur._ver) != null && _rowRev(old._ver) != null && _rowRev(cur._ver) < _rowRev(old._ver) && _rowHasDetail(old)) {
+      out.push(old); outIds.add(id); return;   // تفصيل أقدم من تفصيل محفوظ أحدث
+    }
     out.push(cur); if (id) outIds.add(id);
   });
   // v335-C3: أبراج غابت عن الردّ لأن عندنا قراءة أحدث لها: تبقى صفوفها كما هي (غيابها عن الردّ ليس حذفاً)
@@ -4050,6 +4277,9 @@ function _reconcileRefresh(rows, scopeLine, mySeq, startSeq, keepTowers) {   // 
   });
   const kept = oldAll.filter(r => r && ((scopeLine !== null && r.line_name !== scopeLine) || (staleLines.has(r.line_name))));
   fullRecordsCache = scopeLine === null ? out.concat(kept) : kept.concat(out);
+  // v335-C6r7: صف مستوى ملخّص بلا تفصيل (إصدار أحدث/كشف مصدر مختلف/برج جديد) يُبطل حداثة تفصيل خطه وختم التفصيل العام
+  out.forEach(r => { if (r && r._lv === 'summary' && hasValidInspectionId(r.id) && !_rowHasDetail(r)) _dropDetailFreshness(r.line_name); });
+  _lastReconcile = { superseded: scopeLine !== null && lineIsStale(scopeLine) };
   rows.forEach(r => { if (r && !lineIsStale(r.line_name)) _lineAppliedSeq[r.line_name] = mySeq; });
   if (scopeLine !== null && !lineIsStale(scopeLine)) _lineAppliedSeq[scopeLine] = mySeq;
   rebuildLatestRecordsIndex();
@@ -4077,6 +4307,7 @@ function _applyConfirmedTowerEnv(line, tower, env) {
     const old = oldRows.find(r => String(r.id) === id) || null;
     let cur = pend.patchesById.has(id) ? _overlayPendingPatches(row, pend.patchesById.get(id)) : row;
     cur = opsOverlayRow(cur, pend.ops);
+    if (Object.prototype.hasOwnProperty.call(row, 'insulator_cycle')) cur = Object.assign({}, cur, { _lv: 'detail', _ver: env.version || null });
     row = old ? { ...old, ...cur } : cur;
   }
   // صفوف هذا البرج بلا معرّف (كشف معلّق/صف اصطناعي لرصد معلّق): تبقى فقط إن كان مصدرها ما زال معلّقاً؛ ما أُكِّد على السيرفر الآن يحلّ محله صف الغلاف
@@ -4137,7 +4368,7 @@ async function _fetchFullTowerRecord(lineName, towerNumber) {
     const rec = env.row;
     if (!rec || Array.isArray(rec) || typeof rec !== 'object') return { ok: true, record: null, startSeq, cs, noRow: true };
     if (rec.line_name !== lineName || String(rec.tower_number) !== String(towerNumber) || !hasValidInspectionId(rec.id)) return { ok: false, cs };
-    return { ok: true, record: rec, startSeq, cs };
+    return { ok: true, record: Object.assign({}, rec, { _lv: 'detail', _ver: env.version || null }), startSeq, cs };   // v335-C6r7: وسم المستوى والإصدار الفعليين
   }
   try {
     const res = await sbFetch(`inspections?select=*&line_name=eq.${encodeURIComponent(lineName)}&tower_number=eq.${encodeURIComponent(towerNumber)}&order=inspection_date.desc,created_at.desc&limit=1`);
@@ -4166,12 +4397,16 @@ async function loadFullTowerRecord(lineName, towerNumber) {
 
 async function renderTowersGrid(lineName) {
   if (!lineName) { renderTowersGridFromCache(lineName); return; }
-  _csCardLines.set(lineName, { loading: true });
+  // v335-C6r6: whatever is already known (this session or a durable snapshot) paints at once and stays labelled CACHED until the session-validated refresh succeeds
+  const hadCards = getLineTowers(lineName).some(t => _csCards.has(csKey(lineName, t.num)));
+  _csCardLines.set(lineName, hadCards ? { loading: true, cached: true } : { loading: true });
   renderTowersGridFromCache(lineName);
   if (!csLiveEnabled()) {
-    _csCardLines.set(lineName, { error: true });
+    _csCardLines.set(lineName, { error: true, offline: !navigator.onLine });
     renderTowersGridFromCache(lineName); return;
   }
+  // v335-C6r7: hydrate whenever ANY tower of the line is missing from memory (a detail view / accepted write of one tower must not hide the saved cards of the others); csSnapHydrate itself never overwrites an entry already in memory and respects the session / purge / verified guards
+  if (getLineTowers(lineName).some(t => !_csCards.has(csKey(lineName, t.num)))) csSnapHydrate(lineName).catch(() => {});
   return csLoadCardSummary(lineName);
 }
 
@@ -4189,51 +4424,39 @@ async function csLoadCardSummary(line, retry = true) {
     try {
       if (!navigator.onLine) throw new Error('offline');
       const numbers = getLineTowers(line).map(t => String(t.num));
-      let result = await csCall('app_line_card_summary', { p_line_name: line, p_tower_numbers: numbers });
-      if (!active()) return;
-      // One-time legacy initialisation uses the existing admin-only, resumable RPC.
-      // It never edits inspection/treatment history; later visits read only the store.
-      if (result.ok && result.uninitialized > 0 && currentUser && currentUser.role === 'admin') {
-        _csCardLines.set(line, { loading: true, migrating: true }); paint();
-        const migrationLines = Array.isArray(result.initialization_lines) && result.initialization_lines.length ? result.initialization_lines : [line];
-        for (const migrationLine of migrationLines) {
-        for (let batch = 0; batch < Math.ceil(numbers.length / 25) + 1; batch++) {
-          if (!valid() || currentGridLine !== line || pageNavigationRequestSeq !== nav) return;
-          const migration = await csCall('app_ops_migrate', { p_line_name: migrationLine, p_limit: 25, p_retry_failed: false }, { timeout: 65000 });
-          if (!active()) return;
-          if (!migration.ok) throw new Error(migration.code || 'migration');
-          if (!migration.remaining || !migration.initialised) break;
-        }
-        }
-        result = await csCall('app_line_card_summary', { p_line_name: line, p_tower_numbers: numbers });
-      }
+      // v335-C6r6: ONE read of the compact card projection. No initialisation / migration here: legacy towers are initialised by the admin step (admin page), never on line opening.
+      const result = await csCall('app_line_card_summary', { p_line_name: line, p_tower_numbers: numbers });
       if (!active()) return;
       if (_csWriteGen !== wgen || _localSeq !== lseq) {
         if (_csCardRequests.get(line) === request) _csCardRequests.delete(line);
         if (retry && currentGridLine === line && pageNavigationRequestSeq === nav) return csLoadCardSummary(line, false);
-        _csCardLines.set(line, { error: true }); paint(); return;
+        _csCardLines.set(line, Object.assign({}, _csCardLines.get(line) || {}, { loading: false, error: true })); paint(); return;
       }
       if (!result || !result.ok || result.line_name !== line || !result.towers || typeof result.towers !== 'object' || Array.isArray(result.towers)) throw new Error('summary');
-      // Validate the complete requested set before committing any card. A partial
-      // response is a failed read, never evidence that a tower has no inspection.
+      // Validate the complete requested set before committing any card. A partial response is a failed read, never evidence that a tower has no inspection.
       for (const number of numbers) {
         const card = result.towers[number];
-        if (!card || !['no_source','uninitialized','no_blockers','needs_review'].includes(card.status) ||
+        if (!card || !['no_source','uninitialized','card_pending','no_blockers','needs_review'].includes(card.status) ||
             ((card.status === 'no_blockers' || card.status === 'needs_review') && (!card.record || card.record.line_name !== line || String(card.record.tower_number) !== number))) throw new Error('invalid_summary');
       }
+      const verifiedAt = result.as_of || new Date().toISOString();
       for (const number of numbers) {
         const card = result.towers[number], key = csKey(line, number), old = _csCards.get(key);
         if (old && old.ticket > ticket) continue;
-        _csCards.set(key, { status: card.status, record: card.record, rev: card.rev, ticket });
-        // A detail request started before this newer store snapshot must retry,
-        // rather than hand an older state to the editor after cards have changed.
-        if (card.status !== 'uninitialized') _csApplied.set(key, Math.max(_csApplied.get(key) || 0, ticket));
+        // an older revision never replaces a newer verified/accepted one; cancelled (no_source) and uninitialised answers DO replace older visible data (they carry a newer or reset revision)
+        if (old && !old.cached && old.rev > (card.rev || 0)) continue;
+        _csCards.set(key, { status: card.status, record: card.record || null, ticket, rev: card.rev || 0, at: verifiedAt, failed: !!card.failed });
+        // A detail request started before this newer store snapshot must retry, rather than hand an older state to the editor after cards have changed.
+        if (card.status !== 'uninitialized' && card.status !== 'card_pending') _csApplied.set(key, Math.max(_csApplied.get(key) || 0, ticket));
       }
-      _csCardLines.set(line, { loading: false }); paint();
+      _csCardLines.set(line, { loading: false, verified: true, verifiedAt, uninitialized: result.uninitialized || 0, failed: result.failed || 0, pending: result.pending || 0 });
+      paint(); csSnapSchedule(line);
     } catch (e) {
       if (!active()) return;
-      _csCardLines.set(line, { error: true }); paint();
-      if (currentGridLine === line && pageNavigationRequestSeq === nav) showToast('⚠️ تعذّر تحديث ملخّص الحالة. أعد اختيار الخط للمحاولة.', 'error');
+      // keep every card we have (cached or earlier verified) but label it: the refresh did not succeed
+      _csCardLines.set(line, Object.assign({}, _csCardLines.get(line) || {}, { loading: false, error: true, offline: !navigator.onLine, verified: false }));
+      paint();
+      if (currentGridLine === line && pageNavigationRequestSeq === nav && navigator.onLine) showToast('⚠️ تعذّر تحديث ملخّص الحالة. أعد اختيار الخط للمحاولة.', 'error');
     } finally {
       if (_csCardRequests.get(line) === request) _csCardRequests.delete(line);
     }
@@ -5478,6 +5701,8 @@ function opsBaseFor(env, keys) {
 
 async function opsFetchEnv(line, tower) {
   const r = await csCall('app_tower_state', { p_line_name: line, p_tower_number: String(tower) });
+  // v335-C6r7: a tower that is not yet in the current-state store has no readable present state: pending legacy-derived operations for it are HELD (never rejected, never guessed) until the admin initialisation
+  if (r && r.ok === true && r.tower && r.tower.basis === 'uninitialized') return { ok: false, code: 'uninitialized' };
   if (r && r.ok === true && r.tower) return { ok: true, env: r.tower, asOf: r.as_of };
   if (r && r.net) return { ok: false, net: true };
   return { ok: false, code: r && r.code };
@@ -6295,12 +6520,13 @@ const PAGE_SIZE = 50;
 
 // يحمّل كل السجلات (بدون قيد 6 أشهر) — يُستخدم فقط لحالة الخطوط والمغادرات لضمان دقة "آخر كشف لكل برج"
 // يُعاد التحميل فقط لو مر أكثر من دقيقتين عن آخر تحميل، لتقليل الطلبات المتكررة بنفس الجلسة
-async function loadFullRecordsCache(force) {
+async function loadFullRecordsCache(force, level) {
   const now = Date.now();
-  if (!force && fullRecordsCacheLoadedAt && (now - fullRecordsCacheLoadedAt) < 120000 && fullRecordsCache.length) {
+  const _stamp = level === 'detail' ? fullRecordsDetailLoadedAt : fullRecordsCacheLoadedAt;
+  if (!force && _stamp && (now - _stamp) < 120000 && fullRecordsCache.length) {
     return; // الكاش حديث، لا حاجة لإعادة التحميل
   }
-  if (csLiveEnabled()) { await _csLoadAllLines(force); return; }
+  if (csLiveEnabled()) { await _csLoadAllLines(force, level); return; }
   const mySeq = ++_readSeq, startSeq = _localSeq; // v334-R: لقطة بدء القراءة
   try {
     // نقرأ من "latest_inspections" (رؤية بقاعدة البيانات ترجّع آخر كشف لكل برج بس) بدل جدول inspections
@@ -6324,28 +6550,13 @@ async function loadFullRecordsCache(force) {
 }
 
 // v335: تحميل كل الخطوط بقراءات الخط الحيّة (طلب لكل خط، 3 بالتوازي) ثم المطابقة مع العمليات المعلّقة بالمنطق القائم لكل خط على حدة.
-async function _csLoadAllLines(force) {
-  const names = await csLineNames();
-  if (!names.ok) { if (names.stale) return; if (!names.authLost) showToast('⚠️ تعذر تحميل الحالة الحيّة للخطوط، قد تكون البيانات المعروضة قديمة', 'error'); return; }
-  const lines = names.lines.slice();
-  let failed = 0, idx = 0;
-  async function worker() {
-    while (idx < lines.length) {
-      const ln = lines[idx++];
-      const mySeq = ++_readSeq, startSeq = _localSeq;
-      let cl = await csLine(ln, null);
-      if (!cl.ok && cl.code === 'stale_write') cl = await csLine(ln, null); // v335-C2: كتابة محلية جرت أثناء القراءة: إعادة واحدة ولا يُعتمد الردّ القديم
-      if (cl.ok && cl.omitted && cl.omitted.length) cl = await csLine(ln, null);   // v335-C3: ردّ ناقص لحداثة أبراج أخرى: قراءة واحدة طازجة
-      if (cl.stale && cl.code === 'session_changed') { idx = lines.length; return; }
-      if (cl.authLost) { idx = lines.length; failed++; return; }
-      if (!cl.ok) { failed++; continue; }
-      if (!_reconcileRefresh(csRowsFromLine(cl.towers), ln, mySeq, startSeq, cl.omitted && cl.omitted.length ? new Set(cl.omitted) : null)) failed++;
-      else loadedLineCacheAt[ln] = Date.now();
-    }
-  }
-  await Promise.all([worker(), worker(), worker()]);
-  if (!failed) fullRecordsCacheLoadedAt = Date.now();
-  else showToast('⚠️ تعذر تحديث ' + failed + ' خط من الحالة الحيّة — المعروض لها من آخر تحميل', 'error');
+async function _csLoadAllLines(force, level) {
+  const lv = level === 'detail' ? 'detail' : 'summary';
+  const res = await csLoadScope(null, force, lv);
+  if (res.aborted || res.stale) return;
+  if (res.code && !res.lines.length) { if (!res.authLost) showToast('⚠️ تعذر تحميل الحالة الحيّة للخطوط، قد تكون البيانات المعروضة قديمة', 'error'); return; }
+  if (!res.failed.length) { fullRecordsCacheLoadedAt = Date.now(); if (lv === 'detail') fullRecordsDetailLoadedAt = fullRecordsCacheLoadedAt; }
+  else showToast('⚠️ تعذر تحديث ' + res.failed.length + ' خط من الحالة الحيّة — المعروض لها من آخر تحميل', 'error');
 }
 
 async function loadRecords() {
@@ -6891,6 +7102,48 @@ async function runTowerStoreMigration(retryFailed) {
     }
     if (st && gen === _csAuthGen && errs.length) st.innerHTML += '<br>' + errs.slice(0, 20).map(_csEsc).join('<br>');
   } finally { _migRunning = false; if (btn) btn.disabled = false; }
+}
+
+// v335-C6r6: جاهزية مخزن الحالة (سؤالان منفصلان: تهيئة الأبراج القديمة في المخزن / اكتمال بطاقات العرض) والخطوة الإدارية الدقيقة المتبقية.
+function _readinessText(r) {
+  const l = r.legacy || {}, c = r.cards || {};
+  const steps = { legacy_migration: 'الخطوة: اضغط «ابدأ / استأنف الترحيل» (تهيئة الأبراج القديمة من بياناتها الموجودة).', review_failed: 'الخطوة: راجع أخطاء الأبراج الفاشلة أدناه ثم «إعادة المحاولة للفاشلة» (لا تُعاد تلقائياً).',
+    card_backfill: 'الخطوة: اضغط «تعبئة البطاقات» (يملأ البطاقات الناقصة من المخزن الحالي؛ لا يرحّل التاريخ).', investigate_identity: 'الخطوة: بطاقات بهوية غير مطابقة — شغّل التحقق (app_ops_verify) وراجع المطوّر.' };
+  let t = (r.ready ? '✅ جاهز: كل الأبراج مهيّأة وبطاقاتها مكتملة.' : '⚠️ غير جاهز.') + '<br>' +
+    '• تهيئة المخزن (الأبراج القديمة): ' + (l.initialised || 0) + ' من ' + (l.towers_with_history || 0) + ' مهيّأ — متبقٍ ' + (l.pending || 0) + '، فاشل ' + (l.failed || 0) + '<br>' +
+    '• بطاقات العرض: ' + (c.cards || 0) + ' بطاقة لـ ' + (c.store_towers || 0) + ' برجاً في المخزن — ناقصة ' + (c.missing || 0) + '، متأخرة ' + (c.stale || 0) + '، هوية غير مطابقة ' + (c.identity_mismatch || 0);
+  if (r.next_step && steps[r.next_step]) t += '<br><b>' + steps[r.next_step] + '</b>';
+  (l.failures || []).slice(0, 20).forEach(x => { t += '<br>' + _csEsc(x.line_name + ' / ' + x.tower_number + ': ' + x.error); });
+  return t;
+}
+async function runStoreReadiness() {
+  const st = document.getElementById('migStatus'); if (!st) return;
+  if (!currentUser || currentUser.role !== 'admin') { st.textContent = '⛔ من صلاحيات المدير فقط'; return; }
+  const gen = _csAuthGen; st.textContent = '⏳ جارٍ فحص الجاهزية…';
+  const r = await csCall('app_ops_readiness', {}, { timeout: 65000 });
+  if (gen !== _csAuthGen || !currentUser) return;
+  if (!r || r.ok !== true) { st.textContent = '❌ تعذّر الفحص: ' + ((r && r.code) || 'network'); return; }
+  st.innerHTML = _readinessText(r);
+}
+let _cardsBackfillRunning = false;
+async function runCardsBackfill() {
+  const st = document.getElementById('migStatus'); if (!st || _cardsBackfillRunning) return;
+  if (!currentUser || currentUser.role !== 'admin') { st.textContent = '⛔ من صلاحيات المدير فقط'; return; }
+  _cardsBackfillRunning = true; const gen = _csAuthGen; let done = 0, busy = 0; const errs = [];
+  try {
+    for (let i = 0; i < 200; i++) {
+      st.textContent = '⏳ جارٍ تعبئة البطاقات… تمّت ' + done + (busy ? ' — مشغولة (ستُعاد): ' + busy : '');
+      const r = await csCall('app_ops_cards_backfill', { p_limit: 200 }, { timeout: 65000 });
+      if (gen !== _csAuthGen || !currentUser) return;
+      if (!r || r.ok !== true) { st.textContent = '❌ توقّفت التعبئة: ' + ((r && r.code) || 'network') + ' — يمكن الاستئناف. تمّت ' + done; return; }
+      done += r.done || 0; busy = r.busy || 0; (r.failed || []).forEach(x => errs.push(x.line_name + ' / ' + x.tower_number + ': ' + x.error));
+      if (!r.remaining) break;
+      if (!r.done && !(r.failed || []).length) { if (busy) { await new Promise(res => setTimeout(res, 1500)); continue; } break; }
+    }
+    const rd = await csCall('app_ops_readiness', {}, { timeout: 65000 });
+    if (gen !== _csAuthGen || !currentUser) return;
+    st.innerHTML = '🗂️ تمّت تعبئة ' + done + ' بطاقة.<br>' + (rd && rd.ok ? _readinessText(rd) : '') + (errs.length ? '<br>' + errs.slice(0, 20).map(_csEsc).join('<br>') : '');
+  } finally { _cardsBackfillRunning = false; }
 }
 
 function updateAdminStats() {
@@ -8498,9 +8751,9 @@ function switchDepTab(tab, btn) {
   document.getElementById('depEmergencyView').style.display = tab==='emergency'?'':'none';
   document.getElementById('depTelegramView').style.display = tab==='telegram'?'':'none';
   featBump('dep');   // أي تبديل لسان يُبطل أي تحميل/جلب معلّق للسان سابق
-  if (tab==='list') featRun(['dep'], (tok) => { loadFullRecordsCache(true).then(() => { if (featEntryOk(tok)) showDepLinesList(); }); }, 'dep', false);
+  if (tab==='list') featRun(['dep'], (tok) => { if (csLiveEnabled()) { showDepLinesList(); return; } loadFullRecordsCache(true).then(() => { if (featEntryOk(tok)) showDepLinesList(); }); }, 'dep', false);   // v335-C6r6: الحالة الحيّة = لا قراءة لكل الخطوط عند فتح اللسان
   if (tab==='log') renderDepLog();
-  if (tab==='treat') { featRun(['treat'], (tok) => { loadFullRecordsCache(true).then(() => { if (featEntryOk(tok)) populateTreatLines(); }); }, 'dep', false); otherDepTreatState={}; }
+  if (tab==='treat') { featRun(['treat'], (tok) => { if (csLiveEnabled()) { populateTreatLines(); return; } loadFullRecordsCache(true).then(() => { if (featEntryOk(tok)) populateTreatLines(); }); }, 'dep', false); otherDepTreatState={}; }   // v335-C6r7: الحالة الحيّة = لا قراءة لكل الخطوط عند دخول اللسان: الخطوط أولاً، والخط المختار يُقرأ وحده
   if (tab==='emergency') featRun(['emg'], () => { populateEmgLines(); renderEmergencyLog(); }, 'dep', false);
   if (tab==='telegram') featRun(['tg'], () => { populateTelegramLines(); switchTelegramSubTab('add', document.getElementById('telegramAddTabBtn')); }, 'dep', false);
 }

@@ -1,10 +1,15 @@
-/* departures-list.js — v335-C5r8
+/* departures-list.js — v335-C6r6 (landing = line names only; a line is read when opened; all-lines counts only on an explicit action)
    قائمة المغادرات الحالية: الخطوط ← أبراج الخط ← تفاصيل البرج. القراءة من فهرس الحالة الحالية (getActiveDepartureTowers في index.html).
    يُحمَّل ويُنفَّذ مرة واحدة فقط عند الطلب الفعلي؛ لا يعمل عند بدء التطبيق. سكربت كلاسيكي يشارك الربط العام مع index.html. */
 async function loadDeparturesImpl(tok) {
   showDepLinesList();
+  if (csLiveEnabled()) {
+    // v335-C6r6: شاشة الدخول لا تقرأ شيئاً من الخادم: لا loadTreatments ولا حالة الخطوط الـ33. الخط يُقرأ عند فتحه، وأعداد كل الخطوط بطلب صريح.
+    renderDepLinesList();
+    return;
+  }
   renderDepLinesList(true); // مرحلة أولى: أسماء الخطوط فوراً من البيانات المحلية، بدون انتظار الشبكة
-  await Promise.all([loadTreatments(), loadFullRecordsCache(csLiveEnabled())]); // v335: المغادرات تقرأ الحالة الحيّة دائماً عند الفتح
+  await Promise.all([loadTreatments(), loadFullRecordsCache(false)]);
   if (!featDataOk(tok)) return;      // غادر المستخدم الصفحة أو تغيّرت الجلسة أثناء الجلب: لا نرسم بيانات لحساب آخر
   renderDepLinesList(); // مرحلة ثانية: الأعداد الحقيقية بعد اكتمال التحميل
   try { if (treatUI) treatUI.populateLines(); } catch (e) { console.error('[tower-app] populateTreatLines', e); }   // اختياري: لا يُحمَّل محرر المعالجة لأجل ذلك
@@ -44,12 +49,17 @@ function renderDepLinesList(preliminary) {
       </div>`).join('');
     return;
   }
-  const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort();
+  const live = csLiveEnabled();
+  // الحالة الحيّة: كل خطوط التطبيق تظهر؛ الخط غير المقروء بعد يُعرض «لم يُقرأ» لا «سليم»
+  const allRead = live && !!fullRecordsCacheLoadedAt && fullRecordsCache.length > 0;   // an explicit all-lines read has completed (and no later write invalidated it)
+  const uniqueLines = (live && !allRead) ? Object.keys(LINES_DATA).sort() : [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort();
 
   if (!uniqueLines.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>'; return; }
+  const isLoaded = (ln) => !live || allRead || !!loadedLineCacheAt[ln];
 
   const isIssue = s => s && s !== 'ok';
   const rows = uniqueLines.map(lineName => {
+    if (!isLoaded(lineName)) return { lineName, notLoaded: true, count: -1, elCount: 0, mCount: 0, fireCount: 0, washCount: 0 };
     const activeTowers = getActiveDepartureTowers(lineName);
     let elCount = 0, mCount = 0, fireCount = 0, washCount = 0;
     activeTowers.forEach(({r}) => {
@@ -58,18 +68,28 @@ function renderDepLinesList(preliminary) {
       if (isIssue(r.sev_fire)) fireCount++;
       if (r.insulator_washing && r.insulator_washing !== '' && r.insulator_washing !== 'clean') washCount++;
     });
-    return { lineName, count: activeTowers.length, elCount, mCount, fireCount, washCount };
+    return { lineName, count: activeTowers.length, elCount, mCount, fireCount, washCount, unk: live ? csUnknownCount(((_csLineCov[lineName] || {}).sum || {}).coverage) : 0 };
   });
 
   // الخطوط اللي فيها مغادرات تظهر أول، مرتبة تنازلياً، والسليمة بالأسفل
   rows.sort((a,b) => b.count - a.count || a.lineName.localeCompare(b.lineName,'ar'));
 
-  body.innerHTML = rows.map(({lineName, count, elCount, mCount, fireCount, washCount}) => {
-    const borderColor = count > 0 ? '#FC4444' : '#48BB78';
-    const badge = count > 0
+  const allBtn = live ? `<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-secondary btn-sm" onclick="loadAllDepartureLines()" id="depAllLinesBtn">📊 قراءة أعداد كل الخطوط</button><span style="font-size:0.74rem;color:#718096">اضغط خطاً لقراءته وحده، أو اقرأ الكل بطلب صريح.</span></div>` : '';
+  body.innerHTML = allBtn + rows.map(({lineName, count, elCount, mCount, fireCount, washCount, notLoaded, unk}) => {
+    if (notLoaded) {
+      return `<div class="form-card" style="margin-bottom:10px;padding:14px;border-right:4px solid #CBD5E0;cursor:pointer" onclick="openDepLineTowers('${lineName.replace(/'/g,"\\'")}')">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div style="font-weight:700;color:#1a2e4a;font-size:0.92rem">${lineName} 🔍</div>
+          <span style="background:#EDF2F7;color:#4A5568;padding:3px 12px;border-radius:20px;font-size:0.78rem">لم يُقرأ بعد — اضغط للفتح</span>
+        </div></div>`;
+    }
+    const borderColor = count > 0 ? '#FC4444' : (unk ? '#ED8936' : '#48BB78');
+    const unkBadge = unk ? ` <span style="background:#FEEBC8;color:#7B341E;padding:3px 10px;border-radius:20px;font-size:0.74rem;font-weight:700">⚠️ ${unk} برج غير معروف</span>` : '';
+    const badge = (count > 0
       ? `<span style="background:#FED7D7;color:#822727;padding:3px 12px;border-radius:20px;font-size:0.78rem;font-weight:700">🔴 ${count} مغادرة</span>`
-      : `<span style="background:#C6F6D5;color:#22543D;padding:3px 12px;border-radius:20px;font-size:0.78rem;font-weight:700">✅ سليم</span>`;
-    const clickable = count > 0 ? ` onclick="openDepLineTowers('${lineName.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
+      : (unk ? `<span style="background:#FEEBC8;color:#7B341E;padding:3px 12px;border-radius:20px;font-size:0.78rem;font-weight:700">لا مغادرات بين المعروف</span>` : `<span style="background:#C6F6D5;color:#22543D;padding:3px 12px;border-radius:20px;font-size:0.78rem;font-weight:700">✅ سليم</span>`)) + unkBadge;
+    //
+    const clickable = (count > 0 || unk) ? ` onclick="openDepLineTowers('${lineName.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
     const breakdownParts = [];
     if (elCount > 0) breakdownParts.push(`<span style="color:#2B6CB0">⚡ كهربائية: ${elCount}</span>`);
     if (mCount > 0) breakdownParts.push(`<span style="color:#C05621">⚙️ ميكانيكية: ${mCount}</span>`);
@@ -92,13 +112,35 @@ let depLineTowersCurrentLine = null;
 
 let depLineTowersCategoryFilter = null; // null = عرض الكل | 'electrical'|'mechanical'|'fire'|'washing'
 
-function openDepLineTowers(lineName) {
+async function openDepLineTowers(lineName) {
+  const tok = featTok('dep', true);
   pushLevel(backToDepLinesList);
   document.getElementById('depLinesListView').style.display = 'none';
   document.getElementById('depLineTowersView').style.display = '';
   document.getElementById('depLineTowersTitle').textContent = '🗼 أبراج خط ' + lineName + ' — المغادرات';
   depLineTowersCategoryFilter = null; // نبدأ من غير فلتر عند فتح خط جديد
+  if (csLiveEnabled()) {
+    // v335-C6r6: قراءة الخط المختار وحده من مخزن الحالة (طلب واحد)؛ لا loadTreatments ولا خطوط أخرى
+    document.getElementById('depLineTowersBody').innerHTML = '<div class="empty-state">⏳ جارٍ قراءة الخط…</div>';
+    let ok = true;
+    try { await loadLineRecordsCache(lineName, true); } catch (e) { ok = false; }
+    if (!featEntryOk(tok)) return;
+    if (!ok && !loadedLineCacheAt[lineName] && !latestRecordsIndex[lineName]) {
+      document.getElementById('depLineTowersBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا الخط من الخادم — تحقق من الاتصال وحاول مرة أخرى<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="openDepLineTowers(\'' + lineName.replace(/'/g, "\\'") + '\')">🔄 إعادة المحاولة</button></div>';
+      return;
+    }
+    if (!ok) { try { showToast('⚠️ تعذّر تحديث الخط — المعروض من آخر ما حُمّل', 'error'); } catch (e) {} }
+  }
   renderDepLineTowers(lineName);
+}
+
+// قراءة صريحة لأعداد كل الخطوط (تقرير شامل): لا تعمل عند فتح الشاشة، فقط بالضغط
+async function loadAllDepartureLines() {
+  const tok = featTok('dep', true);
+  const btn = document.getElementById('depAllLinesBtn'); if (btn) { btn.disabled = true; btn.textContent = '⏳ جارٍ قراءة كل الخطوط…'; }
+  try { await loadFullRecordsCache(true); } catch (e) {}
+  if (!featEntryOk(tok)) return;
+  renderDepLinesList();
 }
 
 // الضغط على بطاقة تصنيف يفلتر الأبراج تحتها لهذا النوع بس — ضغطها ثانية يلغي الفلتر ويرجّع عرض الكل
@@ -112,7 +154,9 @@ function renderDepLineTowers(lineName) {
   const body = document.getElementById('depLineTowersBody');
   const activeTowers = getActiveDepartureTowers(lineName);
 
-  if (!activeTowers.length) { body.innerHTML = csLineBanner(lineName) + '<div class="empty-state">✅ لا توجد مغادرات نشطة بهذا الخط</div>'; return; }
+  // v335-C6r7: لا «لا توجد مغادرات» مطلقة مع بقاء أبراج غير معروفة الحالة (غير مهيّأة/قيد الإصلاح): العبارة مقيَّدة بالأبراج المعروفة
+  const _unk = csLiveEnabled() ? csUnknownCount(((_csLineCov[lineName] || {}).sum || {}).coverage) : 0;
+  if (!activeTowers.length) { body.innerHTML = csLineBanner(lineName) + (_unk ? '<div class="empty-state">لا توجد مغادرات نشطة بين الأبراج المعروفة — ⚠️ ' + _unk + ' برج غير معروف الحالة (لا يمكن القول إن الخط خالٍ)</div>' : '<div class="empty-state">✅ لا توجد مغادرات نشطة بهذا الخط</div>'); return; }
 
   activeTowers.sort((a,b) => parseInt(a.r.tower_number) - parseInt(b.r.tower_number));
 

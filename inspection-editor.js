@@ -1244,7 +1244,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
         const geo = csEnv.meta && csEnv.meta.geometry;
         const fromCache = fetched.cs.source === 'cache';
         const tag = fromCache ? ' (لقطة مخزّنة بالجهاز)' : '';
-        if (csEnv.basis === 'operations' && !csEnv.row) { _setPrefillState('unavailable', lineName, towerNumber, 'حالة هذا البرج مسجّلة بنظام العمليات الجديد وليست مدعومة بالتهيئة بعد' + tag); return; }
+        if (csEnv.basis === 'operations' && !csEnv.row && csEnv.resolution !== 'no_source') { _setPrefillState('unavailable', lineName, towerNumber, 'حالة هذا البرج مسجّلة بنظام العمليات الجديد وليست مدعومة بالتهيئة بعد' + tag); return; }
         if (csEnv.resolution === 'unresolved') { _setPrefillState('unresolved', lineName, towerNumber, csReasonsText(csEnv.unresolved_reasons) + tag); return; }
         if (csEnv.row && geo && geo.status === 'conflict') { _setPrefillState('unresolved', lineName, towerNumber, 'هندسة السلاسل المحفوظة غير متسقة مع بعضها' + tag); return; }
         // v335-C2: تحقق فعلي من حالة/دورات/هندسة كل دائرة قبل أي تهيئة تلقائية (لا صفر ولا سليم يُصنع). الاستثناء الوحيد: materials_missing
