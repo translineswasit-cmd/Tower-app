@@ -225,7 +225,12 @@ function renderLineTowerList(lineName) {
     } else {
       const deps = extractDepsFromRecord(r);
       const allTreated = deps.length > 0 && isFullyTreated(r.id, deps, r);
-      if (!deps.length) { statusBadge = '✅ سليم'; borderColor = '#48BB78'; }
+      const _rd = (_inf && _inf.readiness) || null;       // v335-C6r9: "healthy" only when every applicable section is known
+      if (!deps.length && csLiveEnabled() && !(_rd && Array.isArray(_rd.core_unknown))) { statusBadge = '⚠️ اكتمال غير مؤكد'; borderColor = '#ED8936'; }
+      else if (!deps.length && csLiveEnabled() && _rd.core_unknown.length) { statusBadge = '⚠️ غير مكتمل — لا مغادرات معروفة'; borderColor = '#ED8936'; }
+      else if (!deps.length && csLiveEnabled() && (_rd.other_unknown || 0) > 0) { statusBadge = '⚪ لا مغادرات معروفة'; borderColor = '#A0AEC0'; }
+      else if (!deps.length) { statusBadge = '✅ سليم'; borderColor = '#48BB78'; }
+      else if (allTreated && csLiveEnabled() && !(_rd && Array.isArray(_rd.core_unknown) && !_rd.core_unknown.length && !(_rd.other_unknown > 0))) { statusBadge = '✅ المعروف معالج — أقسام غير مسجّلة'; borderColor = '#ED8936'; }
       else if (allTreated) { statusBadge = '✅ معالج'; borderColor = '#48BB78'; }
       else { statusBadge = '🔴 مغادرات'; borderColor = '#FC4444'; }
     }
@@ -245,6 +250,7 @@ function renderLineTowerList(lineName) {
 // ========================
 // صفحة تفاصيل برج واحد (مزيج الكشف + المعالجات)
 // ========================
+let _towerDetailCtx = null;   // v335-C6r9: { line, tower, live } of the last detail read (live = confirmed by the server in this open; false = held copy)
 async function openTowerDetail(lineName, towerNum) {
   const tok = featTok('lpg', true);
   pushLevel(backToTowerList);
@@ -257,6 +263,7 @@ async function openTowerDetail(lineName, towerNum) {
     let f = null; try { f = await _fetchFullTowerRecord(lineName, towerNum); } catch (e) { f = null; }
     if (!featEntryOk(tok)) return;
     const live = !!(f && f.ok && f.cs && f.cs.ok && f.cs.source !== 'cache');
+    _towerDetailCtx = { line: lineName, tower: String(towerNum), live };
     if (live) _applyConfirmedTowerEnv(lineName, towerNum, f.cs.env);
     else if (!getLatestRecordForTower(lineName, towerNum)) {
       document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا البرج من الخادم — تحقق من الاتصال وحاول مرة أخرى</div>';
@@ -269,7 +276,7 @@ async function openTowerDetail(lineName, towerNum) {
   renderTowerDetail(lineName, towerNum);
 }
 
-function renderTowerDetail(lineName, towerNum) {
+function renderTowerDetailLegacy(lineName, towerNum) {
   const body = document.getElementById('towerDetailBody');
   const latestRecs = getLatestRecordsPerTower(lineName);
   const r = latestRecs.find(x => String(x.tower_number) === String(towerNum));
@@ -345,10 +352,168 @@ function renderTowerDetail(lineName, towerNum) {
       <span style="font-size:0.78rem;font-weight:700;color:${color};white-space:nowrap">${icon} ${treated?'معالج':'قيد المعالجة'}</span>
     </div>`;
   });
-  if (!hasAny) html += '<div class="empty-state" style="padding:10px">✅ لا توجد ملاحظات — البرج بحالة سليمة</div>';
+  if (!hasAny) html += '<div class="empty-state" style="padding:10px">لا توجد ملاحظات نصية مسجّلة — لا يُستدل من ذلك على سلامة البرج (الحالة التفصيلية غير متاحة)</div>';
   html += '</div></div>';
 
   body.innerHTML = html;
+}
+
+// =====================================================================================================================================================
+// v335-C6r9: tower detail from the AUTHORITATIVE current state (one selected-tower envelope: components + meta + source row).
+//  * both applicable circuits are drawn (damage + treated cycles); an unknown phase / unknown circuit applicability / unknown cycles / unknown materials is LABELLED, never drawn as
+//    healthy, never given invented glass / zero cycles / a circuit count;
+//  * text sections take their status (open / treated / ok / unknown) from the components (+ pending overlays); the loaded treatment log is never consulted;
+//  * the footer claims "no recorded observations" only when every applicable section is known.
+// =====================================================================================================================================================
+const TD_SECTIONS = [
+  ['iron', 'تقاطعات الحديد', 'iron_intersections'], ['foundation', 'قواعد البرج', 'tower_foundations'], ['attachment', 'ملحقات البرج', 'tower_attachments'],
+  ['wire_r1', 'أسلاك R', 'wires_r1'], ['wire_s1', 'أسلاك S', 'wires_s1'], ['wire_t1', 'أسلاك T', 'wires_t1'],
+  ['wire_r1_c2', 'أسلاك R (الدائرة 2)', 'wires_r1_c2'], ['wire_s1_c2', 'أسلاك S (الدائرة 2)', 'wires_s1_c2'], ['wire_t1_c2', 'أسلاك T (الدائرة 2)', 'wires_t1_c2'],
+  ['ground_1', 'الأرضي 1', 'ground_1'], ['ground_2', 'الأرضي 2', 'ground_2'],
+  ['fire', 'مسببات الحرائق', 'fire_causes_notes'], ['road', 'الطريق', 'road_access', 'road_access_notes'], ['washing', 'نظافة العوازل', 'insulator_washing']
+];
+const TD_FIRE_SEV = { simple: 'مغادرة بسيطة', moderate: 'مغادرة متوسطة', below_critical: 'مغادرة دون الحرجة', critical: 'مغادرة حرجة' };
+const TD_WASH = { needs_washing: 'يحتاج غسل', very_dirty: 'ملوثة جداً', clean: 'نظيفة' };
+
+// pure: no DOM, no globals except the optional overlay callbacks in opts
+function towerDetailModel(env, opts) {
+  opts = opts || {};
+  const comps = {}; (Array.isArray(env.components) ? env.components : []).forEach(c => { if (c && typeof c.k === 'string') comps[c.k] = c; });
+  const row = env.row && typeof env.row === 'object' ? env.row : {}, meta = env.meta || {};
+  const circuits = [1, 2].map(n => {
+    const pre = n === 1 ? 'ins_' : 'ins2_', phases = {};
+    ['R', 'S', 'T'].forEach(ph => {
+      const c = comps[pre + ph];
+      if (!c) phases[ph] = { state: 'unknown', ap: null };
+      else if (c.ap === 'not_applicable') phases[ph] = { state: 'not_applicable', ap: c.ap };
+      else if (c.ds !== 'known' || !c.v || !_tdBoolArr(c.v.damaged)) phases[ph] = { state: 'unknown', ap: c.ap, flags: c.fl || [], invalid: c.ds === 'known' };   // known-but-malformed damage arrays are NOT drawn and NOT read as healthy
+      else {
+        const cy = c.v.cycle, okCy = Array.isArray(cy) && cy.length === c.v.damaged.length && cy.every(x => Number.isInteger(x) && x >= 0);
+        phases[ph] = { state: 'known', ap: c.ap, cond: c.cond, damaged: c.v.damaged, cycle: okCy ? cy : null, cycleState: okCy ? 'ok' : (cy == null ? 'missing' : 'invalid') };   // a missing / malformed cycle never becomes zero or "treated"
+      }
+    });
+    const aps = ['R', 'S', 'T'].map(ph => phases[ph].state === 'not_applicable' ? 'not_applicable' : (phases[ph].ap === 'applicable' ? 'applicable' : 'unknown'));
+    const applicability = n === 1 ? 'applicable' : (aps.every(a => a === 'not_applicable') ? 'not_applicable' : aps.every(a => a === 'applicable') ? 'applicable' : 'unknown');
+    const mm = meta.materials && typeof meta.materials === 'object' ? (n === 2 ? meta.materials.circuit2 : meta.materials.circuit1) : null;
+    const ms = mm && typeof mm === 'object' && typeof mm.status === 'string' ? mm.status : null;
+    // 'complete' = every phase explicitly saved; 'legacy_interpretable' = implicit legacy convention (not an observation); anything else, or no meta at all = unknown
+    const materialsState = ms === 'complete' ? 'known' : ms === 'legacy_interpretable' ? 'legacy' : 'unknown';
+    return { n, applicability, phases, materialsState, materialsUnknown: materialsState !== 'known' };
+  });
+  const sections = [], unknown = [], gaps = []; let open = 0, treated = 0;   // unknown = applicable sections without a known value; gaps = provenance of what IS known (cycles, materials) - kept separate from observed damage
+  circuits.forEach(c => {
+    if (c.applicability === 'unknown') { unknown.push('انطباق الدائرة ' + c.n); return; }
+    if (c.applicability !== 'applicable') return;
+    const unk = ['R', 'S', 'T'].filter(ph => c.phases[ph].state !== 'known');
+    if (unk.length) unknown.push('عوازل الدائرة ' + c.n + ' (' + unk.join('، ') + ')');
+    const noCy = ['R', 'S', 'T'].filter(ph => c.phases[ph].state === 'known' && !c.phases[ph].cycle);
+    if (noCy.length) gaps.push('دورات المعالجة غير معروفة/غير صالحة — الدائرة ' + c.n + ' (' + noCy.join('، ') + ')');
+    if (c.materialsState === 'unknown') gaps.push('مادة سلاسل الدائرة ' + c.n + ' غير معروفة');
+    else if (c.materialsState === 'legacy') gaps.push('مادة سلاسل الدائرة ' + c.n + ' غير مؤكدة (عرف قديم لا رصد فعلي)');
+    ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; if (x.state === 'known') { if (x.cond === 'defect') open++; else if (x.cond === 'treated') treated++; } });
+  });
+  const c2on = circuits[1].applicability === 'applicable';
+  TD_SECTIONS.forEach(([k, label, field, notesField]) => {
+    if (/_c2$/.test(k) && !c2on) return;
+    const c = comps[k];
+    if (!c) { if (k !== 'attachment') unknown.push(label); return; }
+    if (c.ap === 'not_applicable') return;
+    if (c.ds !== 'known') { if (k !== 'attachment') unknown.push(label); return; }
+    let state = c.cond === 'defect' ? 'open' : c.cond === 'treated' ? 'treated' : 'ok';
+    if (state === 'open' && opts.pendingTreated && opts.pendingTreated(k)) state = 'treated';
+    else if (state === 'treated' && opts.pendingObserved && opts.pendingObserved(k)) state = 'open';
+    if (state === 'ok') return;
+    let display = row[field], notes = notesField ? row[notesField] : null;
+    if (k === 'fire') display = [TD_FIRE_SEV[row.sev_fire] || row.sev_fire, row.fire_causes_notes].filter(Boolean).join(' — ');
+    else if (k === 'washing') display = TD_WASH[display] || display;
+    else if (display && notes) display = display + ' — ' + notes;
+    else if (!display) display = notes;
+    sections.push({ k, label, state, display: display || '' });
+    if (state === 'open') open++; else treated++;
+  });
+  return { circuits, sections, unknown, gaps, open, treated, footer: open > 0 ? 'open' : (unknown.length || gaps.length) ? 'unknown' : treated > 0 ? 'treated' : 'clear' };   // 'clear' only when every applicable section AND its cycles/materials are known
+}
+
+function _tdBoolArr(a) { return Array.isArray(a) && a.length > 0 && a.every(x => typeof x === 'boolean'); }
+function _tdEsc(v) { return (typeof _csEsc === 'function') ? _csEsc(v) : String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+
+function renderTowerDetail(lineName, towerNum) {
+  const body = document.getElementById('towerDetailBody');
+  if (!(typeof csLiveEnabled === 'function' && csLiveEnabled())) return renderTowerDetailLegacy(lineName, towerNum);
+  const ent = _csMem.get(csKey(lineName, towerNum)), env = ent && ent.env;
+  const msg = t => { body.innerHTML = '<div class="empty-state">' + t + '</div>'; };
+  if (!env) return msg('⚠️ حالة هذا البرج غير متاحة حالياً (لم تُقرأ من الخادم ولا يوجد نسخة محفوظة)');
+  if (env.status === 'uninitialized') return msg('⚠️ حالة هذا البرج لم تُهيّأ بعد' + (env.failed ? ' (فشلت التهيئة)' : '') + ' — يلزم إجراء المدير؛ لا تُعرض حالة مستنتجة من التاريخ');
+  if (env.resolution === 'no_source' || env.status === 'no_source') return msg('لم يُكشف هذا البرج بعد (لا يوجد كشف معتمد في الحالة الحالية)');
+  if (env.basis !== 'operations' || !Array.isArray(env.components) || !env.row || typeof env.row !== 'object') return msg('⚠️ تفاصيل هذا البرج غير متاحة حالياً (قراءة تفصيلية غير مكتملة) — تحقق من الاتصال وأعد الفتح');
+  const ctx = _towerDetailCtx && _towerDetailCtx.line === lineName && _towerDetailCtx.tower === String(towerNum) ? _towerDetailCtx : null;
+  const r = env.row, iid = r.id;
+  const model = towerDetailModel(env, {
+    pendingTreated: k => { try { const s = csPendingTreated(iid); return !!(s && s.has(k)); } catch (e) { return false; } },
+    pendingObserved: k => { try { return !!opsPendingObserved(iid, k); } catch (e) { return false; } }
+  });
+  const meta = env.meta || {}, vv = r.voltage != null ? r.voltage : (meta.voltage && meta.voltage.value != null ? meta.voltage.value : (LINE_VOLTAGE[lineName] || null));
+  const [stA, stB] = lineEndpoints(lineName);
+  let pendingN = 0; try { const rd = opsRead(); if (rd.ok) pendingN = rd.items.filter(e => e.line === lineName && String(e.tower) === String(towerNum)).length; } catch (e) {}
+  let html = '';
+  if (!(ctx && ctx.live)) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #ED8936;font-size:0.8rem;color:#7B341E">📴 آخر حالة محفوظة على الجهاز — لم تُؤكَّد من الخادم في هذا الفتح</div>';
+  if (env.status === 'needs_review') html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #E53E3E;font-size:0.8rem;color:#822727">⚠️ حالة هذا البرج تحتاج مراجعة' + ((env.unresolved_reasons || []).length ? ': ' + _tdEsc(env.unresolved_reasons.join('، ')) : '') + '</div>';
+  if (pendingN) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #F6C23E;font-size:0.8rem;color:#7C4A03">⏳ ' + pendingN + ' عملية معلّقة لهذا البرج لم تُؤكَّد بعد — العرض أدناه هو المؤكَّد على الخادم</div>';
+  html += `<div class="form-card" style="margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div style="font-weight:700;color:#1a2e4a">📋 آخر كشف</div>
+      <div style="font-size:0.78rem;color:#718096">📅 ${_tdEsc(r.inspection_date || '—')} | 👤 ${_tdEsc(r.created_by_name || '—')}</div>
+    </div>
+    <div style="font-size:0.85rem;color:#4A5568;margin-top:6px">نوع البرج: <strong>${_tdEsc(TOWER_TYPES[r.tower_type] || r.tower_type || 'غير معروف')}</strong> | الجهد: <strong>${vv != null ? _tdEsc(vv) + ' ك.ف' : 'غير معروف'}</strong></div>
+  </div>`;
+  const draws = [], geoGaps = [];
+  model.circuits.forEach(c => {
+    if (c.applicability === 'not_applicable') { html += '<div class="form-card" style="margin-bottom:14px;color:#718096;font-size:0.82rem">🔘 الدائرة الثانية: غير منطبقة على هذا البرج</div>'; return; }
+    if (c.applicability === 'unknown') { html += '<div class="form-card" style="margin-bottom:14px;color:#7B341E;font-size:0.82rem">🔘 الدائرة ' + c.n + ': انطباقها على هذا البرج غير معروف — لا تُعرض لها بيانات</div>'; return; }
+    const cid = 'towerDetailInsulators_c' + c.n, geo = meta.geometry || {};
+    let mode = null, modeNote = '';
+    if (['agreed', 'single_source', 'inferred'].indexOf(geo.status) >= 0 && geo.mode) mode = geo.mode;
+    const known = ['R', 'S', 'T'].filter(ph => c.phases[ph].state === 'known');
+    if (!mode && vv != null && known.length) {
+      try { const am = getInsulatorMode(Number(vv), r.tower_type || '', lineName, r.tower_number); if (known.every(ph => c.phases[ph].damaged.length === getInsulatorCount(am))) { mode = am; modeNote = 'الهندسة من إعداد التطبيق (غير مؤكدة في الحالة المحفوظة)'; } } catch (e) {}
+    }
+    let lenBad = false;
+    if (mode) { try { const cnt = getInsulatorCount(mode); if (!(cnt > 0) || known.some(ph => c.phases[ph].damaged.length !== cnt)) { lenBad = true; mode = null; modeNote = ''; } } catch (e) { lenBad = true; mode = null; } }   // stored arrays must match the geometry before anything is drawn
+    if (!mode) geoGaps.push('هندسة سلاسل الدائرة ' + c.n + (lenBad ? ' لا تطابق أطوال المصفوفات المحفوظة' : ' غير محسومة'));
+    html += `<div class="form-card" style="margin-bottom:14px"><h3>🔘 العوازل — الدائرة ${c.n}</h3>`;
+    if (mode) {
+      html += `<div class="insulator-legend" style="margin-bottom:10px"><div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div><div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div><div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">تمت معالجته</span></div></div>`;
+      html += `<div id="${cid}" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>`;
+      const st = {}, cy = {}, ti = {}, unk = [];
+      ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; if (x.state === 'known') { st[ph] = x.damaged; cy[ph] = x.cycle || []; ti[ph] = x.cycle ? x.damaged.map((d, i) => (!d && (x.cycle[i] || 0) > 0) ? i : -1).filter(i => i >= 0) : []; } else { st[ph] = []; cy[ph] = []; ti[ph] = []; unk.push(ph); } });
+      draws.push(() => renderTowerDetailInsulators(st, ti, mode, stA, stB, cid, cy, unk));
+    } else {
+      html += '<div style="font-size:0.8rem;color:#7B341E;margin-bottom:6px">هندسة السلاسل غير محسومة — تُعرض الأعداد دون رسم</div>';
+      ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; html += '<div style="font-size:0.85rem;padding:3px 0">الفيز ' + ph + ': ' + (x.state === 'known' ? (x.damaged.filter(Boolean).length + ' متضرر من ' + x.damaged.length) : '<span style="color:#7B341E">غير مسجّل</span>') + '</div>'; });
+    }
+    if (modeNote) html += '<div style="font-size:0.74rem;color:#7B341E;margin-top:6px">' + modeNote + '</div>';
+    const noCycle = known.filter(ph => !c.phases[ph].cycle);
+    if (noCycle.length) html += '<div style="font-size:0.76rem;color:#7B341E;margin-top:6px">دورات المعالجة غير معروفة للفيز: ' + noCycle.join('، ') + ' — لا يُفترض أنها صفر</div>';
+    if (c.materialsUnknown) html += '<div style="font-size:0.76rem;color:#7B341E;margin-top:4px">مادة سلاسل هذه الدائرة ' + (c.materialsState === 'legacy' ? 'غير مؤكدة (عرف قديم)' : 'غير معروفة (لم تُحفظ)') + ' — لا يُفترض زجاج</div>';
+    html += '</div>';
+  });
+  html += '<div class="form-card"><h3>📝 تفاصيل الكشف</h3><div style="display:flex;flex-direction:column;gap:8px">';
+  model.sections.forEach(sx => {
+    const tr = sx.state === 'treated', color = tr ? '#48BB78' : '#FC4444';
+    html += `<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;padding:8px;background:#F8FAFC;border-radius:8px;border-right:3px solid ${color}">
+      <div><strong style="color:#2E4057">${_tdEsc(sx.label)}:</strong> <span style="color:#4A5568">${_tdEsc(sx.display)}</span></div>
+      <span style="font-size:0.78rem;font-weight:700;color:${color};white-space:nowrap">${tr ? '✅ معالج' : '🔴 قيد المعالجة'}</span></div>`;
+  });
+  if (r.notes) html += '<div style="padding:8px;background:#F8FAFC;border-radius:8px;border-right:3px solid #A0AEC0"><strong style="color:#2E4057">ملاحظات:</strong> <span style="color:#4A5568">' + _tdEsc(r.notes) + '</span></div>';
+  if (model.footer === 'open') html += '<div class="empty-state" style="padding:10px">🔴 توجد بنود قيد المعالجة في هذا البرج</div>';
+  if (model.unknown.length) html += '<div style="padding:10px;background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;color:#7B341E;font-size:0.82rem">⚠️ بيانات غير مسجّلة: ' + model.unknown.map(_tdEsc).join('، ') + '<br>لا يمكن الجزم بسلامة هذه الأقسام.</div>';
+  const allGaps = model.gaps.concat(geoGaps);
+  if (allGaps.length) html += '<div style="padding:10px;background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;color:#7B341E;font-size:0.82rem">⚠️ بيانات الدورات/المواد/الهندسة غير مكتملة: ' + allGaps.map(_tdEsc).join('؛ ') + '<br>الأضرار المعروضة مرصودة، لكن لا يُجزم بالمعالجة أو السلامة الكاملة.</div>';
+  if (model.footer === 'treated' && !geoGaps.length) html +=  '<div class="empty-state" style="padding:10px">✅ كل الملاحظات المسجّلة تمت معالجتها</div>';
+  if (model.footer === 'clear' && !geoGaps.length) html += '<div class="empty-state" style="padding:10px">✅ لا توجد ملاحظات مسجّلة — كل الأقسام المنطبقة معروفة وسليمة</div>';
+  html += '</div></div>';
+  body.innerHTML = html;
+  setTimeout(() => draws.forEach(d => { try { d(); } catch (e) { console.warn('[tower-app] فشل رسم عوازل التفاصيل', e); } }), 10);
 }
 
 (window.__featModules = window.__featModules || {}).lpg = true;

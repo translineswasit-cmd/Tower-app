@@ -2151,13 +2151,36 @@ const _csSeq = new Map();
 const _csCards = new Map();
 const _csCardLines = new Map();
 const _csCardRequests = new Map();
+// v335-C6r9: completeness of the CURRENT state. The server summary carries it ('readiness'); a detail envelope (components) is evaluated here with the SAME rule as tower_cs.op_readiness.
+// core = what a complete inspection claims (insulators; circuit 2 unless explicitly not applicable; iron; foundation; road). Anything unknown, invalid or missing is unknown - never healthy.
+// Returns null when completeness cannot be established (older summary without the key, uninitialised, no source): callers must NOT present that as complete.
+const CS_RD_CORE = ['ins_R','ins_S','ins_T','ins2_R','ins2_S','ins2_T','iron','foundation','road'];
+const CS_RD_OTHER = ['wire_r1','wire_s1','wire_t1','wire_r1_c2','wire_s1_c2','wire_t1_c2','ground_1','ground_2','fire','washing'];
+function csReadinessOf(env) {
+  if (!env || typeof env !== 'object') return null;
+  if (env.readiness && typeof env.readiness === 'object' && Array.isArray(env.readiness.core_unknown)) return env.readiness;
+  if (env.basis !== 'operations' || !Array.isArray(env.components) || env.status === 'no_source' || env.status === 'uninitialized' || env.status === 'card_pending') return null;
+  const mc = env.meta && env.meta.circuits, c2 = mc ? mc.circuit2_applicability : (env.meta ? env.meta.circuit2 : null);
+  const byK = {}; env.components.forEach(c => { if (c && typeof c.k === 'string') byK[c.k] = c; });
+  const unk = k => { const c = byK[k]; if (!c) return !(/^ins2_|_c2$/.test(k) && c2 === 'not_applicable'); return c.ap !== 'not_applicable' && c.ds !== 'known'; };
+  return { core_unknown: CS_RD_CORE.filter(unk).sort(), other_unknown: CS_RD_OTHER.filter(unk).length, c2: c2 || null, derived: true };
+}
+// 'complete' | 'incomplete' | 'unverified'. 'unverified' = completeness cannot be established from what is held (older summary, cached entry from an older build, a local-only record): never shown as complete.
+function csTowerCompleteness(card, detail, rec) {
+  if (!csLiveEnabled()) return isInspectionComplete(rec) ? 'complete' : 'incomplete';
+  const rd = (card && card.readiness) || (detail && detail.env ? csReadinessOf(detail.env) : null);
+  if (!rd || !Array.isArray(rd.core_unknown) || !Number.isFinite(Number(rd.other_unknown))) return 'unverified';   // malformed / missing readiness is never "complete"
+  if (rd.core_unknown.length) return 'incomplete';          // an applicable CORE section (insulators, iron, foundation, road) is unknown/invalid/missing
+  if (Number(rd.other_unknown) > 0) return 'partial';       // core known, but other applicable departure-capable sections (wires, ground, fire, washing) are unknown: still NOT healthy / NOT complete
+  return 'complete';
+}
 function csCardAccept(line, tower, env, ticket) {
   const key = csKey(line, tower), old = _csCards.get(key);
   if (old && old.ticket > ticket) return;
   // v335-C6r6: a card never moves to an older store revision (a verified/accepted revision beats any older one, including revision 0 = not in the store); cached snapshot entries are always replaceable
   const rev = env.rev || 0;
   if (old && !old.cached && old.rev > rev) return;
-  _csCards.set(key, { status: env.status || env.resolution, record: csCardRecord(env.row, line, tower), ticket, rev, at: new Date().toISOString() });
+  _csCards.set(key, { status: env.status || env.resolution, record: csCardRecord(env.row, line, tower), ticket, rev, at: new Date().toISOString(), readiness: csReadinessOf(env) });
   csSnapSchedule(line);   // accepted write / detail read: the durable snapshot follows without re-reading the line
 }
 
@@ -2224,7 +2247,7 @@ async function csSnapHydrate(line) {
     const key = csKey(line, t.num), e = rec.towers[String(t.num)];
     if (!e || _csCards.has(key) || typeof e.status !== 'string') return;
     if (!['no_source', 'uninitialized', 'card_pending', 'no_blockers', 'needs_review'].includes(e.status)) return;
-    _csCards.set(key, { status: e.status, record: e.record && typeof e.record === 'object' ? e.record : null, ticket: 0, rev: e.rev || 0, cached: true, at: e.at || rec.savedAt || null, failed: !!e.failed });
+    _csCards.set(key, { status: e.status, record: e.record && typeof e.record === 'object' ? e.record : null, ticket: 0, rev: e.rev || 0, cached: true, at: e.at || rec.savedAt || null, failed: !!e.failed, readiness: e.readiness && typeof e.readiness === 'object' && Array.isArray(e.readiness.core_unknown) ? e.readiness : null });
     n++;
   });
   if (n) {
@@ -2250,7 +2273,7 @@ async function csSnapPersistNow(line, uid, sg) {
   getLineTowers(line).forEach(t => {
     const c = _csCards.get(csKey(line, t.num));
     if (!c || c.status === 'card_pending') return;
-    towers[String(t.num)] = { status: c.status, rev: c.rev || 0, record: c.record || null, at: c.at || null, failed: !!c.failed }; n++;
+    towers[String(t.num)] = { status: c.status, rev: c.rev || 0, record: c.record || null, at: c.at || null, failed: !!c.failed, readiness: c.readiness || null }; n++;
   });
   if (!n) return;
   if (sg !== _csSnapGen || !currentUser || String(currentUser.id) !== String(uid)) return;
@@ -2348,6 +2371,7 @@ let _reportEpoch = 0;   // v335-C6r8: يزيد عند مسح بيانات الم
 function csPurgeUserData() {
   _reportEpoch++; try { if (typeof reportPurgeDerived === 'function') reportPurgeDerived(); } catch (e) {}   // v335-C6r8: كاشات التقارير المشتقة
   _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear(); csSnapPurgeAll();
+  try { if (typeof depIndexReset === 'function') depIndexReset(); } catch (e) {}   // v335-C6r9: the departures index belongs to the account that read it
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -2443,6 +2467,7 @@ function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
     blockers: sumLv ? (keepD ? keepD.blockers : []) : (Array.isArray(meta.prefill_blockers) ? meta.prefill_blockers : []),
     geometryStatus: sumLv ? (keepD ? keepD.geometryStatus : null) : (g ? (g.status || null) : null),
     integrity: sumLv && keepD && keepD.integrity ? keepD.integrity : [],
+    readiness: csReadinessOf(env) || (keepD ? keepD.readiness || null : null),
     level: sumLv ? 'summary' : 'detail',
     stale: false
   });
@@ -3992,15 +4017,17 @@ function renderTowersGridFromCache(lineName) {
           rec = opsOverlayRow(rec, cardPending.ops);
         }
         if (local && !hasValidInspectionId(local.id)) rec = local;
-        const level = card && card.status === 'needs_review' ? 'none' : getTowerCriticalityLevel(rec);
+        // v335-C6r9: known damage keeps its red/orange/yellow level; "green" (= no known problem) is only shown when the applicable state is fully known - otherwise neutral grey with an explicit completeness line
+        const rdy = rec ? (local && !hasValidInspectionId(local.id) ? 'unverified' : csTowerCompleteness(card, detail, rec)) : null;
+        let level = card && card.status === 'needs_review' ? 'none' : getTowerCriticalityLevel(rec);
+        if (level === 'green' && rdy !== 'complete' && csLiveEnabled()) level = 'none';
         const meta = TOWER_LEVEL_META[level];
-        const complete = rec ? isInspectionComplete(rec) : null;
         const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) :
           card && card.status === 'no_source' ? 'لم يُكشف بعد' :
           card && card.status === 'uninitialized' ? (card.failed ? 'فشلت تهيئة هذا البرج — راجع المدير' : 'الحالة لم تُهيّأ بعد') :
           card && card.status === 'card_pending' ? 'البطاقة قيد التجهيز (يلزم إجراء المدير)' :
           cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
-        const completeLine = rec ? (complete ? '✅ مكتمل' : '⚠️ غير مكتمل') : '';
+        const completeLine = rec ? (rdy === 'complete' ? '✅ مكتمل' : rdy === 'incomplete' ? '⚠️ غير مكتمل' : rdy === 'partial' ? '⚠️ أقسام أخرى غير مسجّلة' : '⚠️ اكتمال غير مؤكد') : '';
         // v335-C6r6: a card that was not verified by the server in this open is never presented as fresh
         const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && !!card && card.status !== 'no_source';
         let staleLine = '';
@@ -4445,7 +4472,7 @@ async function csLoadCardSummary(line, retry = true) {
         if (old && old.ticket > ticket) continue;
         // an older revision never replaces a newer verified/accepted one; cancelled (no_source) and uninitialised answers DO replace older visible data (they carry a newer or reset revision)
         if (old && !old.cached && old.rev > (card.rev || 0)) continue;
-        _csCards.set(key, { status: card.status, record: card.record || null, ticket, rev: card.rev || 0, at: verifiedAt, failed: !!card.failed });
+        _csCards.set(key, { status: card.status, record: card.record || null, ticket, rev: card.rev || 0, at: verifiedAt, failed: !!card.failed, readiness: card.readiness && typeof card.readiness === 'object' && Array.isArray(card.readiness.core_unknown) ? card.readiness : null });
         // A detail request started before this newer store snapshot must retry, rather than hand an older state to the editor after cards have changed.
         if (card.status !== 'uninitialized' && card.status !== 'card_pending') _csApplied.set(key, Math.max(_csApplied.get(key) || 0, ticket));
       }
@@ -5907,7 +5934,8 @@ async function opsPrepare(e) {
 }
 
 function opsDescribe(e) {
-  const k = { observation: 'كشف', treatment: 'معالجة', correction: 'تصحيح', void: 'إلغاء', annotate: 'تعديل وصفي' }[e.kind] || e.kind;
+  const k = e.kind === 'void' ? ('طلب إلغاء ' + (e.target_kind === 'treatment' ? 'معالجة' : e.target_kind === 'inspection' ? 'كشف' : 'سجل'))
+          : ({ observation: 'كشف', treatment: 'معالجة', correction: 'تصحيح', annotate: 'تعديل وصفي' }[e.kind] || e.kind);
   return k + ' — ' + e.line + ' — برج ' + e.tower;
 }
 
@@ -5928,10 +5956,23 @@ async function opsSyncOutbox() {
       if (gen !== _csAuthGen || !currentUser) { res.auth = true; break; }
       const tk = opsTK(it.line, it.tower);
       if (blocked.has(tk)) { res.skipped++; continue; }
+      // v335-C6r9: a cancellation refused with later_ops is an independent REQUEST awaiting the owner's decision: it never blocks the other entries of the tower (that was the deadlock - the newer cancellation queued behind it was never sent).
+      // If the cancellations it was waiting for have meanwhile been queued (selected in a second step), it is put back to waiting - same id, same payload.
+      if (it.kind === 'void' && it.status === 'rejected' && it.err === 'later_ops') {
+        const dep = it.detail && it.detail.later_ops ? opsVoidDependencies(it, it.detail.later_ops, items) : [];
+        if (dep.length) opsUpdate(it.id, x => { x.status = 'pending'; x.err = 'waiting_dependency'; x.waits = dep; x.sent_at = null; x.waiting_later = (x.detail && x.detail.later_ops) || []; x.detail = null; });
+        continue;
+      }
       if (it.status === 'conflict' || it.status === 'rejected') { blocked.add(tk); continue; }
       if (opsActorMismatch(it)) { blocked.add(tk); res.skipped++; continue; }
       const live = opsRead(); if (!live.ok) break;
       const e = live.items.find(x => x.id === it.id); if (!e) continue;   // أُزيلت أثناء الدورة
+      // v335-C6r9: a cancellation that was refused only because a LATER writer is itself a selected, queued cancellation waits for that cancellation (it is not failed, and the tower is not blocked)
+      if (e.waits && e.waits.length) {
+        const still = e.waits.filter(wid => live.items.some(y => y.id === wid));
+        if (still.length) { res.skipped++; res.waiting = (res.waiting || 0) + 1; continue; }
+        opsUpdate(e.id, x => { x.waits = null; if (x.err === 'waiting_dependency') x.err = null; });
+      }
       if (!e.uid) opsUpdate(e.id, x => { x.uid = String(currentUser.id); });
       let payload = e.payload;
       if ((e.legacy || e.base_mode) && !e.prepared) {
@@ -5944,9 +5985,11 @@ async function opsSyncOutbox() {
         // تثبيت الحمولة قبل الإرسال: إعادة الإرسال بعد ضياع الردّ يجب أن تكون بنفس الحمولة تماماً (idempotent)
         if (!opsUpdate(e.id, x => { x.payload = payload; x.prepared = true; })) { blocked.add(tk); continue; }
       }
+      if (payload && payload.kind === 'void') opsUpdate(e.id, x => { x.sent_at = Date.now(); });   // outcome unknown until a definite reply arrives (a lost reply is retried with the SAME id and payload; the server is idempotent)
       const r = await csCall('app_op_apply', { p_op: payload });
       if (r && r.stale) { res.auth = true; break; }
       if (r && r.ok === true) {
+        if (payload && payload.kind === 'void') res.voidApplied = true;
         if (!opsRemove(e.id)) { opsUpdate(e.id, x => { x.status = 'pending'; x.err = 'removal_unconfirmed'; }); blocked.add(tk); continue; }
         res.applied++; res.lines.add(e.line);
         try { if (r.tower && csEnvValid(r.tower, e.line, e.tower)) { if (csIngest(e.line, e.tower, r.tower, 'server', r.as_of)) { csRemember(e.line, e.tower, r.tower, r.as_of); _applyConfirmedTowerEnv(e.line, e.tower, r.tower); } } } catch (x) {}
@@ -5958,12 +6001,21 @@ async function opsSyncOutbox() {
       if (OPS_AUTH_CODES.indexOf(code) >= 0) { res.auth = true; break; }
       if (r && (r.net || code === 'network')) { res.net = true; break; }
       if (OPS_TRANSIENT.indexOf(code) >= 0 || /^http_5/.test(code || '')) { opsUpdate(e.id, x => { x.err = code; x.attempts = (x.attempts || 0) + 1; }); blocked.add(tk); continue; }
-      if (code === 'conflict') { opsUpdate(e.id, x => { x.status = 'conflict'; x.conflict = { conflicts: r.conflicts || [], later_ops: r.later_ops || [] }; x.err = 'conflict'; }); blocked.add(tk); res.conflicts++; continue; }
-      opsUpdate(e.id, x => { x.status = 'rejected'; x.err = code || 'rejected'; x.detail = (function () { const d = Object.assign({}, r); delete d.ok; delete d.code; return d; })(); });
-      blocked.add(tk); res.rejected++;
+      if (code === 'conflict') { opsUpdate(e.id, x => { x.status = 'conflict'; x.sent_at = null; x.conflict = { conflicts: r.conflicts || [], later_ops: r.later_ops || [] }; x.err = 'conflict'; }); blocked.add(tk); res.conflicts++; continue; }
+      if (code === 'later_ops' && payload && payload.kind === 'void') {
+        const dep = opsVoidDependencies(e, r.later_ops || [], live.items);
+        if (dep.length) {
+          opsUpdate(e.id, x => { x.status = 'pending'; x.err = 'waiting_dependency'; x.waits = dep; x.sent_at = null; x.detail = null; x.waiting_later = r.later_ops || []; });
+          res.waiting = (res.waiting || 0) + 1; continue;       // NOT blocked: the dependent cancellation queued after this one is sent in this same pass
+        }
+      }
+      opsUpdate(e.id, x => { x.status = 'rejected'; x.err = code || 'rejected'; x.sent_at = null; x.detail = (function () { const d = Object.assign({}, r); delete d.ok; delete d.code; return d; })(); });
+      if (!(code === 'later_ops' && payload && payload.kind === 'void')) blocked.add(tk);
+      res.rejected++;
     }
   } finally { _opsSyncBusy = false; }
   updatePendingBadge();
+  if (res.waiting && res.voidApplied) opsSyncSoon();   // the cancellation they waited for is done: retry them (same ids / payloads)
   if (res.applied) {
     try { csNoteWrites(); } catch (e) {}
     // v335-C6: ردّ app_op_apply يحمل حالة البرج المحدَّثة (csIngest أعلاه)؛ لا إعادة قراءة لخط كامل
@@ -6007,6 +6059,36 @@ function opsIsVoided(id) { return _opsMarks.voidedIds.has(String(id)); }
 // ---------------------------------------------------------------------------------------------------------
 // حسم التعارضات (بقرار صريح فقط — لا كتابة فوق عمل أحدث بصمت)
 // ---------------------------------------------------------------------------------------------------------
+// v335-C6r9: ids of OTHER queued cancellations (same tower) whose target is one of the later writers that blocked this cancellation (dependency from the server's own reply, never from dates)
+function opsVoidDependencies(e, later, items) {
+  const srcs = new Set((later || []).map(o => o && o.source_id ? String(o.source_id) : null).filter(Boolean));
+  const ops = new Set((later || []).map(o => o && o.op_id ? String(o.op_id) : null).filter(Boolean));
+  return (items || []).filter(y => y.id !== e.id && y.kind === 'void' && y.line === e.line && String(y.tower) === String(e.tower) && y.status !== 'rejected' && y.status !== 'conflict' && y.payload &&
+    ((y.payload.target_source_id && srcs.has(String(y.payload.target_source_id))) || (y.payload.target_op && ops.has(String(y.payload.target_op))))).map(y => y.id);
+}
+function opsLaterText(later, queuedIds) {
+  return (later || []).map(o => ({ observation: 'كشف', treatment: 'معالجة', correction: 'تصحيح' }[o.kind] || o.kind || '') + ' بتاريخ ' + (o.business_date || '—') + ' بواسطة ' + (o.actor || '—') +
+    (o.components && o.components.length ? ' [' + o.components.join(',') + ']' : '') + (o.source_id && queuedIds && queuedIds.has(String(o.source_id)) ? ' (مُحدَّد للإلغاء)' : ' (غير مُحدَّد للإلغاء)')).join(' | ');
+}
+function opsRetryVoid(id) {
+  const rd = opsRead(); if (!rd.ok) return false;
+  const e = rd.items.find(x => x.id === id); if (!e || e.kind !== 'void' || e.status !== 'rejected' || e.err !== 'later_ops') return false;
+  const ok = opsUpdate(id, x => { x.status = 'pending'; x.err = null; x.detail = null; x.attempts = (x.attempts || 0) + 1; });   // same id, same payload: nothing about the request changes
+  if (ok) { opsLog('retry_void', e); opsSyncSoon(); } try { renderPendingSyncPage(); } catch (x) {}
+  return ok;
+}
+// withdrawing a cancellation REQUEST is local only: the stored record stays active on the server. Refused while the outcome of a sent request is unknown.
+function opsWithdrawVoid(id) {
+  const rd = opsRead(); if (!rd.ok) return false;
+  const e = rd.items.find(x => x.id === id); if (!e || e.kind !== 'void') return false;
+  if (e.sent_at && e.status === 'pending') { showToast('⚠️ نتيجة إرسال هذا الطلب غير مؤكدة — قد يكون الخادم نفّذ الإلغاء. دع المزامنة تؤكّد النتيجة أولاً.', 'error'); return false; }
+  if (!confirm('سحب طلب الإلغاء من هذا الجهاز؟\nهذا لا يلغي السجل: يبقى ' + (e.target_kind === 'treatment' ? 'المعالجة' : 'الكشف') + ' المخزَّن فعّالاً على الخادم كما هو.')) return false;
+  opsLog('withdraw_void', e);
+  const ok = opsRemove(id); updatePendingBadge(); try { renderPendingSyncPage(); } catch (x) {}
+  if (ok) showToast('↩️ سُحب طلب الإلغاء — السجل المخزَّن ما زال فعّالاً');
+  return ok;
+}
+
 function opsConflictSummary(e) {
   const c = e.conflict || {};
   const comps = (c.conflicts || []).map(x => x.component).join('، ');
@@ -6069,6 +6151,7 @@ async function opsKeepMineAsCorrection(id) {
 function opsDiscardRejected(id) {
   const rd = opsRead(); if (!rd.ok) return false;
   const e = rd.items.find(x => x.id === id); if (!e) return false;
+  if (e.kind === 'void') return opsWithdrawVoid(id);   // v335-C6r9: discarding a cancellation request never claims the record was cancelled
   if (!confirm('حذف هذه العملية المرفوضة نهائياً من الجهاز؟ (تُحفظ نسخة منها بسجل القرارات)')) return false;
   opsLog('discard_rejected', e);
   const ok = opsRemove(id); updatePendingBadge(); try { renderPendingSyncPage(); } catch (x) {}
@@ -6107,7 +6190,7 @@ const OPS_ERR_MSG = {
   precondition_failed: 'شرط مسبق فشل: الحالة الحالية على السيرفر لا تسمح (مثلاً الموضع لم يعد متضرراً)', forbidden: 'لا صلاحية لهذا الدور', unknown_tower: 'برج غير مسجَّل بهوية ثابتة',
   base_missing: 'قاعدة الحالة غير معروفة', layout_mismatch: 'تخطيط العوازل المحفوظ يخالف هندسة البرج', geometry_unresolved: 'هندسة البرج غير محسومة', invalid_shape: 'شكل بيانات غير صالح',
   materials_incomplete: 'مادة السلاسل غير مكتملة — يلزم اختيار كل السلاسل', cycle_unknown: 'دورة المعالجة غير معروفة', legacy_patch_inconsistent: 'تعديل قديم لا يتّسق مع الحالة الحالية — لم يُطبَّق شيء',
-  not_current_source: 'الكشف المقصود لم يعد مصدر الحالة الحالية', later_ops: 'عمليات أحدث على نفس المكوّنات — يلزم تصحيح صريح', identity_variant: 'اسم الخط/البرج مختلف عن المسجَّل', needs_review: 'البرج بحالة تحتاج مراجعة',
+  not_current_source: 'الكشف المقصود لم يعد مصدر الحالة الحالية', later_ops: 'عمليات أحدث على نفس المكوّنات — يلزم تصحيح صريح (للإلغاء: ألغِ الأحدث أولاً)', identity_variant: 'اسم الخط/البرج مختلف عن المسجَّل', needs_review: 'البرج بحالة تحتاج مراجعة',
   op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', no_source: 'لا توجد حالة مرجعية لهذا البرج', circuit2_not_applicable: 'الدائرة الثانية غير منطبقة على هذا البرج', tower_type_mismatch: 'نوع البرج المسجَّل يخالف المرسل',
   already_voided: 'أُلغي سابقاً', unknown_target: 'الهدف غير موجود', partial_item_removal_unsupported: 'إزالة جزء من عناصر مكوّن واحد غير مدعومة — أزل كل عناصره أو ألغِ المعالجة', legacy_without_delta: 'سجل قديم بلا أثر قابل للعكس'
 };
@@ -6118,6 +6201,33 @@ OPS_ERR_MSG.legacy_state_invalid = 'مصفوفة حالة العوازل الم�
 
 function opsErrText(e) { return (OPS_ERR_MSG[e.err] || e.err || '') + (e.detail && e.detail.failures ? ' — ' + JSON.stringify(e.detail.failures).slice(0, 160) : ''); }
 
+// v335-C6r9: a cancellation REQUEST is not the cancellation. States: queued (never sent) / waiting for a newer cancellation / outcome of the last send unknown / refused by the server.
+// In every state the stored record is still active until the server confirms; "withdraw" removes only this request from the device.
+function opsVoidCard(e, queuedSrc) {
+  const what = e.target_kind === 'treatment' ? 'المعالجة' : 'الكشف';
+  const waiting = e.status === 'pending' && e.err === 'waiting_dependency';
+  const unknown = e.status === 'pending' && !!e.sent_at;
+  const rejected = e.status === 'rejected';
+  const col = rejected ? '#c0392b' : (waiting || unknown ? '#e67e22' : '#F6C23E');
+  const st = rejected ? '⛔ رفض الخادم طلب الإلغاء' : waiting ? '⏳ بانتظار إلغاء الأحدث أولاً' : unknown ? '❓ نتيجة آخر إرسال غير مؤكدة' : '⏳ طلب إلغاء بانتظار الرفع';
+  let body = '<div style="font-size:0.78rem;margin-top:6px;color:#4A5568">' + _csEsc(what) + ' المخزَّن <b>ما زال فعّالاً</b> حتى يؤكد الخادم الإلغاء.' + (e.payload && e.payload.reason ? ' السبب المسجَّل: ' + _csEsc(e.payload.reason) : '') + '</div>';
+  const later = rejected ? (e.detail && e.detail.later_ops) : (waiting ? e.waiting_later : null);
+  if (rejected) {
+    body += '<div style="font-size:0.78rem;margin-top:6px;color:#922B21">' + _csEsc(opsErrText(e)) + '</div>';
+    if (e.err === 'later_ops') body += '<div style="font-size:0.78rem;margin-top:4px;color:#7C4A03">لا يُلغى سجل قبل إلغاء ما كُتب بعده على نفس المكوّنات. ألغِ الأحدث أولاً (من «سجل المعالجات» أو «السجلات») ثم أعد المحاولة.</div>';
+  }
+  if (waiting) body += '<div style="font-size:0.78rem;margin-top:6px;color:#7C4A03">سيُرسل تلقائياً بعد تأكيد إلغاء السجل الأحدث المُحدَّد معه (بنفس المعرّف ونفس الطلب).</div>';
+  if (later && later.length) body += '<div style="font-size:0.76rem;margin-top:4px;color:#7C4A03">أعمال أحدث: ' + _csEsc(opsLaterText(later, queuedSrc)) + '</div>';
+  if (unknown && !rejected) body += '<div style="font-size:0.78rem;margin-top:6px;color:#7C4A03">قد يكون الخادم استلم الطلب ونفّذه. ستُعاد المحاولة بأمان بنفس المعرّف دون تكرار؛ لا يمكن سحبه الآن.</div>';
+  if (!rejected && !waiting && !unknown && e.err) body += '<div style="font-size:0.72rem;color:#7B7B7B;margin-top:4px">آخر محاولة: ' + _csEsc(e.err) + '</div>';
+  if (opsActorMismatch(e)) body += '<div style="font-size:0.78rem;color:#7C4A03;margin-top:6px">تخص: ' + _csEsc(e.uname || '—') + ' — سجّل الدخول بحسابه ليُرسلها.</div>';
+  const btns = [];
+  if (rejected && e.err === 'later_ops') btns.push('<button class="btn btn-secondary btn-sm" onclick="opsRetryVoid(\'' + e.id + '\')">🔄 إعادة المحاولة (نفس الطلب)</button>');
+  if (!unknown) btns.push('<button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="opsWithdrawVoid(\'' + e.id + '\')">↩️ سحب طلب الإلغاء (السجل يبقى فعّالاً)</button>');
+  if (btns.length) body += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' + btns.join('') + '</div>';
+  return '<div class="dep-card" data-void-entry="' + e.id + '" style="border-right-color:' + col + '"><div class="dep-card-header"><div class="dep-card-title">' + _csEsc(opsDescribe(e)) + '</div><div class="dep-card-meta">' + st + '</div></div>' + body + '</div>';
+}
+
 function opsRenderPendingSection() {
   const rd = opsRead();
   if (!rd.ok) return '<div class="dep-card" style="border-right-color:#c0392b"><b>⛔ صندوق العمليات غير قابل للقراءة</b><div style="font-size:0.8rem;margin-top:4px">' + MSG_QUEUE_UNREADABLE + '</div></div>';
@@ -6125,7 +6235,9 @@ function opsRenderPendingSection() {
   if (_opsMig.state === 'refused') html += '<div class="dep-card" style="border-right-color:#c0392b"><b>⛔ ترحيل القوائم القديمة معلَّق</b><div style="font-size:0.8rem;margin-top:4px">' + _csEsc(_opsMig.msg) + '</div></div>';
   if (!rd.items.length) return html;
   html += '<h3 style="color:#2E4057;margin:14px 0 8px">🗂️ عمليات بانتظار التأكيد (' + rd.items.length + ')</h3>';
+  const queuedSrc = new Set(rd.items.filter(x => x.kind === 'void' && x.payload && x.payload.target_source_id).map(x => String(x.payload.target_source_id)));
   rd.items.slice().sort((a, b) => a.seq - b.seq).forEach(e => {
+    if (e.kind === 'void') { html += opsVoidCard(e, queuedSrc); return; }
     const col = e.status === 'conflict' ? '#e67e22' : (e.status === 'rejected' ? '#c0392b' : '#F6C23E');
     const st = e.status === 'conflict' ? '⚠️ متعارضة' : (e.status === 'rejected' ? '⛔ مرفوضة' : '⏳ بانتظار الرفع');
     let body = '';
@@ -8013,7 +8125,7 @@ function deletePendingLineEntry(i) {
 let editingPendingInspectionIndex = null;
 
 // رسم عرض القراءة فقط (readonly) للعوازل بصفحة تفاصيل البرج
-function renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB, containerId, cycleIdx) {
+function renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB, containerId, cycleIdx, unknownPhases) {
   const wrap = document.getElementById(containerId || 'towerDetailInsulators');
   if (!wrap) return;
   wrap.innerHTML = '';
@@ -8023,6 +8135,11 @@ function renderTowerDetailInsulators(state, treatedIdx, mode, stA, stB, containe
     const lbl = document.createElement('div'); lbl.textContent = 'الفيز ' + phase;
     lbl.style.fontWeight = '700'; lbl.style.color = '#2E4057'; lbl.style.fontSize = '0.85rem';
     block.appendChild(lbl);
+    if (unknownPhases && unknownPhases.indexOf(phase) >= 0) {   // v335-C6r9: an unrecorded phase is never drawn as sound positions
+      const u = document.createElement('div'); u.textContent = 'غير مسجّل'; u.className = 'ins-unknown-phase';
+      u.style.cssText = 'padding:10px 14px;border:1.5px dashed #ED8936;border-radius:8px;color:#7B341E;font-size:0.8rem;font-weight:700;background:#FFFAF0';
+      block.appendChild(u); wrap.appendChild(block); return;
+    }
     const phaseState = state[phase] || [];
     const phaseTreated = treatedIdx[phase] || [];
     const phaseCycle = (cycleIdx && cycleIdx[phase]) || [];
@@ -8505,6 +8622,7 @@ function isTreatedInDB(inspectionId, key, r) {
   try { if (opsPendingObserved(inspectionId, key)) return false; } catch (e) {}   // v335-C4: رصد معلّق لاحق لهذا المكوّن يُلغي «معالج» المقروء
   const _csk = csTreatedKeys(inspectionId); // v335: مفاتيح المعالجة الفعّالة كما حلّها الخادم من المعالجات الحالية (تعديل/حذف يُعكسان)
   if (_csk) return _csk.has(key);
+  if (csLiveEnabled()) return false;   // v335-C6r9: in live mode the current store is the only authority; a loaded treatment log never contradicts it
   return treatmentsCache.some(t => t.inspection_id === inspectionId && Array.isArray(t.items_treated) && t.items_treated.some(i => i.key === key));
 }
 

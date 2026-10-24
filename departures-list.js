@@ -1,10 +1,11 @@
-/* departures-list.js — v335-C6r6 (landing = line names only; a line is read when opened; all-lines counts only on an explicit action)
+/* departures-list.js — v335-C6r9 (landing = ONLY lines with confirmed CURRENT departures, from ONE small server-side line aggregate over the current store (app_departure_index); no tower detail / history is read; a line is read when opened)
    قائمة المغادرات الحالية: الخطوط ← أبراج الخط ← تفاصيل البرج. القراءة من فهرس الحالة الحالية (getActiveDepartureTowers في index.html).
    يُحمَّل ويُنفَّذ مرة واحدة فقط عند الطلب الفعلي؛ لا يعمل عند بدء التطبيق. سكربت كلاسيكي يشارك الربط العام مع index.html. */
 async function loadDeparturesImpl(tok) {
   showDepLinesList();
   if (csLiveEnabled()) {
-    // v335-C6r6: شاشة الدخول لا تقرأ شيئاً من الخادم: لا loadTreatments ولا حالة الخطوط الـ33. الخط يُقرأ عند فتحه، وأعداد كل الخطوط بطلب صريح.
+    // v335-C6r9: الدخول يقرأ فهرساً صغيراً واحداً (الخطوط ذات المغادرات الحالية فقط) — لا loadTreatments ولا حالة الخطوط الـ33 ولا تفاصيل الأبراج؛ الخط يُقرأ عند فتحه.
+    _depIdx.error = null; _depIdx.last = 0;   // every deliberate ENTRY may make one fresh attempt (never a render-driven loop)
     renderDepLinesList();
     return;
   }
@@ -35,7 +36,96 @@ function showDepLinesList() {
   renderDepLinesList();
 }
 
+// ---- v335-C6r9: the departures landing (live mode) -------------------------------------------------------------------------------------------------------
+// The index is a CONFIRMED lower bound: unknown coverage (uninitialised towers) and incomplete towers are shown separately and are never counted as healthy or as zero.
+// Guards: session generation + token (a reply for another account is dropped), request sequence (an older reply never replaces a newer one), write generation (a reply that
+// started before a local write / sync is re-read once), purge on account change.
+// C6r9b: refresh policy (bounded): ONE request in flight; a request is started by (a) an entry/explicit retry, (b) the first paint with nothing attempted yet, (c) ONE re-read per write generation, (d) one age refresh per 60 s of a SETTLED OK state.
+// A failed / offline attempt SETTLES (error shown, last index kept as unverified) and waits for an explicit retry or the next deliberate entry - rendering never starts a request while an error is set.
+let _depIdx = { data: null, at: null, wgen: -1, tried: -2, last: 0, req: 0, loading: false, error: null };
+function depIndexReset() { _depIdx = { data: null, at: null, wgen: -1, tried: -2, last: 0, req: (_depIdx.req || 0) + 1, loading: false, error: null }; }   // req keeps growing: an in-flight reply of the old account is ignored
+function depResolveLine(name) {
+  if (typeof LINES_DATA === 'undefined' || !name) return null;
+  if (LINES_DATA[name]) return name;
+  const volt = n => { const m = String(n).match(/\b(400|132)\s*ك\.ف\s*$/); return m ? m[1] : null; }, bare = n => String(n).replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim();
+  const hits = Object.keys(LINES_DATA).filter(k => bare(k) === bare(name) && (!volt(name) || volt(k) === volt(name)));
+  return hits.length === 1 ? hits[0] : null;   // ambiguous or unknown: never guess a line
+}
+// merge server rows that resolve to the same application line; rows that resolve to none are kept (shown, not clickable)
+function depIndexRows(data) {
+  const m = new Map();
+  (data && Array.isArray(data.lines) ? data.lines : []).forEach(l => {
+    if (!l || typeof l.line_name !== 'string') return;
+    const key = depResolveLine(l.line_name) || l.line_name, o = m.get(key) || { line: key, known: !!depResolveLine(l.line_name), towers: 0, electrical: 0, mechanical: 0, fire: 0, washing: 0, incomplete: 0, uninitialised: 0 };
+    ['towers', 'electrical', 'mechanical', 'fire', 'washing', 'incomplete', 'uninitialised'].forEach(f => { o[f] += Number(l[f]) || 0; });
+    m.set(key, o);
+  });
+  return Array.from(m.values());
+}
+async function depIndexLoad() {
+  if (!csLiveEnabled() || _depIdx.loading) return;   // one in-flight request
+  const gen = _csAuthGen, tok = CS_AUTH.token, uid = currentUser && currentUser.id, my = ++_depIdx.req, wgen = _csWriteGen;
+  _depIdx.loading = true; _depIdx.error = null; _depIdx.tried = wgen; _depIdx.last = Date.now();
+  const still = () => gen === _csAuthGen && tok === CS_AUTH.token && currentUser && String(currentUser.id) === String(uid) && my === _depIdx.req;
+  const fail = (code) => { _depIdx.loading = false; _depIdx.error = code; };
+  try {
+    if (!navigator.onLine) throw new Error('offline');
+    const r = await csCall('app_departure_index', {});
+    if (!still()) return;   // another account / purge / newer request owns the state now
+    if (!r) throw new Error('error');
+    if (r.stale) throw new Error('stale');
+    if (r.ok !== true || !Array.isArray(r.lines) || r.lines.some(l => !l || typeof l.line_name !== 'string' || !Number.isFinite(Number(l.towers)) || !Number.isFinite(Number(l.uninitialised)))) throw new Error(r && r.code ? r.code : 'bad_index');
+    // a write that landed while this was in flight is picked up by ONE follow-up read (tried != _csWriteGen); that is bounded by the number of writes, never by renders
+    _depIdx = { data: r, at: r.as_of || new Date().toISOString(), ts: Date.now(), wgen, tried: wgen, last: Date.now(), req: _depIdx.req, loading: false, error: null };
+  } catch (e) {
+    if (!still()) return;
+    fail((!navigator.onLine || (e && e.message === 'offline')) ? 'offline' : ((e && e.message) || 'error'));
+  }
+  try { if (document.getElementById('depLinesListView').style.display !== 'none') renderDepLinesList(); } catch (e) {}
+}
+function depIndexNeedsLoad() {
+  if (_depIdx.loading || _depIdx.error) return false;                        // in flight / settled in failure: only an explicit retry or a new entry restarts
+  if (!_depIdx.last) return true;                                           // nothing attempted yet
+  if (_depIdx.tried !== _csWriteGen) return true;                           // a write / sync happened since the last attempt: one re-read
+  return !!_depIdx.data && Date.now() - _depIdx.last > 60000;               // age refresh of a settled OK state (the attempt time moves on every try)
+}
+function renderDepLanding() {
+  const body = document.getElementById('depLinesListBody');
+  if (depIndexNeedsLoad()) setTimeout(depIndexLoad, 0);   // never synchronous: a render can not recurse into a request
+  const d = _depIdx.data, esc = v => (typeof _csEsc === 'function' ? _csEsc(v) : String(v));
+  let pend = 0; try { const rd = opsRead(); if (rd.ok) pend = rd.items.length; } catch (e) {}
+  const refresh = `<button class="btn btn-secondary btn-sm" onclick="_depIdx.error = null; depIndexLoad()">🔄 تحديث</button>`;
+  let html = `<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:0.76rem;color:#4A5568">${refresh}<span>الخطوط ذات مغادرات حالية مؤكدة فقط — من الحالة المخزَّنة على الخادم${d && _depIdx.at ? ' (قراءة ' + esc(String(_depIdx.at).replace('T', ' ').slice(0, 16)) + ')' : ''}</span></div>`;
+  if (pend) html += `<div style="margin-bottom:10px;padding:8px 12px;background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;font-size:0.78rem;color:#7B341E">⏳ ${pend} عملية معلّقة على هذا الجهاز لم تُؤكَّد بعد — الأعداد أدناه لا تتضمنها</div>`;
+  if (_depIdx.error) html += `<div style="margin-bottom:10px;padding:8px 12px;background:#FFF5F5;border:1px solid #FC8181;border-radius:8px;font-size:0.78rem;color:#822727">${_depIdx.error === 'offline' ? '📴 دون اتصال' : '⚠️ تعذّر تحديث فهرس المغادرات'}${d ? ' — المعروض آخر فهرس مقروء' : ' — لا يوجد فهرس مقروء بعد'}</div>`;
+  if (!d) { body.innerHTML = html + (_depIdx.error ? '' : '<div class="empty-state">⏳ جارٍ قراءة فهرس المغادرات…</div>'); return; }
+  const rows = depIndexRows(d);
+  const dep = rows.filter(r => r.towers > 0).sort((a, b) => b.towers - a.towers || a.line.localeCompare(b.line, 'ar'));
+  const unkOnly = rows.filter(r => r.towers === 0 && r.uninitialised > 0).sort((a, b) => b.uninitialised - a.uninitialised || a.line.localeCompare(b.line, 'ar'));
+  const tot = d.totals || {}, unkTot = Number(tot.uninitialised_towers) || 0, incTot = Number(tot.incomplete_towers) || 0;
+  const open = (r) => r.known ? ` onclick="openDepLineTowers(${JSON.stringify(r.line).replace(/"/g, '&quot;')})" style="cursor:pointer"` : '';
+  const chip = (txt, bg, fg) => `<span style="background:${bg};color:${fg};padding:2px 9px;border-radius:20px;font-size:0.72rem;font-weight:700">${txt}</span>`;
+  if (!dep.length) {
+    html += `<div class="empty-state">${unkTot || incTot ? 'لا مغادرات مؤكدة بين الأبراج المعروفة' + (unkTot ? ' — ⚠️ ' + unkTot + ' برج غير مهيّأ/غير معروف' : '') + (incTot ? ' — ' + incTot + ' برج بياناتها غير مكتملة' : '') : 'لا توجد مغادرات حالية مؤكدة'}</div>`;
+  }
+  html += dep.map(r => {
+    const parts = [];
+    if (r.electrical) parts.push(`<span style="color:#2B6CB0">⚡ كهربائية: ${r.electrical}</span>`);
+    if (r.mechanical) parts.push(`<span style="color:#C05621">⚙️ ميكانيكية: ${r.mechanical}</span>`);
+    if (r.fire) parts.push(`<span style="color:#C53030">🔥 حرائق: ${r.fire}</span>`);
+    if (r.washing) parts.push(`<span style="color:#2B6CB0">💧 نظافة: ${r.washing}</span>`);
+    return `<div class="form-card dep-line-row" data-dep-line="${esc(r.line)}" style="margin-bottom:10px;padding:14px;border-right:4px solid #FC4444"${open(r)}>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div style="font-weight:700;color:#1a2e4a;font-size:0.92rem">${esc(r.line)} 🔍</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${chip('🔴 ' + r.towers + ' برج', '#FED7D7', '#822727')}${r.uninitialised ? chip('⚠️ ' + r.uninitialised + ' غير معروف', '#FEEBC8', '#7B341E') : ''}${r.incomplete ? chip(r.incomplete + ' غير مكتمل', '#EDF2F7', '#4A5568') : ''}</div></div>
+      ${parts.length ? `<div style="margin-top:6px;font-size:0.74rem;font-weight:700;display:flex;gap:12px;flex-wrap:wrap">${parts.join('')}</div>` : ''}${r.known ? '' : '<div style="font-size:0.72rem;color:#7B341E;margin-top:4px">خط غير معرّف في التطبيق</div>'}</div>`;
+  }).join('');
+  if (unkOnly.length) html += `<div class="form-card" id="depUnknownStrip" style="margin-top:14px;padding:12px;border-right:4px solid #ED8936;background:#FFFAF0"><div style="font-weight:700;color:#7B341E;font-size:0.84rem">⚠️ خطوط فيها أبراج حالتها غير معروفة (لا تُعدّ سليمة ولا صفراً)</div>
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">${unkOnly.map(r => `<div${open(r)} style="font-size:0.8rem;color:#4A5568;display:flex;justify-content:space-between;gap:8px"><span>${esc(r.line)}</span><span>${r.uninitialised} برج غير معروف</span></div>`).join('')}</div></div>`;
+  body.innerHTML = html;
+}
+
 function renderDepLinesList(preliminary) {
+  if (!preliminary && csLiveEnabled()) return renderDepLanding();
   const body = document.getElementById('depLinesListBody');
   if (preliminary) {
     // عرض فوري بأسماء الخطوط من البيانات المحلية (بدون شبكة) — رسالة مؤقتة لحد ما تكتمل الأعداد الحقيقية
@@ -74,7 +164,7 @@ function renderDepLinesList(preliminary) {
   // الخطوط اللي فيها مغادرات تظهر أول، مرتبة تنازلياً، والسليمة بالأسفل
   rows.sort((a,b) => b.count - a.count || a.lineName.localeCompare(b.lineName,'ar'));
 
-  const allBtn = live ? `<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-secondary btn-sm" onclick="loadAllDepartureLines()" id="depAllLinesBtn">📊 قراءة أعداد كل الخطوط</button><span style="font-size:0.74rem;color:#718096">اضغط خطاً لقراءته وحده، أو اقرأ الكل بطلب صريح.</span></div>` : '';
+  const allBtn = false ? `<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-secondary btn-sm" onclick="loadAllDepartureLines()" id="depAllLinesBtn">📊 قراءة أعداد كل الخطوط</button><span style="font-size:0.74rem;color:#718096">اضغط خطاً لقراءته وحده، أو اقرأ الكل بطلب صريح.</span></div>` : '';
   body.innerHTML = allBtn + rows.map(({lineName, count, elCount, mCount, fireCount, washCount, notLoaded, unk}) => {
     if (notLoaded) {
       return `<div class="form-card" style="margin-bottom:10px;padding:14px;border-right:4px solid #CBD5E0;cursor:pointer" onclick="openDepLineTowers('${lineName.replace(/'/g,"\\'")}')">
