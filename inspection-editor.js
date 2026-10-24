@@ -227,22 +227,50 @@ function buildCeramicChain(phase, chainIdx, stateObj, damaged, onToggle, rows) {
 }
 
 // يبني زر التبديل بين زجاج/بلاستيك
+// v335-C6r9c: مادة غير معروفة => ثلاثة أزرار صريحة (زجاج/بلاستك/خزف) بدل رمز غامض؛ تبقى مجهولة حتى يضغط الفني واحداً منها.
+// مادة معروفة => زر يعرض اسم المادة الحالية ويبدّلها (السلوك القديم: التبديل يصفّر ضرر ودورات السلسلة).
+const CS_MAT_AR = { glass: 'زجاج', plastic: 'بلاستك', ceramic: 'خزف' };
 function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuild, typesObj) {
   typesObj = typesObj || chainTypes; // الافتراضي: الدائرة الأولى (للتوافق مع أي نداء قديم)
   const circuit = (typesObj === chainTypes2) ? 2 : 1;
-  const btn = document.createElement('button');
   const CYCLE_NEXT = { glass: 'plastic', plastic: 'ceramic', ceramic: 'glass' };
   const unchosen = csFlagOn() && csChainIsUnchosen(circuit, typesObj, phase, chainIdx);
-  btn.textContent = unchosen ? '❓' : '🔄';
-  btn.title = unchosen ? 'مادة هذه السلسلة غير معروفة — اضغط لاختيارها (زجاج → بلاستك → خزف)' : 'تبديل نوع السلسلة (زجاج → بلاستك → خزف)';
-  btn.style.cssText = 'font-size:0.65rem;padding:1px 5px;border:1px solid #CBD5E0;border-radius:8px;background:#F7FAFC;cursor:pointer;margin-bottom:2px';
+  const BTN_CSS = 'font-size:0.65rem;padding:1px 5px;border:1px solid #CBD5E0;border-radius:8px;background:#F7FAFC;cursor:pointer;margin-bottom:2px';
+  if (unchosen) {
+    // اختيار أول مادة لسلسلة مجهولة ليس استبدالاً: لا يصفّر الضرر ولا الدورات
+    const box = document.createElement('span');
+    box.className = 'mat-choose';
+    box.style.cssText = 'display:inline-flex;flex-wrap:wrap;gap:2px;align-items:center;justify-content:center;margin-bottom:2px';
+    const lb = document.createElement('span'); lb.textContent = 'حدّد المادة:'; lb.style.cssText = 'font-size:0.62rem;color:#92400E;font-weight:700';
+    box.appendChild(lb);
+    ['glass', 'plastic', 'ceramic'].forEach(m => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'mat-choose-btn'; b.setAttribute('data-mat', m); b.textContent = CS_MAT_AR[m];
+      b.title = 'مادة هذه السلسلة غير معروفة — اختر ' + CS_MAT_AR[m] + ' (لا يتغيّر الضرر ولا الدورات)';
+      b.style.cssText = BTN_CSS;
+      b.addEventListener('click', () => {
+        if (!typesObj[phase]) typesObj[phase] = [];
+        typesObj[phase][chainIdx] = m;
+        csChainMarkProvisional(circuit, phase, chainIdx);
+        onRebuild();
+      });
+      box.appendChild(b);
+    });
+    return box;
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  const curMat = (typesObj[phase] || [])[chainIdx];
+  btn.className = 'mat-switch-btn';
+  btn.textContent = 'المادة: ' + (CS_MAT_AR[curMat] || CS_MAT_AR.glass) + ' (تبديل)';
+  btn.title = 'تبديل نوع السلسلة (زجاج → بلاستك → خزف)';
+  btn.style.cssText = BTN_CSS;
   btn.addEventListener('click', () => {
     if (!typesObj[phase]) typesObj[phase] = [];
     const chosenNow = csChainChosen(typesObj[phase][chainIdx]);
-    // v335-C2: استكمال دائرة مادتها مجهولة: اختيار المادة الفعلية ليس استبدالاً فلا يصفّر الضرر ولا الدورات
-    if (csFlagOn() && (csChainIsUnchosen(circuit, typesObj, phase, chainIdx) || (chosenNow && csChainProvisional(circuit, phase, chainIdx)))) {
-      typesObj[phase][chainIdx] = chosenNow ? (CYCLE_NEXT[typesObj[phase][chainIdx]] || 'glass') : 'glass';
-      csChainMarkProvisional(circuit, phase, chainIdx);
+    // v335-C2: تغيير اختيار سلسلة كانت مجهولة أصلاً (مؤقتة) ليس استبدالاً فلا يصفّر الضرر ولا الدورات
+    if (csFlagOn() && chosenNow && csChainProvisional(circuit, phase, chainIdx)) {
+      typesObj[phase][chainIdx] = CYCLE_NEXT[typesObj[phase][chainIdx]] || 'glass';
       onRebuild();
       return;
     }
@@ -305,6 +333,8 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
 
   if (savedState) {
     insulatorState = JSON.parse(JSON.stringify(savedState));
+    // v335-C6r9c: طور غائب/بطول غير صالح يبقى مجهولاً (يُملأ فارغاً للعرض فقط) ولا يُسقط بقية الأطوار
+    ['R','S','T'].forEach(p => { if (!Array.isArray(insulatorState[p])) insulatorState[p] = Array(count).fill(false); });
   } else {
     insulatorState = { R: Array(count).fill(false), S: Array(count).fill(false), T: Array(count).fill(false) };
   }
@@ -318,6 +348,7 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
   if (isDouble) {
     if (savedState2) {
       insulatorState2 = JSON.parse(JSON.stringify(savedState2));
+      ['R','S','T'].forEach(p => { if (!Array.isArray(insulatorState2[p])) insulatorState2[p] = Array(count).fill(false); });
     } else {
       insulatorState2 = { R: Array(count).fill(false), S: Array(count).fill(false), T: Array(count).fill(false) };
     }
@@ -1229,6 +1260,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
     // v334-R: طابور غير قابل للقراءة = لا يمكن إعادة بناء الحالة الحالية بأمان: حالة صريحة بدل عرض بيانات قد تكون قديمة كأنها مرجع
     if (!_readPendingInspectionState().ok) { _setPrefillState(csFlagOn() ? 'unresolved' : 'unavailable', lineName, towerNumber, 'قائمة المعلّقات على الجهاز غير قابلة للقراءة'); return; }
     let serverOk = false, serverNone = false, csCacheUsed = false, towerEnv = null;
+    let softGaps = [];
     // v334: لا نجلب/نحدّث شبكة الخط هنا إطلاقاً — طلب واحد بسجل واحد هو المرجع الأحدث لهذا البرج
     // v335: القراءة تمر بالمحوّل الموحّد (حالة حيّة محلولة بالخادم)، وعند انقطاع الاتصال لقطة مخزّنة بالجهاز موسومة بذلك
     if (navigator.onLine || csLiveEnabled()) {
@@ -1249,7 +1281,8 @@ async function checkPreviousInspection(lineName, towerNumber) {
         if (csEnv.row && geo && geo.status === 'conflict') { _setPrefillState('unresolved', lineName, towerNumber, 'هندسة السلاسل المحفوظة غير متسقة مع بعضها' + tag); return; }
         // v335-C2: تحقق فعلي من حالة/دورات/هندسة كل دائرة قبل أي تهيئة تلقائية (لا صفر ولا سليم يُصنع). الاستثناء الوحيد: materials_missing
         { const _ti = csEnv.row ? csTowerInfo(lineName, towerNumber) : null; if (_ti && csIntegrityHard(_ti.integrity).length) { _setPrefillState('unresolved', lineName, towerNumber, csIntegrityText(csIntegrityHard(_ti.integrity)) + tag); return; }
-          if (_ti && _ti.integrity && _ti.integrity.length) { _setPrefillState('partial', lineName, towerNumber, 'حالة/دورات العوازل المحفوظة ناقصة (' + csIntegrityText(_ti.integrity) + ') — لم يُملأ شيء تلقائياً' + tag); return; } }
+          // v335-C6r9c: النقص «الغائب» (_missing) لدائرة/قسم لا يوقف تعبئة الأقسام السليمة المعروفة: يبقى المجهول فارغاً ومسمّى، ويُكمل ملء الباقي
+          if (_ti && _ti.integrity && _ti.integrity.length) softGaps = _ti.integrity.slice(); }
         if (fromCache) {
           csCacheUsed = true;
           if (fetched.record && !_cachedTowerCandidates(lineName, towerNumber).length) _mergeFullTowerRecord(fetched.record, fetched.startSeq);
@@ -1288,6 +1321,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
     if (pendingTower.found && hasValidInspectionId(last.id)) notes.push('لهذا البرج كشف معلّق غير مرفوع قد لا تتضمنه البيانات المحمّلة');
     const complete = isFullInspectionRecord(last);
     loadPreviousInspection(true); // تحميل صامت (بدون رسالة "تم تحميل الكشف السابق") — يُبقي تاريخ الكشف الجديد
+    if (softGaps.length) notes.push(csUnknownSectionsText(softGaps));
     _setPrefillState(complete ? 'ready' : 'partial', lineName, towerNumber, complete ? notes.join(' — ') : '');
     // معالجات الكشف السابق من السيرفر: لا تحجب التهيئة، وتُحدّث سطر الملاحظات التلقائي فقط
     _fetchPrevTreatments(last, token, lineName, towerNumber);

@@ -2751,11 +2751,17 @@ function csChainTypesForSave(ct, circuit) {
 }
 
 function csMaterialSaveBlockReason(ct1, ct2) {
+  // v335-C6r9c: نحدّد بالضبط أي سلاسل ما زالت بلا مادة
+  const missing = (ct, c) => {
+    const out = [];
+    ['R', 'S', 'T'].forEach(ph => { for (let i = 0; i < _csMatPerPhase; i++) if (!csChainChosen(((ct || {})[ph] || [])[i])) out.push('الفيز ' + ph + (_csMatPerPhase > 1 ? ' سلسلة ' + (i + 1) : '')); });
+    return out;
+  };
   const bad = [];
-  if (_csMatUnknown.c1 && csChainsChosenCount(ct1) > 0 && !csChainsComplete(ct1, _csMatPerPhase)) bad.push('الأولى');
-  if (_csMatUnknown.c2 && csChainsChosenCount(ct2) > 0 && !csChainsComplete(ct2, _csMatPerPhase)) bad.push('الثانية');
+  if (_csMatUnknown.c1 && csChainsChosenCount(ct1) > 0 && !csChainsComplete(ct1, _csMatPerPhase)) bad.push('الدائرة الأولى: ' + missing(ct1, 1).join('، '));
+  if (_csMatUnknown.c2 && csChainsChosenCount(ct2) > 0 && !csChainsComplete(ct2, _csMatPerPhase)) bad.push('الدائرة الثانية: ' + missing(ct2, 2).join('، '));
   if (!bad.length) return null;
-  return '⛔ مادة سلاسل الدائرة ' + bad.join(' و') + ' كانت غير معروفة وحدّدتَ بعضها فقط. حدّد مادة كل السلاسل (زر ❓/🔄) أو أعد فتح البرج لتبقى غير معروفة — لن تُحفظ مادة جزئية لأنها تُقرأ زجاجاً. إدخالاتك للضرر والدورات باقية.';
+  return '⛔ لم يُحفظ الكشف: مادة السلاسل غير محدّدة — ' + bad.join(' | ') + '. حدّد المادة (زجاج/بلاستك/خزف) لكل سلسلة ناقصة، أو أعد فتح البرج لتبقى المادة غير معروفة. ما أدخلته من ضرر ودورات باقٍ كما هو.';
 }
 
 // يُستدعى من buildInsulatorUI: يحدّد أي دائرة ما زالت مادتها مجهولة (لم تُحفظ ولم تكتمل اختيارات الفني)
@@ -2841,6 +2847,17 @@ function csIntegrityHard(list) { return (list || []).filter(x => !/_missing$/.te
 
 function csIntegrityText(list) {
   return 'بيانات العوازل/الدورات المحفوظة ناقصة أو غير صالحة أو غير متسقة مع الهندسة (' + (list || []).slice(0, 5).join('، ') + ((list || []).length > 5 ? '…' : '') + ')';
+}
+
+// v335-C6r9c: نص قصير بالأقسام التي بقيت مجهولة (غير مملوءة) بسبب نقص «غائب» — بقية الأقسام المعروفة تُملأ كالمعتاد
+function csUnknownSectionsText(list) {
+  const parts = [];
+  [1, 2].forEach(c => {
+    const re = new RegExp('(^|:)(state_c' + c + '(_|$)|cycle_c' + c + '(_|$)|insulator_circuit' + c + '_)');
+    if ((list || []).some(x => re.test(x))) parts.push('عوازل الدائرة ' + (c === 1 ? 'الأولى' : 'الثانية'));
+  });
+  if ((list || []).some(x => /materials_/.test(x))) parts.push('مادة السلاسل');
+  return 'مجهول وغير مملوء: ' + (parts.length ? parts.join('، ') : 'بعض بيانات العوازل') + ' — بقية الأقسام المعروفة مملوءة، وما لا تعدّله أو تؤكّده لا يُرسَل';
 }
 
 function csQueuesUnreadable() {
