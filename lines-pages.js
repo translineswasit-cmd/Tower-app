@@ -216,7 +216,7 @@ function renderLineTowerList(lineName) {
   let html = (typeof csLineBanner === 'function' ? csLineBanner(lineName) : '') + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
   towers.forEach(t => {
     const r = recByTower[t.num];
-    let statusBadge, borderColor;
+    let statusBadge, borderColor, completeLine = '';
     const _inf = (typeof csTowerInfo === 'function' && csLiveEnabled()) ? csTowerInfo(lineName, t.num) : null;
     if (!r && _inf && _inf.status === 'uninitialized') {
       statusBadge = '⚠️ غير مهيّأ'; borderColor = '#E53E3E';
@@ -225,14 +225,14 @@ function renderLineTowerList(lineName) {
     } else {
       const deps = extractDepsFromRecord(r);
       const allTreated = deps.length > 0 && isFullyTreated(r.id, deps, r);
-      const _rd = (_inf && _inf.readiness) || null;       // v335-C6r9: "healthy" only when every applicable section is known
-      if (!deps.length && csLiveEnabled() && !(_rd && Array.isArray(_rd.core_unknown))) { statusBadge = '⚠️ اكتمال غير مؤكد'; borderColor = '#ED8936'; }
-      else if (!deps.length && csLiveEnabled() && _rd.core_unknown.length) { statusBadge = '⚠️ غير مكتمل — لا مغادرات معروفة'; borderColor = '#ED8936'; }
-      else if (!deps.length && csLiveEnabled() && (_rd.other_unknown || 0) > 0) { statusBadge = '⚪ لا مغادرات معروفة'; borderColor = '#A0AEC0'; }
-      else if (!deps.length) { statusBadge = '✅ سليم'; borderColor = '#48BB78'; }
-      else if (allTreated && csLiveEnabled() && !(_rd && Array.isArray(_rd.core_unknown) && !_rd.core_unknown.length && !(_rd.other_unknown > 0))) { statusBadge = '✅ المعروف معالج — أقسام غير مسجّلة'; borderColor = '#ED8936'; }
-      else if (allTreated) { statusBadge = '✅ معالج'; borderColor = '#48BB78'; }
-      else { statusBadge = '🔴 مغادرات'; borderColor = '#FC4444'; }
+      // v335-C6r9d: border colour = recorded severity (same rule/palette as the tower cards); completeness is a SEPARATE concise line; grey only for a tower never inspected
+      const _lvl = getTowerCriticalityLevel(r);
+      borderColor = (TOWER_LEVEL_META[_lvl] || TOWER_LEVEL_META.none).border;
+      const _rdy = csLiveEnabled() ? csTowerCompleteness(_inf && _inf.readiness ? { readiness: _inf.readiness } : null, null, r) : 'complete';
+      if (csLiveEnabled()) completeLine = csCompletenessText(_rdy);
+      if (!deps.length) statusBadge = (csLiveEnabled() && _rdy !== 'complete') ? '⚪ لا مغادرات معروفة' : '✅ سليم';
+      else if (allTreated) statusBadge = (csLiveEnabled() && _rdy !== 'complete') ? '✅ المعروف معالج' : '✅ معالج';
+      else statusBadge = '🔴 مغادرات';
     }
     const catIconsHTML = buildCategoryIconsHTML(r);
     html += `<div onclick="openTowerDetail('${lineName.replace(/'/g,"\\'")}','${t.num}')"
@@ -241,6 +241,7 @@ function renderLineTowerList(lineName) {
       <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${t.num}</div>
       <div style="font-size:0.72rem;color:#718096;margin:2px 0">${t.type||''}</div>
       <div style="font-size:0.78rem;font-weight:700">${statusBadge}</div>
+      ${completeLine ? `<div class="tower-box-complete" style="font-size:0.7rem;color:#975A16;margin-top:2px">${completeLine}</div>` : ''}
     </div>`;
   });
   html += '</div>';

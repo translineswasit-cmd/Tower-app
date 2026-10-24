@@ -226,61 +226,53 @@ function buildCeramicChain(phase, chainIdx, stateObj, damaged, onToggle, rows) {
   return wrapper;
 }
 
-// يبني زر التبديل بين زجاج/بلاستيك
-// v335-C6r9c: مادة غير معروفة => ثلاثة أزرار صريحة (زجاج/بلاستك/خزف) بدل رمز غامض؛ تبقى مجهولة حتى يضغط الفني واحداً منها.
-// مادة معروفة => زر يعرض اسم المادة الحالية ويبدّلها (السلوك القديم: التبديل يصفّر ضرر ودورات السلسلة).
+// يبني زر التبديل بين زجاج/بلاستيك/خزف: أيقونة دوران صغيرة (v335-C6r9d).
+// الزجاج هو الافتراضي المعتمد من المالك ما لم تُحفظ مادة أخرى عبر كشف أو حالة الخط؛ لا كتابة جماعية لهذا الافتراض ببيانات الإنتاج (لا تُرسَل مادة لدائرة لم يُغيّر الفني فيها شيئاً).
+// تغيير المادة لا يمسّ مواضع الضرر ولا دورات المعالجة (المادة وصف للسلسلة وليست استبدالاً لعوازلها).
 const CS_MAT_AR = { glass: 'زجاج', plastic: 'بلاستك', ceramic: 'خزف' };
 function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuild, typesObj) {
   typesObj = typesObj || chainTypes; // الافتراضي: الدائرة الأولى (للتوافق مع أي نداء قديم)
   const circuit = (typesObj === chainTypes2) ? 2 : 1;
   const CYCLE_NEXT = { glass: 'plastic', plastic: 'ceramic', ceramic: 'glass' };
-  const unchosen = csFlagOn() && csChainIsUnchosen(circuit, typesObj, phase, chainIdx);
-  const BTN_CSS = 'font-size:0.65rem;padding:1px 5px;border:1px solid #CBD5E0;border-radius:8px;background:#F7FAFC;cursor:pointer;margin-bottom:2px';
-  if (unchosen) {
-    // اختيار أول مادة لسلسلة مجهولة ليس استبدالاً: لا يصفّر الضرر ولا الدورات
-    const box = document.createElement('span');
-    box.className = 'mat-choose';
-    box.style.cssText = 'display:inline-flex;flex-wrap:wrap;gap:2px;align-items:center;justify-content:center;margin-bottom:2px';
-    const lb = document.createElement('span'); lb.textContent = 'حدّد المادة:'; lb.style.cssText = 'font-size:0.62rem;color:#92400E;font-weight:700';
-    box.appendChild(lb);
-    ['glass', 'plastic', 'ceramic'].forEach(m => {
-      const b = document.createElement('button');
-      b.type = 'button'; b.className = 'mat-choose-btn'; b.setAttribute('data-mat', m); b.textContent = CS_MAT_AR[m];
-      b.title = 'مادة هذه السلسلة غير معروفة — اختر ' + CS_MAT_AR[m] + ' (لا يتغيّر الضرر ولا الدورات)';
-      b.style.cssText = BTN_CSS;
-      b.addEventListener('click', () => {
-        if (!typesObj[phase]) typesObj[phase] = [];
-        typesObj[phase][chainIdx] = m;
-        csChainMarkProvisional(circuit, phase, chainIdx);
-        onRebuild();
-      });
-      box.appendChild(b);
-    });
-    return box;
-  }
   const btn = document.createElement('button');
   btn.type = 'button';
-  const curMat = (typesObj[phase] || [])[chainIdx];
-  btn.className = 'mat-switch-btn';
-  btn.textContent = 'المادة: ' + (CS_MAT_AR[curMat] || CS_MAT_AR.glass) + ' (تبديل)';
-  btn.title = 'تبديل نوع السلسلة (زجاج → بلاستك → خزف)';
-  btn.style.cssText = BTN_CSS;
+  btn.className = 'mat-rotate-btn';
+  const cur0 = (typesObj[phase] || [])[chainIdx] || 'glass';
+  btn.textContent = '🔄';
+  btn.title = 'نوع السلسلة: ' + (CS_MAT_AR[cur0] || CS_MAT_AR.glass) + ' — اضغط للتبديل (زجاج → بلاستك → خزف)';
+  btn.setAttribute('aria-label', btn.title);
+  btn.style.cssText = 'font-size:0.65rem;padding:1px 5px;border:1px solid #CBD5E0;border-radius:8px;background:#F7FAFC;cursor:pointer;margin-bottom:2px';
   btn.addEventListener('click', () => {
     if (!typesObj[phase]) typesObj[phase] = [];
-    const chosenNow = csChainChosen(typesObj[phase][chainIdx]);
-    // v335-C2: تغيير اختيار سلسلة كانت مجهولة أصلاً (مؤقتة) ليس استبدالاً فلا يصفّر الضرر ولا الدورات
-    if (csFlagOn() && chosenNow && csChainProvisional(circuit, phase, chainIdx)) {
-      typesObj[phase][chainIdx] = CYCLE_NEXT[typesObj[phase][chainIdx]] || 'glass';
-      onRebuild();
-      return;
-    }
     const cur = typesObj[phase][chainIdx] || 'glass';
     typesObj[phase][chainIdx] = CYCLE_NEXT[cur] || 'glass';
-    // أي انتقال لمادة جديدة (بلاستك أو خزف أو زجاج جديد) يصفّر عوازل هذي السلسلة (تُعتبر مادة جديدة كاملة)
-    for (let r=0; r<rows; r++) { stateObj[phase][chainIdx*rows+r] = false; cycleObj[phase][chainIdx*rows+r] = 0; }
+    try { csChainMarkProvisional(circuit, phase, chainIdx); } catch (e) {}
     onRebuild();
   });
   return btn;
+}
+
+// v335-C6r9e: زر واحد واضح لكل دائرة غير معروفة الحالة: «تسجيل عوازل هذه الدائرة سليمة» (بدل خانات تأكيد الأقسام). لا يظهر لدائرة حالتها معروفة موروثة.
+function csInsHealthyBox(c) {
+  const box = document.createElement('div'); box.setAttribute('data-ins-healthy-box', String(c)); box.style.cssText = 'text-align:center;margin:2px 0 8px';
+  const b = document.createElement('button'); b.type = 'button'; b.setAttribute('data-ins-healthy', String(c));
+  b.addEventListener('click', () => { _insHealthy[c] = !_insHealthy[c]; _prefillUserEdited = true; csInsHealthyRefresh(); });
+  box.appendChild(b); return box;
+}
+function csInsCircuitUnknown(c) {
+  const sid = c === 1 ? 'ins1' : 'ins2';
+  const b = _opsBaseline;
+  if (!b || b.line !== _v('f_line_name') || b.tower !== _v('f_tower_number') || b.mode === 'blank') return true;
+  return !b.inherited[sid];
+}
+function csInsHealthyRefresh() {
+  document.querySelectorAll('[data-ins-healthy-box]').forEach(box => {
+    const c = parseInt(box.getAttribute('data-ins-healthy-box'), 10); const btn = box.querySelector('button');
+    const show = csInsCircuitUnknown(c); box.style.display = show ? '' : 'none';
+    const on = !!_insHealthy[c];
+    btn.textContent = on ? '✅ عوازل هذه الدائرة مسجّلة سليمة — اضغط للتراجع' : '☑ تسجيل عوازل هذه الدائرة سليمة (لم تُسجَّل بعد)';
+    btn.style.cssText = 'font-family:inherit;font-size:0.8rem;padding:6px 12px;border-radius:8px;cursor:pointer;border:1.5px solid ' + (on ? '#276749' : '#A0AEC0') + ';background:' + (on ? '#C6F6D5' : '#fff') + ';color:' + (on ? '#22543D' : '#4A5568');
+  });
 }
 
 function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState2, savedCycle2, savedChainTypes, savedChainTypes2) {
@@ -439,6 +431,7 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
     title1.style.cssText = 'font-weight:700;color:#2C5282;margin:6px 0;text-align:center';
     title1.textContent = '⚡ عوازل الدائرة الأولى';
     wrap.appendChild(title1);
+    wrap.appendChild(csInsHealthyBox(1));
     const wrap1 = document.createElement('div'); wrap1.className = 'phases-wrap-inner';
     wrap.appendChild(wrap1);
     buildOneCircuit(wrap1, insulatorState, insulatorCycleState, chainTypes);
@@ -447,12 +440,15 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
     title2.style.cssText = 'font-weight:700;color:#2C5282;margin:14px 0 6px;text-align:center';
     title2.textContent = '⚡ عوازل الدائرة الثانية';
     wrap.appendChild(title2);
+    wrap.appendChild(csInsHealthyBox(2));
     const wrap2 = document.createElement('div'); wrap2.className = 'phases-wrap-inner';
     wrap.appendChild(wrap2);
     buildOneCircuit(wrap2, insulatorState2, insulatorCycleState2, chainTypes2);
   } else {
+    wrap.appendChild(csInsHealthyBox(1));
     buildOneCircuit(wrap, insulatorState, insulatorCycleState, chainTypes);
   }
+  csInsHealthyRefresh();
 }
 
 function buildVShape(phase, stateObj, cycleObj) {
@@ -805,7 +801,6 @@ async function saveRecord() {
   if (!editId) { const _why = prefillSaveBlockReason(d.line_name, d.tower_number); if (_why) { showToast(_why, 'error'); return; } }
   // v335-C2: حراسة الكتابة الفعلية (مستقلة عن حالة الواجهة): برج غير محسوم/بياناته غير سليمة/طابور غير مقروء، مادة جزئية لدائرة مجهولة، حالة/دورات غير صالحة
   if (!editId) { const _ib = csIntegrityBlockReason(d.line_name, d.tower_number); if (_ib) { showToast(_ib, 'error'); return; } }
-  { const _mb = csMaterialSaveBlockReason(chainTypes, chainTypes2); if (_mb) { showToast(_mb, 'error'); return; } }
   { const _fb = csFormIntegrityReason(d); if (_fb) { showToast(_fb, 'error'); return; } }
 
   // التحقق: القسم اللي ما لمسته (تركت قائمته فاضية) يُقبل بدون إلزام — يبقى ناقص لين كشف جديد لاحقاً.
@@ -850,8 +845,8 @@ function afterGridSaveSuccess(d) {
 function opsSectionVals() {
   const json = o => JSON.stringify(o || null);
   return {
-    ins1: json({ s: insulatorState, c: chainTypes, sv: _v('f_sev_insulator') }),
-    ins2: json({ s: insulatorState2, c: chainTypes2 }),
+    ins1: json({ s: insulatorState, c: chainTypes, sv: _v('f_sev_insulator'), h: !!_insHealthy[1] }),
+    ins2: json({ s: insulatorState2, c: chainTypes2, h: !!_insHealthy[2] }),
     washing: _v('f_insulator_washing'),
     iron: _v('f_sev_iron') + '|' + _v('f_iron_intersections'),
     foundation: _v('f_sev_foundation') + '|' + _v('f_tower_foundations'),
@@ -876,8 +871,8 @@ function opsHasContent(id) {
   const any = (...ids) => ids.some(i => _v(i) !== '');
   const dm = st => !!st && OPS_PH.some(ph => Array.isArray(st[ph]) && st[ph].some(x => x === true));
   switch (id) {
-    case 'ins1': return dm(insulatorState) || any('f_sev_insulator');
-    case 'ins2': return dm(insulatorState2);
+    case 'ins1': return dm(insulatorState) || any('f_sev_insulator') || !!_insHealthy[1] || csInsMatChosen(1);
+    case 'ins2': return dm(insulatorState2) || !!_insHealthy[2] || csInsMatChosen(2);
     case 'washing': return any('f_insulator_washing');
     case 'iron': return any('f_sev_iron', 'f_iron_intersections');
     case 'foundation': return any('f_sev_foundation', 'f_tower_foundations');
@@ -892,11 +887,11 @@ function opsHasContent(id) {
 
 function opsCaptureBaseline(mode) {
   const line = _v('f_line_name'), tower = _v('f_tower_number');
-  if (!line || !tower) { _opsBaseline = null; opsRefreshObsBadges(); return; }
+  if (!line || !tower) { _opsBaseline = null; return; }
   const inh = {}; OPS_SECTIONS.forEach(s => { inh[s.id] = mode === 'blank' ? false : opsSectionHasData(s.id, line, tower); });
+  _insHealthy = { 1: false, 2: false };
   _opsBaseline = { line, tower, mode: mode === 'blank' ? 'blank' : 'inherit', vals: opsSectionVals(), inherited: inh };
-  OPS_SECTIONS.forEach(s => { const cb = document.getElementById('oc_' + s.id); if (cb) cb.checked = false; });
-  opsRefreshObsBadges();
+  try { csInsHealthyRefresh(); } catch (e) { /* UI only */ }
 }
 
 function opsSectionAvailable(s) {
@@ -904,68 +899,17 @@ function opsSectionAvailable(s) {
   try { return isDoubleCircuitLine(_v('f_line_name')); } catch (e) { return false; }
 }
 
-// حالة القسم: 'changed' | 'confirmed' | 'inherited' | 'missing'
+// حالة القسم (v335-C6r9d: تتبّع تغيير فقط — لا خانات تأكيد): 'changed' | 'inherited' | 'missing'
+//  - changed  : قيمة القسم الآن تختلف عن لقطة البداية المأخوذة بعد التعبئة (أو، بلا بيانات سابقة، أدخل الموظف فيه شيئاً فعلياً) => يُرسَل
+//  - inherited: موروث من الحالة الحالية ولم يُمسّ => لا يُرسَل ولا يُعدّ رصداً
+//  - missing  : لا بيانات سابقة ولم يُدخل شيء => يبقى مجهولاً (لا يُعدّ سليماً)
+// إلغاء ضرر مسجَّل سابقاً يتم بتغييره صراحةً (إزالة العلامة / اختيار درجة «سليم»)، وهو تغيير يُرسَل.
 function opsSectionState(s) {
-  const cb = document.getElementById('oc_' + s.id);
-  if (!_opsBaseline || _opsBaseline.line !== _v('f_line_name') || _opsBaseline.tower !== _v('f_tower_number')) return opsHasContent(s.id) ? 'changed' : (cb && cb.checked ? 'confirmed' : 'missing');
-  if (_opsBaseline.mode === 'blank') return opsHasContent(s.id) ? 'changed' : (cb && cb.checked ? 'confirmed' : 'missing');
+  if (!_opsBaseline || _opsBaseline.line !== _v('f_line_name') || _opsBaseline.tower !== _v('f_tower_number')) return opsHasContent(s.id) ? 'changed' : 'missing';
+  if (_opsBaseline.mode === 'blank') return opsHasContent(s.id) ? 'changed' : 'missing';
   const cur = opsSectionVals();
   if (cur[s.id] !== _opsBaseline.vals[s.id]) return 'changed';
-  if (cb && cb.checked) return 'confirmed';
   return _opsBaseline.inherited[s.id] ? 'inherited' : 'missing';
-}
-
-function opsRefreshObsBadges() {
-  OPS_SECTIONS.forEach(s => {
-    const b = document.getElementById('ob_' + s.id), row = document.getElementById('or_' + s.id);
-    if (!b || !row) return;
-    const avail = opsSectionAvailable(s);
-    row.style.display = avail ? '' : 'none';
-    if (!avail) return;
-    const st = opsSectionState(s);
-    const txt = { changed: '✏️ مرصود (عُدِّل)', confirmed: '✅ مرصود (مؤكَّد كما هو)', inherited: '📎 موروث من الحالة الحالية — لن يُرسَل ولن يُعدّ رصداً جديداً', missing: '⚪ لا بيانات سابقة — لا يُعدّ سليماً إلا بتأكيد صريح' }[st];
-    b.textContent = txt;
-    b.style.color = st === 'changed' || st === 'confirmed' ? '#1e8449' : (st === 'missing' ? '#92400E' : '#4A5568');
-  });
-}
-
-function opsConfirmAllSections() {
-  // «تأكيد الكل» يشمل فقط الأقسام ذات البيانات الموروثة المعروفة؛ القسم بلا بيانات سابقة لا يصير «سليماً» إلا بتأكيد صريح منفرد مع إدخال قيمته
-  const boxes = OPS_SECTIONS.filter(opsSectionAvailable).filter(s => { const st = opsSectionState(s); return st === 'inherited' || st === 'confirmed'; })
-    .map(s => document.getElementById('oc_' + s.id)).filter(Boolean);
-  if (!boxes.length) { try { showToast('ℹ️ لا توجد أقسام موروثة لتأكيدها — أدخل القيم المرصودة أو أكّد كل قسم صراحةً'); } catch (e) {} return; }
-  const allOn = boxes.every(b => b.checked);
-  boxes.forEach(b => { b.checked = !allOn; });
-  opsRefreshObsBadges();
-}
-
-function opsInstallObsUI() {
-  if (typeof document === 'undefined' || document.getElementById('opsConfirmBar')) return;
-  OPS_SECTIONS.forEach(s => {
-    const a = document.getElementById(s.anchor); if (!a) return;
-    const host = a.closest('.form-card, .insulator-section') || a.parentElement; if (!host) return;
-    if (s.id === 'ins2' || s.id === 'wires2') {
-      if (document.getElementById('or_' + s.id)) return;
-    }
-    const d = document.createElement('div');
-    d.id = 'or_' + s.id;
-    d.style.cssText = 'margin:8px 0 2px;padding:6px 8px;background:#F4F8FB;border:1px dashed #B7C9D9;border-radius:8px;font-size:0.78rem';
-    d.innerHTML = '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="oc_' + s.id + '" onchange="opsRefreshObsBadges()"> <span>أؤكّد «' + s.label + '» (رصد صريح لهذا القسم)</span></label><div id="ob_' + s.id + '" style="margin-top:3px"></div>';
-    host.appendChild(d);
-  });
-  const form = document.getElementById('towerInspectionModal');
-  const first = document.getElementById('insulatorSection');
-  if (first && first.parentElement) {
-    const bar = document.createElement('div');
-    bar.id = 'opsConfirmBar';
-    bar.style.cssText = 'margin:8px 0;padding:8px;background:#EEF6EE;border:1px solid #BFD8BF;border-radius:8px;font-size:0.8rem';
-    bar.innerHTML = '<b>الرصد:</b> ما لم تُعدّله ولم تؤكّده لا يُرسَل ولا يُعدّ رصداً جديداً (يبقى كما هو بالحالة الحالية). <button type="button" class="btn btn-secondary btn-sm" style="margin-right:8px" onclick="opsConfirmAllSections()">✔ تأكيد/إلغاء تأكيد كل الأقسام</button>';
-    first.parentElement.insertBefore(bar, first);
-  }
-  ['input', 'change', 'click'].forEach(ev => document.addEventListener(ev, e => {
-    const t = e && e.target; if (!t || typeof t.closest !== 'function') return;
-    if ((t.id || '').indexOf('f_') === 0 || t.closest('#phasesWrap')) setTimeout(opsRefreshObsBadges, 0);
-  }, true));
 }
 
 // يبني حمولة رصد من النموذج: فقط الأقسام المرصودة (معدَّلة أو مؤكَّدة صراحةً)
@@ -978,29 +922,48 @@ function opsBuildObservation(d) {
     return null;
   };
   const states = {}; OPS_SECTIONS.forEach(s => { states[s.id] = opsSectionAvailable(s) ? opsSectionState(s) : 'skip'; });
-  const isObs = id => states[id] === 'changed' || states[id] === 'confirmed';
-  const err = [];
+  const isObs = id => states[id] === 'changed';
+  const err = []; const skippedUnknown = []; const materialOnly = [];
   // العوازل
+  // v335-C6r9e: ثلاث حالات لكل دائرة معدَّلة:
+  //  (أ) حالتها معروفة: تُرسَل كاملة (الضرر + المواد)  (ب) غير معروفة وفيها ضرر مُدخَل، أو سُجّلت «سليمة» صراحةً (زر الدائرة)، أو (دائرة أولى) اختير تقدير العوازل: تُرسَل حالة صريحة
+  //  (ج) غير معروفة ولم يُسجَّل لها ضرر ولا «سليمة» وغُيّرت مادتها فقط: تُرسَل المادة وحدها {chains} — لا تُختلق حالة سليمة ولا تُكتب أطوال الضرر
+  let dmgWritten = false;
   [1, 2].forEach(c => {
     const sid = c === 1 ? 'ins1' : 'ins2';
     if (!isObs(sid)) return;
     const st = c === 1 ? insulatorState : insulatorState2, ct = c === 1 ? chainTypes : chainTypes2;
+    const known = opsSectionHasData(sid, line, tower), hasDmg = OPS_PH.some(ph => st && Array.isArray(st[ph]) && st[ph].some(x => x === true));
     let ctJson = null; try { ctJson = JSON.parse(csChainTypesForSave(ct, c) || 'null'); } catch (e) { ctJson = null; }
+    const okChains = ph => ctJson && Array.isArray(ctJson[ph]) && ctJson[ph].length && ctJson[ph].every(x => typeof x === 'string' && x);
+    const stateExplicit = known || hasDmg || !!_insHealthy[c] || (c === 1 && !!_v('f_sev_insulator'));
+    if (!stateExplicit) {
+      const k0 = (c === 1 ? 'ins_' : 'ins2_'); let n = 0;
+      OPS_PH.forEach(ph => { if (okChains(ph)) { comps[k0 + ph] = { chains: ctJson[ph].slice() }; n++; } });
+      if (n) { observed.push(sid + ':material'); materialOnly.push(c === 1 ? 'الدائرة الأولى' : 'الدائرة الثانية'); }
+      else skippedUnknown.push(c === 1 ? 'الدائرة الأولى' : 'الدائرة الثانية');
+      return;
+    }
     OPS_PH.forEach(ph => {
       const arr = st && st[ph];
       if (!Array.isArray(arr) || !arr.length) { err.push('⚠️ حالة عوازل ' + (c === 1 ? 'الدائرة الأولى' : 'الدائرة الثانية') + ' الفيز ' + ph + ' غير مهيّأة'); return; }
       const v = { damaged: arr.map(x => !!x) };
-      if (ctJson && Array.isArray(ctJson[ph]) && ctJson[ph].length && ctJson[ph].every(x => typeof x === 'string' && x)) v.chains = ctJson[ph].slice();
+      if (okChains(ph)) v.chains = ctJson[ph].slice();
       comps[(c === 1 ? 'ins_' : 'ins2_') + ph] = v;
     });
-    observed.push(sid);
+    observed.push(sid); dmgWritten = true;
   });
-  if (isObs('ins1') || isObs('ins2')) { if (_v('f_sev_insulator')) sev.sev_insulator = _v('f_sev_insulator'); }
-  if (isObs('washing')) { if (!_v('f_insulator_washing')) err.push('⚠️ اختر حالة نظافة العوازل أو ألغِ تأكيد القسم'); else { comps.washing = { text: _v('f_insulator_washing') }; observed.push('washing'); } }
+  // الشدة تُرسَل مع كتابة حالة دائرة أولى، أو إن غيّرها الموظف فعلاً؛ تسجيل الدائرة الثانية وحدها لا يعيد كتابة شدة لم تتغيّر
+  if (dmgWritten && _v('f_sev_insulator')) {
+    let sevChanged = true;
+    try { if (_opsBaseline && _opsBaseline.mode !== 'blank' && _opsBaseline.line === line && _opsBaseline.tower === tower) sevChanged = (JSON.parse(_opsBaseline.vals.ins1) || {}).sv !== _v('f_sev_insulator'); } catch (e) { sevChanged = true; }
+    if (observed.includes('ins1') || sevChanged) sev.sev_insulator = _v('f_sev_insulator');
+  }
+  if (isObs('washing')) { if (!_v('f_insulator_washing')) err.push('⚠️ اختر حالة نظافة العوازل'); else { comps.washing = { text: _v('f_insulator_washing') }; observed.push('washing'); } }
   const textSec = (id, sevId, fieldIds, keys, label) => {
     if (!isObs(id)) return;
     const e0 = need(sevId, fieldIds, label); if (e0) { err.push(e0); return; }
-    if (!_v(sevId)) { err.push('⚠️ حدّد درجة خطورة "' + label + '" أو ألغِ تأكيد القسم'); return; }
+    if (!_v(sevId)) { err.push('⚠️ حدّد درجة خطورة "' + label + '"'); return; }
     keys.forEach((k, i) => { comps[k] = { text: _v(fieldIds[i]) || 'سليم' }; });
     sev[{ f_sev_iron: 'sev_iron', f_sev_foundation: 'sev_foundation', f_sev_wires: 'sev_wires', f_sev_ground: 'sev_ground' }[sevId]] = _v(sevId);
     observed.push(id);
@@ -1009,12 +972,12 @@ function opsBuildObservation(d) {
   textSec('foundation', 'f_sev_foundation', ['f_tower_foundations'], ['foundation'], 'قواعد البرج');
   textSec('wires1', 'f_sev_wires', ['f_wires_r1', 'f_wires_s1', 'f_wires_t1'], ['wire_r1', 'wire_s1', 'wire_t1'], 'الأسلاك');
   if (isObs('wires2')) {
-    if (!_v('f_sev_wires')) err.push('⚠️ حدّد درجة خطورة الأسلاك أو ألغِ تأكيد القسم');
+    if (!_v('f_sev_wires')) err.push('⚠️ حدّد درجة خطورة الأسلاك');
     else { ['r1', 's1', 't1'].forEach(p => { comps['wire_' + p + '_c2'] = { text: _v('f_wires_' + p + '_c2') || 'سليم' }; }); sev.sev_wires = _v('f_sev_wires'); observed.push('wires2'); }
   }
   if (isObs('ground')) {
     const e0 = need('f_sev_ground', ['f_ground_1', 'f_ground_2'], 'الأرضي'); if (e0) err.push(e0);
-    else if (!_v('f_sev_ground')) err.push('⚠️ حدّد درجة خطورة الأرضي أو ألغِ تأكيد القسم');
+    else if (!_v('f_sev_ground')) err.push('⚠️ حدّد درجة خطورة الأرضي');
     else {
       comps.ground_1 = { text: _v('f_ground_1') || 'سليم' };
       const g2 = document.getElementById('groundBlock2'); if (g2 && g2.style.display !== 'none' || _v('f_ground_2')) comps.ground_2 = { text: _v('f_ground_2') || 'سليم' };
@@ -1022,18 +985,18 @@ function opsBuildObservation(d) {
     }
   }
   if (isObs('fire')) {
-    if (!_v('f_sev_fire')) err.push('⚠️ حدّد درجة خطورة مسببات الحرائق أو ألغِ تأكيد القسم');
+    if (!_v('f_sev_fire')) err.push('⚠️ حدّد درجة خطورة مسببات الحرائق');
     else { const e0 = need('f_sev_fire', ['f_fire_causes_notes'], 'مسببات الحرائق'); if (e0) err.push(e0); else { comps.fire = { sev: _v('f_sev_fire'), notes: _v('f_fire_causes_notes') }; observed.push('fire'); } }
   }
-  if (isObs('road')) { if (!_v('f_road_access')) err.push('⚠️ اختر وجود الطريق أو ألغِ تأكيد القسم'); else { comps.road = { text: _v('f_road_access') }; observed.push('road'); } }
+  if (isObs('road')) { if (!_v('f_road_access')) err.push('⚠️ اختر وجود الطريق'); else { comps.road = { text: _v('f_road_access') }; observed.push('road'); } }
   if (err.length) return { ok: false, msg: err[0] };
-  if (!Object.keys(comps).length) return { ok: false, msg: 'ℹ️ لم تُعدّل ولم تؤكّد أي قسم — لا يوجد رصد جديد ليُحفظ. عدّل قسماً أو أكّده (✔) ثم احفظ' };
+  if (!Object.keys(comps).length) return { ok: false, msg: 'ℹ️ لم تُعدّل أي قسم — لا يوجد رصد جديد ليُحفظ. عدّل قسماً ثم احفظ' };
   const env = opsEnvKnown(line, tower);
   const payload = { kind: 'observation', op_id: genUUID(), line_name: line, tower_number: tower, business_date: d.inspection_date || opsToday(), comps, sev,
     row: { tower_type: d.tower_type || undefined, voltage: d.voltage || undefined, notes: _v('f_notes'), road_access_notes: _v('f_road_access_notes'), wires_circuit: _v('f_wires_circuit'),
            insulator_svg_r: d.insulator_svg_r, insulator_svg_s: d.insulator_svg_s, insulator_svg_t: d.insulator_svg_t } };
   Object.keys(payload.row).forEach(k => { if (payload.row[k] === undefined || payload.row[k] === '') delete payload.row[k]; });
-  const extra = { sections: observed };
+  const extra = { sections: observed, skipped_unknown: skippedUnknown, material_only: materialOnly };
   if (env) { payload.base = opsBaseFor(env, Object.keys(comps)); payload.base_src = env.source ? env.source.inspection_id : null; extra.base_mode = null; }
   else { payload.base = {}; extra.base_mode = 'unknown'; }
   return { ok: true, payload, extra };
@@ -1048,7 +1011,8 @@ async function opsSaveObservation(d) {
   const r = opsEnqueue(opsNewEntry('observation', b.payload, b.extra));
   if (!r.ok) { showToast(r.reason === 'storage' ? '❌ لم يُحفظ الكشف (ذاكرة الجهاز ممتلئة) وحقولك باقية — حرّر مساحة واضغط حفظ ثانيةً' : '❌ لم يُحفظ الكشف: ' + (r.reason === 'migration_refused' ? (_opsMig.msg || 'قائمة معلّقات قديمة غير قابلة للترحيل') : MSG_QUEUE_UNREADABLE) + ' حقولك باقية.', 'error'); return false; }
   opsApplyEntryToCache(r.entry);
-  showToast('✅ حُفظ الكشف على الجهاز — لم يُؤكَّد على السيرفر بعد وسيُرسل تلقائياً');
+  { const sk = (b.extra && b.extra.skipped_unknown) || [];
+    showToast('✅ حُفظ الكشف على الجهاز — لم يُؤكَّد على السيرفر بعد وسيُرسل تلقائياً' + (sk.length ? ' — لم تُسجَّل ' + sk.join(' و') + ' (حالتها غير مسجّلة: علّم ضرراً أو اضغط «تسجيل عوازل هذه الدائرة سليمة»)' : '') + (((b.extra && b.extra.material_only) || []).length ? ' — حُفظت المادة فقط لـ ' + b.extra.material_only.join(' و') + ' وحالة عوازلها بقيت غير مسجّلة' : '')); }
   document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   resetTowerFieldsOnly();
   if (currentGridLine) renderTowersGridFromCache(currentGridLine);
@@ -1454,6 +1418,18 @@ function onTowerChange() {
   };
   document.addEventListener('input', mark, true);
   document.addEventListener('change', mark, true);
+  // v335-C6r9e: اختيار تقدير «سليم» للعوازل = كل عوازل الدوائر غير المعروفة (بلا ضرر مُعلَّم) سليمة: يُفعَّل زر كل دائرة ظاهراً (ويمكن التراجع عنه)
+  document.addEventListener('change', e => {
+    const t = e && e.target; if (!t || t.id !== 'f_sev_insulator' || t.value !== 'ok') return;
+    let dbl = false; try { dbl = isDoubleCircuitLine(_v('f_line_name')); } catch (x) { dbl = false; }
+    [1, 2].forEach(c => {
+      if (c === 2 && !dbl) return;
+      const st = c === 1 ? insulatorState : insulatorState2;
+      const dmg = OPS_PH.some(ph => st && Array.isArray(st[ph]) && st[ph].some(x => x === true));
+      if (csInsCircuitUnknown(c) && !dmg) _insHealthy[c] = true;
+    });
+    csInsHealthyRefresh();
+  });
   document.addEventListener('click', e => { const t = e && e.target; if (t && typeof t.closest === 'function' && t.closest('#phasesWrap')) _prefillUserEdited = true; }, true);
 })();
 
@@ -1461,7 +1437,5 @@ function onTowerChange() {
 // DEPARTURES MODULE v2 (Supabase + Interactive Insulators)
 // ========================
 
-// واجهة الرصد (v335-C4) كانت تُركَّب عند DOMContentLoaded؛ الآن تُركَّب عند تحميل المحرر (النافذة موجودة بـ index.html)
-try { opsInstallObsUI(); } catch (e) { console.error('[tower-app] ops init', e); }
 
 (window.__featModules = window.__featModules || {}).insp = true;

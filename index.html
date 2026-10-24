@@ -2174,6 +2174,10 @@ function csTowerCompleteness(card, detail, rec) {
   if (Number(rd.other_unknown) > 0) return 'partial';       // core known, but other applicable departure-capable sections (wires, ground, fire, washing) are unknown: still NOT healthy / NOT complete
   return 'complete';
 }
+// v335-C6r9d: ONE concise completeness wording shared by the tower cards and the line status list (never changes the severity colour)
+function csCompletenessText(rdy) {
+  return rdy === 'complete' ? '✅ مكتمل' : rdy === 'incomplete' ? '⚠️ غير مكتمل' : rdy === 'partial' ? '⚠️ أقسام أخرى غير مسجّلة' : '⚠️ اكتمال غير مؤكد';
+}
 function csCardAccept(line, tower, env, ticket) {
   const key = csKey(line, tower), old = _csCards.get(key);
   if (old && old.ticket > ticket) return;
@@ -2744,24 +2748,16 @@ function csChainsComplete(ct, per) {
   return ['R', 'S', 'T'].every(ph => { const a = ct[ph]; if (!Array.isArray(a) || a.length < per) return false; for (let i = 0; i < per; i++) if (!csChainChosen(a[i])) return false; return true; });
 }
 
-// قيمة insulator_chain_types[_2] عند الحفظ: دائرة مجهولة → null ما لم تكتمل كل سلاسلها صراحةً (لا جزئي أبداً)؛ غير ذلك كما كانت دائماً
+// قيمة insulator_chain_types[_2] عند الحفظ.
+// v335-C6r9d: الزجاج هو الافتراضي المعتمد. دائرة مادتها غير محفوظة: لا تُرسَل مادة ما لم يغيّر الفني مادة سلسلة فيها؛ وعند تغيير بعضها تُكمَّل بقية سلاسلها زجاجاً (الافتراضي المعتمد) فتُحفظ كاملة ولا تُقرأ جزئية.
 function csChainTypesForSave(ct, circuit) {
-  if (_csMatUnknown['c' + circuit]) return csChainsComplete(ct, _csMatPerPhase) ? JSON.stringify(ct) : null;
+  if (_csMatUnknown['c' + circuit]) {
+    if (!csChainsChosenCount(ct)) return null;
+    const out = JSON.parse(JSON.stringify(ct || {}));
+    ['R', 'S', 'T'].forEach(ph => { if (!Array.isArray(out[ph])) out[ph] = []; for (let i = 0; i < _csMatPerPhase; i++) if (!csChainChosen(out[ph][i])) out[ph][i] = 'glass'; });
+    return JSON.stringify(out);
+  }
   return JSON.stringify(ct);
-}
-
-function csMaterialSaveBlockReason(ct1, ct2) {
-  // v335-C6r9c: نحدّد بالضبط أي سلاسل ما زالت بلا مادة
-  const missing = (ct, c) => {
-    const out = [];
-    ['R', 'S', 'T'].forEach(ph => { for (let i = 0; i < _csMatPerPhase; i++) if (!csChainChosen(((ct || {})[ph] || [])[i])) out.push('الفيز ' + ph + (_csMatPerPhase > 1 ? ' سلسلة ' + (i + 1) : '')); });
-    return out;
-  };
-  const bad = [];
-  if (_csMatUnknown.c1 && csChainsChosenCount(ct1) > 0 && !csChainsComplete(ct1, _csMatPerPhase)) bad.push('الدائرة الأولى: ' + missing(ct1, 1).join('، '));
-  if (_csMatUnknown.c2 && csChainsChosenCount(ct2) > 0 && !csChainsComplete(ct2, _csMatPerPhase)) bad.push('الدائرة الثانية: ' + missing(ct2, 2).join('، '));
-  if (!bad.length) return null;
-  return '⛔ لم يُحفظ الكشف: مادة السلاسل غير محدّدة — ' + bad.join(' | ') + '. حدّد المادة (زجاج/بلاستك/خزف) لكل سلسلة ناقصة، أو أعد فتح البرج لتبقى المادة غير معروفة. ما أدخلته من ضرر ودورات باقٍ كما هو.';
 }
 
 // يُستدعى من buildInsulatorUI: يحدّد أي دائرة ما زالت مادتها مجهولة (لم تُحفظ ولم تكتمل اختيارات الفني)
@@ -2786,6 +2782,8 @@ function csChainIsUnchosen(circuit, ct, phase, idx) {
 function csChainProvisional(circuit, phase, idx) { return _csProv.has(circuit + '|' + phase + '|' + idx); }
 
 function csChainMarkProvisional(circuit, phase, idx) { _csProv.add(circuit + '|' + phase + '|' + idx); }
+// v335-C6r9e: هل اختار الفني مادةً صراحةً (تدوير) لهذه الدائرة في هذه الجلسة؟
+function csInsMatChosen(circuit) { let r = false; _csProv.forEach(k => { if (k.indexOf(circuit + '|') === 0) r = true; }); return r; }
 
 // ---- سلامة الحالة/الدورات/الهندسة قبل التهيئة التلقائية أو الحفظ ----
 // استثناء وحيد: blocker المواد المفقودة (materials_missing) لأبراج بلا مادة محفوظة؛ أي نقص أو عدم صلاحية بالحالة/الدورات/الهندسة/غيرها يمنع
@@ -2822,8 +2820,16 @@ function csPrefillIntegrity(env, line, tower) {
   const meta = (env && env.meta) || {}, row = env && env.row;
   if (!row || typeof row !== 'object') return out;
   // v335-C2: من موانع السيرفر نأخذ ما يخصّ حالة/دورات الدوائر فقط (الباقي تعالجه حالة الحسم/الهندسة/المادة أصلاً) + مادة تالفة
-  (Array.isArray(meta.prefill_blockers) ? meta.prefill_blockers : []).forEach(b => { if (/^insulator_circuit[12]_/.test(b) || b === 'materials_invalid') out.push('server:' + b); });
   const n = getInsulatorCount(getInsulatorMode(row.voltage || 132, row.tower_type || '', line, tower));
+  // v335-C6r9f: «ناقصة» من الخادم لدائرة حالتها (الضرر) معروفة كاملة الأطوار وسليمة الشكل، وينقصها تاريخ الدورات فقط = فجوة ناعمة (تاريخ الدورات مجهول)، لا حاجزاً: لا يُمنع فتح البرج ولا الكشف الجديد ولا يُصنع صفر.
+  // غياب حالة الضرر نفسها، أو طول/شكل غير صالح، أو هندسة متعارضة تبقى محجوبة كما كانت.
+  const _stateWhole = (v) => { const o = _csParseJ(v); return !!o && typeof o === 'object' && !Array.isArray(o) && ['R', 'S', 'T'].every(ph => Array.isArray(o[ph]) && o[ph].length === n && o[ph].every(x => typeof x === 'boolean')); };
+  const _softCycle = { 1: _stateWhole(row.insulator_state), 2: _stateWhole(row.insulator_state_2) };
+  (Array.isArray(meta.prefill_blockers) ? meta.prefill_blockers : []).forEach(b => {
+    const m = /^insulator_circuit([12])_incomplete$/.exec(b);
+    if (m && _softCycle[m[1]]) { out.push('cycles_unknown_c' + m[1] + '_missing'); return; }
+    if (/^insulator_circuit[12]_/.test(b) || b === 'materials_invalid') out.push('server:' + b);
+  });
   _csCheckCircuit(row.insulator_state, row.insulator_cycle, n, 1, out);
   const ap = meta.circuits && meta.circuits.circuit2_applicability;
   if (ap === 'applicable' || (ap === undefined && row.insulator_state_2 != null)) _csCheckCircuit(row.insulator_state_2, row.insulator_cycle_2, n, 2, out);
@@ -2851,13 +2857,18 @@ function csIntegrityText(list) {
 
 // v335-C6r9c: نص قصير بالأقسام التي بقيت مجهولة (غير مملوءة) بسبب نقص «غائب» — بقية الأقسام المعروفة تُملأ كالمعتاد
 function csUnknownSectionsText(list) {
-  const parts = [];
+  const parts = [], cyc = [];
   [1, 2].forEach(c => {
-    const re = new RegExp('(^|:)(state_c' + c + '(_|$)|cycle_c' + c + '(_|$)|insulator_circuit' + c + '_)');
-    if ((list || []).some(x => re.test(x))) parts.push('عوازل الدائرة ' + (c === 1 ? 'الأولى' : 'الثانية'));
+    const reS = new RegExp('(^|:)(state_c' + c + '(_|$)|insulator_circuit' + c + '_)'), reC = new RegExp('(^|:)(cycle_c' + c + '(_|$)|cycles_unknown_c' + c + '(_|$))');
+    const lab = c === 1 ? 'الأولى' : 'الثانية';
+    if ((list || []).some(x => reS.test(x))) parts.push('عوازل الدائرة ' + lab);
+    else if ((list || []).some(x => reC.test(x))) cyc.push(lab);
   });
   if ((list || []).some(x => /materials_/.test(x))) parts.push('مادة السلاسل');
-  return 'مجهول وغير مملوء: ' + (parts.length ? parts.join('، ') : 'بعض بيانات العوازل') + ' — بقية الأقسام المعروفة مملوءة، وما لا تعدّله أو تؤكّده لا يُرسَل';
+  let t = '';
+  if (parts.length) t += 'مجهول وغير مملوء: ' + parts.join('، ') + ' — بقية الأقسام المعروفة مملوءة، وما لا تعدّله لا يُرسَل';
+  if (cyc.length) t += (t ? ' | ' : '') + 'حالة عوازل الدائرة ' + cyc.join(' و') + ' معروفة، أما تاريخ دورات المعالجة فمجهول (لا يُفترض صفر؛ يُحسم عند المعالجة)';
+  return t || 'مجهول وغير مملوء: بعض بيانات العوازل';
 }
 
 function csQueuesUnreadable() {
@@ -4036,15 +4047,16 @@ function renderTowersGridFromCache(lineName) {
         if (local && !hasValidInspectionId(local.id)) rec = local;
         // v335-C6r9: known damage keeps its red/orange/yellow level; "green" (= no known problem) is only shown when the applicable state is fully known - otherwise neutral grey with an explicit completeness line
         const rdy = rec ? (local && !hasValidInspectionId(local.id) ? 'unverified' : csTowerCompleteness(card, detail, rec)) : null;
-        let level = card && card.status === 'needs_review' ? 'none' : getTowerCriticalityLevel(rec);
-        if (level === 'green' && rdy !== 'complete' && csLiveEnabled()) level = 'none';
+        // v335-C6r9d: the COLOUR is the recorded severity only (simple = green, moderate = yellow, then the higher levels); grey is reserved for a tower with no effective inspection/current source.
+        // Incompleteness (sections not recorded / completeness not confirmed) is a separate concise line below - an unrecorded section never changes the severity colour and is never labelled healthy.
+        let level = rec ? getTowerCriticalityLevel(rec) : 'none';
         const meta = TOWER_LEVEL_META[level];
         const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) :
           card && card.status === 'no_source' ? 'لم يُكشف بعد' :
           card && card.status === 'uninitialized' ? (card.failed ? 'فشلت تهيئة هذا البرج — راجع المدير' : 'الحالة لم تُهيّأ بعد') :
           card && card.status === 'card_pending' ? 'البطاقة قيد التجهيز (يلزم إجراء المدير)' :
           cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
-        const completeLine = rec ? (rdy === 'complete' ? '✅ مكتمل' : rdy === 'incomplete' ? '⚠️ غير مكتمل' : rdy === 'partial' ? '⚠️ أقسام أخرى غير مسجّلة' : '⚠️ اكتمال غير مؤكد') : '';
+        const completeLine = rec ? csCompletenessText(rdy) : '';
         // v335-C6r6: a card that was not verified by the server in this open is never presented as fresh
         const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && !!card && card.status !== 'no_source';
         let staleLine = '';
@@ -5778,10 +5790,11 @@ const OPS_SECTIONS = [
 ];
 
 let _opsBaseline = null;     // {line, tower, vals:{section: signature}, inherited:{section:bool}}
+let _insHealthy = { 1: false, 2: false };   // v335-C6r9e: «عوازل هذه الدائرة سليمة» — تسجيل صريح لدائرة غير معروفة الحالة (بدل خانات تأكيد الأقسام)
 
 function _v(id) { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; }
 
-function opsResetObs() { _opsBaseline = null; OPS_SECTIONS.forEach(s => { const cb = document.getElementById('oc_' + s.id); if (cb) cb.checked = false; }); try { if (typeof opsRefreshObsBadges === 'function') opsRefreshObsBadges(); } catch (e) {} }
+function opsResetObs() { _opsBaseline = null; _insHealthy = { 1: false, 2: false }; }
 
 // ---- تعديل سجل: بيانات وصفية = تدقيق (annotate) بلا إعادة حساب حالة؛ تغيير حالة = تصحيح صريح بسبب ----
 const OPS_META_COLS = ['notes', 'road_access_notes', 'inspection_date', 'created_by_name'];
@@ -6006,7 +6019,11 @@ async function opsSyncOutbox() {
       const r = await csCall('app_op_apply', { p_op: payload });
       if (r && r.stale) { res.auth = true; break; }
       if (r && r.ok === true) {
-        if (payload && payload.kind === 'void') res.voidApplied = true;
+        if (payload && payload.kind === 'void') {
+          res.voidApplied = true;
+          // v335-C6r9d: say what the cancellation actually did (never a bare "success")
+          try { (res.voidNotes = res.voidNotes || []).push(r.state_reversed === false ? 'أُخفي السجل الملغى (لم يكن مصدر الحالة الحالية فلم تتغيّر الحالة)' : (r.state_reversed === true && (r.no_prior_state || (r.tower && r.tower.status === 'no_source')) ? 'أُلغي الكشف — البرج «لم يُكشف»' : 'أُلغي الكشف واستُعيدت الحالة السابقة')); } catch (x) {}
+        }
         if (!opsRemove(e.id)) { opsUpdate(e.id, x => { x.status = 'pending'; x.err = 'removal_unconfirmed'; }); blocked.add(tk); continue; }
         res.applied++; res.lines.add(e.line);
         try { if (r.tower && csEnvValid(r.tower, e.line, e.tower)) { if (csIngest(e.line, e.tower, r.tower, 'server', r.as_of)) { csRemember(e.line, e.tower, r.tower, r.as_of); _applyConfirmedTowerEnv(e.line, e.tower, r.tower); } } } catch (x) {}
@@ -6040,7 +6057,7 @@ async function opsSyncOutbox() {
     if (res.marks) { try { await opsLoadMarks(); } catch (e) {} }
     try { if (currentGridLine) renderTowersGridFromCache(currentGridLine); } catch (e) {}
     try { if (depUI) depUI.renderLines(); } catch (e) {}
-    showToast('✅ تأكّد على السيرفر: ' + res.applied + ' عملية');
+    showToast('✅ تأكّد على السيرفر: ' + res.applied + ' عملية' + (res.voidNotes && res.voidNotes.length ? ' — ' + Array.from(new Set(res.voidNotes)).join('، ') : ''));
   }
   if (res.conflicts) showToast('⚠️ ' + res.conflicts + ' عملية متعارضة مع عمل أحدث — افتح «العناصر المعلّقة» لاتخاذ القرار (لم يُكتب فوق عمل أحد)', 'error');
   if (res.rejected) showToast('⚠️ ' + res.rejected + ' عملية رفضها السيرفر — راجع «العناصر المعلّقة»', 'error');
@@ -6216,7 +6233,13 @@ OPS_ERR_MSG.cycle_confirmation_required = 'دورات المعالجة السا�
 
 OPS_ERR_MSG.legacy_state_invalid = 'مصفوفة حالة العوازل المحفوظة محلياً غير صالحة (قيم غير منطقية) — لا تُحوَّل؛ راجع الأصل ثم احذف أو أعد الإدخال';
 
-function opsErrText(e) { return (OPS_ERR_MSG[e.err] || e.err || '') + (e.detail && e.detail.failures ? ' — ' + JSON.stringify(e.detail.failures).slice(0, 160) : ''); }
+function opsErrText(e) {
+  // v335-C6r9f: معالجة تحتاج دورات سابقة مجهولة: رسالة صريحة بدل JSON، ولا يُفترض صفر ولم يتغيّر شيء
+  const f = e && e.detail && Array.isArray(e.detail.failures) ? e.detail.failures : null;
+  if (e && e.err === 'precondition_failed' && f && f.length && f.every(x => x && x.reason === 'cycle_unknown'))
+    return 'لم تُسجَّل المعالجة: دورات المعالجة السابقة لعوازل ' + Array.from(new Set(f.map(x => x.component))).join('، ') + ' مجهولة، ولا تُفترض صفراً. لم يتغيّر شيء على السيرفر — اطلب من المسؤول حسم دورات هذه الدائرة ثم أعد المعالجة، أو احذف هذه العملية بعد المراجعة.';
+  return (OPS_ERR_MSG[e.err] || e.err || '') + (e.detail && e.detail.failures ? ' — ' + JSON.stringify(e.detail.failures).slice(0, 160) : '');
+}
 
 // v335-C6r9: a cancellation REQUEST is not the cancellation. States: queued (never sent) / waiting for a newer cancellation / outcome of the last send unknown / refused by the server.
 // In every state the stored record is still active until the server confirms; "withdraw" removes only this request from the device.
