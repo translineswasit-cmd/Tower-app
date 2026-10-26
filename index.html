@@ -172,6 +172,8 @@ tbody tr:hover { background: #F7FAFC; }
 .empty-state { text-align: center; padding: 40px; color: #A0AEC0; }
 .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500; align-items: center; justify-content: center; padding: 16px; }
 .modal-bg.show { display: flex; }
+/* v335-C6r12 (N19): حاوية الطبقة تأخذ التركيز برمجياً (tabindex=-1، نظام الطبقات)؛ حلقة تركيز المتصفح حولها كانت تظهر كخط أسود بعرض 1px أسفل الشاشة. العناصر الداخلية تحتفظ بحلقاتها. */
+[tabindex="-1"]:focus { outline: none; }
 .modal-box { background: white; border-radius: 16px; padding: 32px; max-width: 380px; width: 100%; text-align: center; max-height: 90vh; overflow-y: auto; overscroll-behavior: contain; }
 .manage-acc-btn { background:#eef1f6; color:#4a5568; border:none; width:38px; height:38px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s; }
 .manage-acc-btn:hover { background:#dde3ec; }
@@ -3622,6 +3624,7 @@ function cancelToHome() {
 
 function showPage(id, btn) {
   pageNavigationRequestSeq++;
+  try { if (typeof hubEditNavReset === 'function') hubEditNavReset(); } catch (e) {}   // v335-C6r13: طلب فتح تعديل معلّق من الأرشيف يسقط بأي تنقّل
   invalidatePrefill(); // v334: التنقّل يُبطل أي تهيئة معلّقة
   // إلغاء تركيز أي حقل (خاصة حقول التاريخ) قبل أي تنقّل — يمنع عالق منتقي التاريخ الأصلي بالآيفون فوق الصفحة
   if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {

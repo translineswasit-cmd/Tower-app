@@ -20,7 +20,8 @@ let _reportCountSeq = 0, _reportTowersSeq = 0, _reportExportSeq = 0;
 const REPORT_AUX_TTL = 120000;
 function reportPurgeDerived() {
   reportInvalidateAux();
-  try { hubVisualReset(); } catch (e) {}   // v335-C6r11 (N03): أرشيف الكشف البصري بطبقات — يُمسح عند الخروج/تبديل الحساب
+  try { hubVisualReset(); } catch (e) {}
+  window._editOrigin = null; _hubEditPending = null;   // v335-C6r12 (N19): أصل تعديل الأرشيف لا يعبر الخروج/تبديل الحساب   // v335-C6r11 (N03): أرشيف الكشف البصري بطبقات — يُمسح عند الخروج/تبديل الحساب
   _reportLineNames = [];
   _reportBasis = { kind: 'historical', stale: false, liveOff: false };
 }
@@ -1019,6 +1020,9 @@ function getHubGroups(type) {
 // v335-C6r11 (N03): أرشيف الكشف البصري بطبقات: فهرس خطوط خفيف ← تواريخ الخط ← أبراج التاريخ ← تفاصيل كاملة عند الطلب
 // (دلالات الأرشيف التاريخي كما هي: نافذة 6 أشهر، إخفاء الملغى بعلامات opsLoadMarks، لا استبدال بفهرس الحالة الحالية)
 // ========================
+function _hubLvHome() { _hubSeq++; showHubView('hubHomeView'); }
+function _hubLvLines() { _hubSeq++; showHubView('hubLinesView'); }
+function _hubLvDates() { _hubSeq++; showHubView('hubDatesView'); }
 let _hubSeq = 0;   // يزيد مع كل تنقّل/رجوع/خروج: أي ردّ بدأ قبله يُهمَل
 function _hubV0() { return { mode: null, lines: [], line: null, dates: [], date: null, towers: [] }; }
 let _hubV = _hubV0();
@@ -1086,7 +1090,7 @@ async function hubVisualOpenLine(line) {
   } catch (e) { if (g.ok() && !(e && e.stale)) showToast('❌ تعذّر تحميل تواريخ الخط', 'error'); return; }
   if (!g.ok()) return;
   hubSelectedLine = line; _hubV.line = line; _hubV.dates = rows; _hubV.date = null; _hubV.towers = [];
-  pushLevel(() => { _hubSeq++; showHubView('hubLinesView'); });
+  pushLevel(_hubLvLines);
   renderHubDates();
   showHubView('hubDatesView');
 }
@@ -1100,7 +1104,7 @@ async function hubVisualOpenDate(date) {
   } catch (e) { if (g.ok() && !(e && e.stale)) showToast('❌ تعذّر تحميل أبراج هذا التاريخ', 'error'); return; }
   if (!g.ok()) return;
   hubSelectedDate = date; _hubV.date = date; _hubV.towers = rows;
-  pushLevel(() => { _hubSeq++; showHubView('hubDatesView'); });
+  pushLevel(_hubLvDates);
   renderHubDetail();
   showHubView('hubDetailView');
 }
@@ -1128,21 +1132,73 @@ async function hubFetchFull(id, snap) {
     return row;
   } catch (e) { return null; }
 }
+// ---- v335-C6r12 (N19): أصل تعديل الأرشيف. التعديل يفتح صفحة النموذج؛ عند الحفظ/الإلغاء/الإغلاق/رجوع (كلها تمرّ عبر cancelEdit) نعود مباشرة لنفس
+// طبقة الأرشيف (خط/تاريخ/سجل) ونفس موضع التمرير، بلا ضغطة رجوع إضافية. المحررات المفتوحة من مواقع أخرى بلا أصل = سلوكها كما كان.
+let _hubEditPending = null;
+function _hubScrollSnap(id) {
+  const list = document.getElementById('hubDetailList');
+  const row = list && list.querySelector('[data-rec-id="' + String(id).replace(/"/g, '') + '"]');
+  const sc = [];
+  for (let n = list; n && n !== document.body && n !== document.documentElement; n = n.parentElement) if (n.scrollTop > 0 || n.scrollLeft !== 0) sc.push([n, n.scrollTop, n.scrollLeft]);
+  return { x: window.pageXOffset || 0, y: window.pageYOffset || 0, sc, rowTop: row ? row.getBoundingClientRect().top : null };
+}
+function _hubRestoreScroll(sn, id) {
+  const nav = pageNavigationRequestSeq, hs = _hubSeq;
+  const apply = () => {
+    // تنقّل/خروج/تغيير طبقة بعد العودة: الاستدعاءات المؤجَّلة لا تحرّك أي صفحة أخرى
+    const pg = document.getElementById('page-recordsHub');
+    if (nav !== pageNavigationRequestSeq || hs !== _hubSeq || !pg || !pg.classList.contains('active') || hubBrowseType !== 'visual') return;
+    sn.sc.forEach(r => { if (r[0].isConnected) { r[0].scrollTop = r[1]; r[0].scrollLeft = r[2]; } });
+    try { window.scrollTo({ top: sn.y, left: sn.x, behavior: 'instant' }); } catch (e) { window.scrollTo(sn.x, sn.y); }
+    const list = document.getElementById('hubDetailList');
+    const row = list && list.querySelector('[data-rec-id="' + String(id).replace(/"/g, '') + '"]');
+    if (row && sn.rowTop != null) { const d = row.getBoundingClientRect().top - sn.rowTop; if (Math.abs(d) > 1) window.scrollBy(0, d); }
+  };
+  apply(); requestAnimationFrame(() => { apply(); setTimeout(apply, 150); });
+}
+// يُستدعى من editRecordImpl فور تأكده من وجود السجل؛ يعيد الأصل (أو null) ويستهلك المعلّق
+function hubEditNavReset() { _hubEditPending = null; }   // أي تنقّل بين الصفحات يُبطل طلب فتح معلّق (يُستدعى من showPage)
+function hubTakeEditOrigin(id) {
+  const o = _hubEditPending;
+  if (!o || String(o.id) !== String(id)) return null;   // طلب آخر (أحدث) يملك الأصل: لا نمسّه
+  _hubEditPending = null;
+  if (o.nav !== pageNavigationRequestSeq || !_reportSessOk(o.sess) || o.hubSeq !== _hubSeq) return null;
+  return o;
+}
+function _hubReturnFromEdit(o) {   // o.nav = ترقيم التنقّل بعد فتح النموذج؛ أي تنقّل لاحق أو خروج أو تغيير نطاق = لا عودة
+  const form = document.getElementById('page-form');
+  if (!(o.nav === pageNavigationRequestSeq && _reportSessOk(o.sess) && o.hubSeq === _hubSeq && hubBrowseType === 'visual' && hubSelectedLine === o.line && hubSelectedDate === o.date && form && form.classList.contains('active'))) return;
+  const full = (records || []).find(x => x.id === o.id);
+  const lr = (_hubV.towers || []).find(x => x.id === o.id);
+  if (full && lr) Object.keys(lr).forEach(k => { if (k in full) lr[k] = full[k]; });   // أثر الحفظ المحلي على الصف الخفيف
+  isGoingBack = true;
+  if (pageStack.length && pageStack[pageStack.length - 1] === 'recordsHub') pageStack.pop();
+  showPage('recordsHub');
+  levelStack = o.levels.slice(); pageStack = o.pages.slice();
+  renderHubDetail();
+  showHubView('hubDetailView');
+  _hubRestoreScroll(o.snap, o.id);
+}
 async function hubEditRecord(id) {
   const snap = _hubActionSnap();
+  const sn = _hubScrollSnap(id), levels = levelStack.slice(), pages = pageStack.slice();
   if (_hubV.mode === 'remote') {
     const row = await hubFetchFull(id, snap);
     if (!snap.ok()) return;                                   // رجوع/تنقّل/خروج أثناء الجلب: لا محرر
     if (!row) { showToast('❌ تعذّر تحميل تفاصيل السجل', 'error'); return; }
   }
-  editRecord(id);
+  const o = { id, line: hubSelectedLine, date: hubSelectedDate, nav: pageNavigationRequestSeq, hubSeq: _hubSeq, sess: _reportSess(), snap: sn, levels, pages, back: null };
+  o.back = () => _hubReturnFromEdit(o);
+  _hubEditPending = o;   // يحلّ محل أي طلب أقدم؛ يبقى حتى يُستهلك عند فتح المحرر أو ينتهي هذا الطلب نفسه (فشل تحميل/إبطال/سجل غير موجود)
+  try { await editRecord(id); } catch (e) { /* المحرر سجّل الخطأ */ }
+  if (_hubEditPending === o) _hubEditPending = null;   // لا يمسح أصل طلب أحدث
 }
 
 const HUB_TYPE_LABELS = { visual: '👁️ الكشف البصري', thermal: '🌡️ الكشف الحراري', treat: '🔧 سجل المعالجات' };
 
 async function openHubBrowse(type) {
   hubBrowseType = type;
-  pushLevel(() => { _hubSeq++; showHubView('hubHomeView'); });
+  pushLevel(_hubLvHome);
   showToast('⏳ جاري التحميل...');
   if (type === 'visual') return hubVisualOpen();   // v335-C6r11 (N03): فهرس خفيف فوراً بدل تحميل كل السجلات
   if (type === 'treat') await loadTreatments().catch(()=>{});
@@ -1165,7 +1221,7 @@ function renderHubLines() {
 function openHubDates(line) {
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') return hubVisualOpenLine(line);
   hubSelectedLine = line;
-  pushLevel(() => { _hubSeq++; showHubView('hubLinesView'); });
+  pushLevel(_hubLvLines);
   renderHubDates();
   showHubView('hubDatesView');
 }
@@ -1194,7 +1250,7 @@ function renderHubDates() {
 function openHubDetail(date) {
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') return hubVisualOpenDate(date);
   hubSelectedDate = date;
-  pushLevel(() => { _hubSeq++; showHubView('hubDatesView'); });
+  pushLevel(_hubLvDates);
   renderHubDetail();
   showHubView('hubDetailView');
 }
@@ -1223,7 +1279,7 @@ function renderHubDetail() {
       <button class="btn btn-primary" style="margin-top:6px" onclick="exportHubGroupNow()">📄 تصدير هذا الكشف (PDF)</button>
     `;
     list.innerHTML = g.items.sort((a,b)=>(a.tower_number||0)-(b.tower_number||0)).map(r => `
-      <div class="dep-card">
+      <div class="dep-card" data-rec-id="${r.id}">
         <div class="dep-card-header">
           <div class="dep-card-title">🗼 برج ${r.tower_number}</div>
           <div class="dep-card-meta">${r.tower_type||''} | 👤 ${r.created_by_name||'—'}</div>

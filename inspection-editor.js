@@ -43,7 +43,7 @@ function closeTowerInspectionModal() {
   }
   document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   // نستعيد موضع التمرير المحفوظ (بعد لحظة قصيرة حتى تكتمل إعادة رسم الشبكة أولاً)
-  setTimeout(() => window.scrollTo(0, towerGridScrollY), 0);
+  if (!(editId && window._editOrigin)) setTimeout(() => window.scrollTo(0, towerGridScrollY), 0);   // v335-C6r12: عند العودة لأصل الأرشيف موضع التمرير يُستعاد من الأصل لا من شبكة الأبراج
   if (editId) { cancelEdit(); return; }
   resetTowerFieldsOnly();
 }
@@ -777,11 +777,13 @@ function setFormData(d, opts) {
 }
 
 function cancelEdit() {
+  const _o = window._editOrigin; window._editOrigin = null;   // v335-C6r12 (N19): أصل التعديل (الأرشيف) إن وُجد
   editId=null; clearForm();
   document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   document.getElementById('formTitle').textContent='➕ إضافة كشف جديد';
   document.getElementById('saveBtn').textContent='💾 حفظ الكشف';
   document.getElementById('cancelEditBtn').style.display='none';
+  if (_o && typeof _o.back === 'function') { try { _o.back(); } catch (e) { console.warn('[tower-app] edit-origin return failed', e); } }
 }
 
 // مهلة قصوى "ناعمة": توقف انتظار الواجهة لهذا الطلب بعد المدة المحددة، بدون ما تلغي الطلب نفسه
@@ -1089,12 +1091,15 @@ function editRecordImpl(id) {
   const r = records.find(x => x.id === id) || (fullRecordsCache||[]).find(x => x.id === id);
   if (!r) return;
   invalidatePrefill(); // v334: التعديل مسار مستقل عن تهيئة الكشف الجديد
+  const _origin = (typeof hubTakeEditOrigin === 'function') ? hubTakeEditOrigin(id) : null;   // v335-C6r12 (N19)
+  window._editOrigin = null;
   editId = id; setFormData(r);
   document.getElementById('formTitle').textContent = '✏️ تعديل السجل';
   document.getElementById('saveBtn').textContent = '💾 حفظ التعديل';
   document.getElementById('cancelEditBtn').style.display = 'inline-block';
   showPage('form');
   const _navSeq = pageNavigationRequestSeq;
+  if (_origin) { _origin.nav = _navSeq; window._editOrigin = _origin; }
   setTimeout(() => {
     if (_navSeq !== pageNavigationRequestSeq || editId !== id) return; // v334: تنقّل/إلغاء خلال المهلة — لا تفتح النافذة
     document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + (r.tower_number||'—');
