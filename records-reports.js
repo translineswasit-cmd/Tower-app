@@ -20,6 +20,7 @@ let _reportCountSeq = 0, _reportTowersSeq = 0, _reportExportSeq = 0;
 const REPORT_AUX_TTL = 120000;
 function reportPurgeDerived() {
   reportInvalidateAux();
+  try { hubVisualReset(); } catch (e) {}   // v335-C6r11 (N03): أرشيف الكشف البصري بطبقات — يُمسح عند الخروج/تبديل الحساب
   _reportLineNames = [];
   _reportBasis = { kind: 'historical', stale: false, liveOff: false };
 }
@@ -1003,7 +1004,8 @@ function getHubGroups(type) {
   if (type === 'visual') {
     // نستخدم "records" (كاش آخر 6 أشهر، محدود الحجم أصلاً) بدل fullRecordsCache — لأن الأخير صار
     // يحتوي "آخر حالة لكل برج" بس (رؤية latest_inspections)، وما يصلح لتصفّح تواريخ متعددة بالتاريخ
-    (records||[]).forEach(r => { if (r.line_name && r.inspection_date) ensure(r.line_name, r.inspection_date).items.push(r); });
+    // v335-C6r11 (N03): هذا المسار صار للوضع المحلي (انقطاع) فقط؛ الوضع المتصل يُحمَّل بطبقات (hubVisualOpen)
+    (records||[]).forEach(r => { if (r.line_name && r.inspection_date && !hubVoided(r.id)) ensure(r.line_name, r.inspection_date).items.push(r); });
   } else if (type === 'treat') {
     (treatmentsCache||[]).forEach(t => { if (t.line_name && t.treatment_date) ensure(t.line_name, t.treatment_date).items.push(t); });
   } else if (type === 'thermal') {
@@ -1013,13 +1015,136 @@ function getHubGroups(type) {
   return map;
 }
 
+// ========================
+// v335-C6r11 (N03): أرشيف الكشف البصري بطبقات: فهرس خطوط خفيف ← تواريخ الخط ← أبراج التاريخ ← تفاصيل كاملة عند الطلب
+// (دلالات الأرشيف التاريخي كما هي: نافذة 6 أشهر، إخفاء الملغى بعلامات opsLoadMarks، لا استبدال بفهرس الحالة الحالية)
+// ========================
+let _hubSeq = 0;   // يزيد مع كل تنقّل/رجوع/خروج: أي ردّ بدأ قبله يُهمَل
+function _hubV0() { return { mode: null, lines: [], line: null, dates: [], date: null, towers: [] }; }
+let _hubV = _hubV0();
+function hubVisualReset() { _hubSeq++; _hubV = _hubV0(); }
+function hubVoided(id) { try { return typeof opsIsVoided === 'function' && opsIsVoided(id); } catch (e) { return false; } }
+function hubCutoffDate() { const d = new Date(); d.setMonth(d.getMonth() - 6); return d.toISOString().split('T')[0]; }
+const HUB_LIGHT_FIELDS = 'id,line_name,tower_number,tower_type,created_by_name,inspection_date,sev_foundation,sev_iron,sev_insulator,sev_wires,sev_ground,sev_fire';
+function _hubGuard() {
+  const seq = ++_hubSeq, s = _reportSess();
+  return { seq, ok: () => seq === _hubSeq && _reportSessOk(s) && hubBrowseType === 'visual' };
+}
+
+// فهرس الخطوط: SQL 52 إن وُجد (وضع حيّ)، وإلا إسقاط خفيف (id,line_name,inspection_date) على app_data_read نفسه
+async function hubFetchLineIndex(cutoff) {
+  if (typeof csLiveEnabled === 'function' && csLiveEnabled()) {
+    const r = await csCall('app_visual_archive_index', { p_from: cutoff });
+    if (r && r.stale) { const e = new Error('session_changed'); e.stale = true; throw e; }
+    if (r && r.ok === true && Array.isArray(r.lines)) return r.lines.map(x => ({ line_name: x.line_name, dates: Number(x.dates) || 0, towers: Number(x.towers) || 0 }));
+    if (r && r.code === 'network') throw new Error('network');
+  }
+  const rows = await fetchAllPages(`inspections?select=id,line_name,inspection_date&inspection_date=gte.${cutoff}&order=created_at.desc`);
+  const per = new Map();
+  rows.forEach(r => {
+    if (!r.line_name || !r.inspection_date || hubVoided(r.id)) return;
+    if (!per.has(r.line_name)) per.set(r.line_name, { line_name: r.line_name, dset: new Set(), towers: 0 });
+    const o = per.get(r.line_name); o.dset.add(r.inspection_date); o.towers++;
+  });
+  return [...per.values()].map(o => ({ line_name: o.line_name, dates: o.dset.size, towers: o.towers }));
+}
+
+async function hubVisualOpen() {
+  const g = _hubGuard();
+  _hubV = _hubV0();
+  const cutoff = hubCutoffDate();
+  let idx = null, err = null;
+  const [, res] = await Promise.all([
+    (typeof opsLoadMarks === 'function' ? opsLoadMarks() : Promise.resolve()).catch(() => {}),
+    hubFetchLineIndex(cutoff).then(v => ({ v }), e => ({ e }))
+  ]);
+  if (!g.ok()) return;
+  if (res && res.v) idx = res.v; else err = res && res.e;
+  if (err && err.stale) return;
+  if (idx) { _hubV.mode = 'remote'; _hubV.lines = idx; }
+  else {
+    // انقطاع/فشل: السجلات المحلية المحفوظة (نفس سلوك loadRecords السابق) — تصفّح محلي كامل
+    _hubV.mode = 'local';
+    if (!(records && records.length)) { try { records = JSON.parse(localStorage.getItem(DB_KEY) || '[]'); } catch (e) { records = []; } }
+    showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
+  }
+  renderHubLines();
+  showHubView('hubLinesView');
+}
+
+async function hubVisualOpenLine(line) {
+  const g = _hubGuard();
+  showToast('⏳ جاري التحميل...');
+  const cutoff = hubCutoffDate();
+  let rows;
+  try {
+    const out = await Promise.all([
+      (typeof opsLoadMarks === 'function' ? opsLoadMarks() : Promise.resolve()).catch(() => {}),
+      fetchAllPages(`inspections?select=id,inspection_date&line_name=eq.${encodeURIComponent(line)}&inspection_date=gte.${cutoff}&order=inspection_date.desc`)
+    ]);
+    rows = out[1];
+  } catch (e) { if (g.ok() && !(e && e.stale)) showToast('❌ تعذّر تحميل تواريخ الخط', 'error'); return; }
+  if (!g.ok()) return;
+  hubSelectedLine = line; _hubV.line = line; _hubV.dates = rows; _hubV.date = null; _hubV.towers = [];
+  pushLevel(() => { _hubSeq++; showHubView('hubLinesView'); });
+  renderHubDates();
+  showHubView('hubDatesView');
+}
+
+async function hubVisualOpenDate(date) {
+  const g = _hubGuard();
+  showToast('⏳ جاري التحميل...');
+  let rows;
+  try {
+    rows = await fetchAllPages(`inspections?select=${HUB_LIGHT_FIELDS}&line_name=eq.${encodeURIComponent(hubSelectedLine)}&inspection_date=eq.${encodeURIComponent(date)}&order=tower_number.asc`);
+  } catch (e) { if (g.ok() && !(e && e.stale)) showToast('❌ تعذّر تحميل أبراج هذا التاريخ', 'error'); return; }
+  if (!g.ok()) return;
+  hubSelectedDate = date; _hubV.date = date; _hubV.towers = rows;
+  pushLevel(() => { _hubSeq++; showHubView('hubDatesView'); });
+  renderHubDetail();
+  showHubView('hubDetailView');
+}
+
+// صف تاريخي كامل (select=*) عند الحاجة فقط (فتح للتعديل / إلغاء برج). لا يُكتفى بتطابق id ولا بصف ملخّص (fullRecordsCache/records الجزئي):
+// نجلب الصف من السيرفر دائماً، نتحقق من اكتماله، ثم نستبدل أي مدخل سابق بنفس id في records كي لا يحجب الصف الكامل صفٌّ جزئي.
+function _hubIsFullRow(r) { return !!r && typeof r === 'object' && 'insulator_cycle' in r && 'insulator_svg_r' in r && 'tower_foundations' in r && 'created_at' in r; }
+// لقطة هوية الإجراء (بدون زيادة المتسلسلة): تنقّل/رجوع/تغيير نطاق/خروج/تبديل صفحة أثناء الانتظار = إلغاء
+function _hubActionSnap() {
+  const seq = _hubSeq, s = _reportSess(), nav = pageNavigationRequestSeq, line = hubSelectedLine, date = hubSelectedDate;
+  const det = document.getElementById('hubDetailView');
+  return { ok: () => seq === _hubSeq && _reportSessOk(s) && nav === pageNavigationRequestSeq && hubBrowseType === 'visual' && hubSelectedLine === line && hubSelectedDate === date && !!det && det.style.display !== 'none' };
+}
+async function hubFetchFull(id, snap) {
+  try {
+    const res = await sbFetch(`inspections?select=*&id=eq.${encodeURIComponent(id)}`);
+    if (!snap.ok()) return null;
+    if (!res.ok) return null;
+    const rows = await res.json();
+    if (!snap.ok()) return null;
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row || String(row.id) !== String(id) || !_hubIsFullRow(row)) return null;
+    const i = (records || []).findIndex(x => x.id === row.id);
+    if (i >= 0) records[i] = row; else records.unshift(row);   // الاستبدال (لا التجاهل): الصف الكامل هو ما يجده editRecordImpl/opsDeleteInspection أولاً
+    return row;
+  } catch (e) { return null; }
+}
+async function hubEditRecord(id) {
+  const snap = _hubActionSnap();
+  if (_hubV.mode === 'remote') {
+    const row = await hubFetchFull(id, snap);
+    if (!snap.ok()) return;                                   // رجوع/تنقّل/خروج أثناء الجلب: لا محرر
+    if (!row) { showToast('❌ تعذّر تحميل تفاصيل السجل', 'error'); return; }
+  }
+  editRecord(id);
+}
+
 const HUB_TYPE_LABELS = { visual: '👁️ الكشف البصري', thermal: '🌡️ الكشف الحراري', treat: '🔧 سجل المعالجات' };
 
 async function openHubBrowse(type) {
   hubBrowseType = type;
-  pushLevel(() => { showHubView('hubHomeView'); });
+  pushLevel(() => { _hubSeq++; showHubView('hubHomeView'); });
   showToast('⏳ جاري التحميل...');
-  if (type === 'visual') await loadRecords().catch(()=>{});
+  if (type === 'visual') return hubVisualOpen();   // v335-C6r11 (N03): فهرس خفيف فوراً بدل تحميل كل السجلات
   if (type === 'treat') await loadTreatments().catch(()=>{});
   if (type === 'thermal') await Promise.all([loadThermalArchive().catch(()=>{}), loadReportThermalForms().catch(()=>{})]);
   renderHubLines();
@@ -1027,9 +1152,9 @@ async function openHubBrowse(type) {
 }
 
 function renderHubLines() {
-  const map = getHubGroups(hubBrowseType);
   const perLine = new Map();
-  [...map.values()].forEach(g => { perLine.set(g.line_name, (perLine.get(g.line_name)||0) + 1); });
+  if (hubBrowseType === 'visual' && _hubV.mode === 'remote') _hubV.lines.forEach(l => { if (l.dates > 0) perLine.set(l.line_name, l.dates); });
+  else [...getHubGroups(hubBrowseType).values()].forEach(g => { perLine.set(g.line_name, (perLine.get(g.line_name)||0) + 1); });
   const lines = [...perLine.keys()].sort((a,b) => a.localeCompare(b, 'ar'));
   const list = document.getElementById('hubLinesList');
   if (!lines.length) { list.innerHTML = `<div class="empty-state">لا توجد بيانات ${HUB_TYPE_LABELS[hubBrowseType]} بعد</div>`; return; }
@@ -1038,15 +1163,23 @@ function renderHubLines() {
 }
 
 function openHubDates(line) {
+  if (hubBrowseType === 'visual' && _hubV.mode === 'remote') return hubVisualOpenLine(line);
   hubSelectedLine = line;
-  pushLevel(() => { showHubView('hubLinesView'); });
+  pushLevel(() => { _hubSeq++; showHubView('hubLinesView'); });
   renderHubDates();
   showHubView('hubDatesView');
 }
 
 function renderHubDates() {
-  const map = getHubGroups(hubBrowseType);
-  const groups = [...map.values()].filter(g => g.line_name === hubSelectedLine).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  let groups;
+  if (hubBrowseType === 'visual' && _hubV.mode === 'remote') {
+    const per = new Map();
+    _hubV.dates.forEach(r => { if (r.inspection_date && !hubVoided(r.id)) per.set(r.inspection_date, (per.get(r.inspection_date)||0) + 1); });
+    groups = [...per.entries()].map(([date, n]) => ({ line_name: hubSelectedLine, date, items: { length: n }, raw: [], forms: [] })).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  } else {
+    const map = getHubGroups(hubBrowseType);
+    groups = [...map.values()].filter(g => g.line_name === hubSelectedLine).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+  }
   const list = document.getElementById('hubDatesList');
   if (!groups.length) { list.innerHTML = '<div class="empty-state">لا توجد تواريخ</div>'; return; }
   list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${hubSelectedLine} — اختر التاريخ</div>` +
@@ -1059,13 +1192,18 @@ function renderHubDates() {
 }
 
 function openHubDetail(date) {
+  if (hubBrowseType === 'visual' && _hubV.mode === 'remote') return hubVisualOpenDate(date);
   hubSelectedDate = date;
-  pushLevel(() => { showHubView('hubDatesView'); });
+  pushLevel(() => { _hubSeq++; showHubView('hubDatesView'); });
   renderHubDetail();
   showHubView('hubDetailView');
 }
 
 function getCurrentHubGroup() {
+  if (hubBrowseType === 'visual' && _hubV.mode === 'remote') {
+    if (_hubV.line !== hubSelectedLine || _hubV.date !== hubSelectedDate) return undefined;
+    return { line_name: hubSelectedLine, date: hubSelectedDate, items: _hubV.towers.filter(r => !hubVoided(r.id)), raw: [], forms: [] };
+  }
   const map = getHubGroups(hubBrowseType);
   return map.get(hubSelectedLine + '||' + hubSelectedDate);
 }
@@ -1091,7 +1229,7 @@ function renderHubDetail() {
           <div class="dep-card-meta">${r.tower_type||''} | 👤 ${r.created_by_name||'—'}</div>
         </div>
         <div style="margin-top:8px;display:flex;gap:8px">
-          <button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer" onclick="editRecord('${r.id}')">✏️ تعديل</button>
+          <button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer" onclick="hubEditRecord('${r.id}')">✏️ تعديل</button>
           ${(currentUser.role==='admin')?`<button class="btn-sm btn-del" onclick="hubDeleteSingleInspection('${r.id}')">🗑️ حذف</button>`:''}
         </div>
       </div>`).join('');
@@ -1155,6 +1293,11 @@ async function hubDeleteSingleInspection(id) {
   if (!(currentUser.role === 'admin')) { showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error'); return; }
   if (!confirm('🗑️ إلغاء كشف هذا البرج؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد الحالة الحالية فقط إن كان هو آخر كاتب لها.')) return;
   try {
+    if (_hubV.mode === 'remote') {   // v335-C6r11: opsDeleteInspection يبحث في records؛ نجلب الصف الكامل عند الحاجة فقط وبحراسة التنقّل/الجلسة
+      const snap = _hubActionSnap(); const row = await hubFetchFull(id, snap);
+      if (!snap.ok()) return;
+      if (!row) { showToast('⚠️ تعذّر إيجاد السجل', 'error'); return; }
+    }
     await opsDeleteInspection(id);   // v335-C4: عملية void مسجَّلة (لا DELETE مباشر)؛ يُخفى السجل بعد تأكيد السيرفر
     renderHubDetail();
   } catch (e) { showToast('❌ تعذّر تسجيل الإلغاء', 'error'); }
