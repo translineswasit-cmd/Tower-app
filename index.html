@@ -496,7 +496,7 @@ tbody tr:hover { background: #F7FAFC; }
       <div class="form-card">
         <h3>🔩 تقاطعات الحديد</h3>
         <div class="field"><label>درجة خطورة مغادرة تقاطعات الحديد</label>
-          <select id="f_sev_iron" onchange="onSeverityChange('iron')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+          <select id="f_sev_iron" onchange="onSeverityUserChange('iron')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
         </div>
         <div class="field" id="block_iron" style="display:none;margin-top:10px"><label>ملاحظات</label>
           <textarea id="f_iron_intersections" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
@@ -505,7 +505,7 @@ tbody tr:hover { background: #F7FAFC; }
       <div class="form-card">
         <h3>🏗️ قواعد البرج</h3>
         <div class="field"><label>درجة خطورة مغادرة القواعد</label>
-          <select id="f_sev_foundation" onchange="onSeverityChange('foundation')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+          <select id="f_sev_foundation" onchange="onSeverityUserChange('foundation')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
         </div>
         <div class="field" id="block_foundation" style="display:none;margin-top:10px"><label>ملاحظات</label>
           <textarea id="f_tower_foundations" rows="2" placeholder="اكتب وصف المغادرة هنا"></textarea>
@@ -515,7 +515,7 @@ tbody tr:hover { background: #F7FAFC; }
     <h3>⚡ الأسلاك + المباعدات + موانع الاهتزاز</h3>
     <p class="insulator-hint" id="wiresSpanHint">اختر البرج أولاً لتحديد الفقرة</p>
     <div class="field"><label>درجة خطورة مغادرة الأسلاك + المباعدات + موانع الاهتزاز</label>
-      <select id="f_sev_wires" onchange="onSeverityChange('wires')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+      <select id="f_sev_wires" onchange="onSeverityUserChange('wires')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
     </div>
     <div class="field" id="block_wires_circuit" style="display:none;margin-top:10px">
       <label>المغادرة بأي دائرة؟ (هذا الخط مزدوج)</label>
@@ -544,7 +544,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="form-card">
     <h3>🌍 الأرضي</h3>
     <div class="field"><label>درجة خطورة مغادرة الأرضي</label>
-      <select id="f_sev_ground" onchange="onSeverityChange('ground')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+      <select id="f_sev_ground" onchange="onSeverityUserChange('ground')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
     </div>
     <div class="grid-2" id="block_ground" style="display:none;margin-top:10px">
       <div class="field">
@@ -560,7 +560,7 @@ tbody tr:hover { background: #F7FAFC; }
   <div class="form-card">
     <h3>🔥 مسببات الحرائق</h3>
     <div class="field" style="margin-top:10px"><label>درجة خطورة مغادرة مسببات الحرائق</label>
-      <select id="f_sev_fire" onchange="onSeverityChange('fire')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
+      <select id="f_sev_fire" onchange="onSeverityUserChange('fire')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
     </div>
     <div class="field" id="block_fire" style="display:none;margin-top:10px">
       <label>ملاحظات مسببات الحرائق</label>

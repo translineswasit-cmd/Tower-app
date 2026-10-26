@@ -59,6 +59,7 @@ function resetTowerFieldsOnly() {
   FIELDS.forEach(f => { const el = document.getElementById('f_'+f); if (el) el.value=''; });
   Object.keys(SEVERITY_SECTION_MAP).forEach(onSeverityChange);
   insulatorState = {R:[],S:[],T:[]};
+  _hPend = {}; _hSnap = {}; _hRoadClr = null; try { csHRefresh(); } catch (e) { /* UI only */ }   // v335-C6r15 (N21)
 }
 
 function onTowerChangeOriginal() {
@@ -252,30 +253,310 @@ function buildChainToggleBtn(phase, chainIdx, stateObj, cycleObj, rows, onRebuil
   return btn;
 }
 
-// v335-C6r9e: زر واحد واضح لكل دائرة غير معروفة الحالة: «تسجيل عوازل هذه الدائرة سليمة» (بدل خانات تأكيد الأقسام). لا يظهر لدائرة حالتها معروفة موروثة.
-function csInsHealthyBox(c) {
-  const box = document.createElement('div'); box.setAttribute('data-ins-healthy-box', String(c)); box.style.cssText = 'text-align:center;margin:2px 0 8px';
-  const b = document.createElement('button'); b.type = 'button'; b.setAttribute('data-ins-healthy', String(c));
-  b.addEventListener('click', () => { _insHealthy[c] = !_insHealthy[c]; _prefillUserEdited = true; csInsHealthyRefresh(); });
-  box.appendChild(b); return box;
-}
 function csInsCircuitUnknown(c) {
   const sid = c === 1 ? 'ins1' : 'ins2';
   const b = _opsBaseline;
   if (!b || b.line !== _v('f_line_name') || b.tower !== _v('f_tower_number') || b.mode === 'blank') return true;
   return !b.inherited[sid];
 }
-function csInsHealthyRefresh() {
-  document.querySelectorAll('[data-ins-healthy-box]').forEach(box => {
-    const c = parseInt(box.getAttribute('data-ins-healthy-box'), 10); const btn = box.querySelector('button');
-    const show = csInsCircuitUnknown(c); box.style.display = show ? '' : 'none';
-    const on = !!_insHealthy[c];
-    btn.textContent = on ? '✅ عوازل هذه الدائرة مسجّلة سليمة — اضغط للتراجع' : '☑ تسجيل عوازل هذه الدائرة سليمة (لم تُسجَّل بعد)';
-    btn.style.cssText = 'font-family:inherit;font-size:0.8rem;padding:6px 12px;border-radius:8px;cursor:pointer;border:1.5px solid ' + (on ? '#276749' : '#A0AEC0') + ';background:' + (on ? '#C6F6D5' : '#fff') + ';color:' + (on ? '#22543D' : '#4A5568');
-  });
+// =====================================================================================================================================
+// v335-C6r15 (N21): خانة «سليم» لكل قسم قابل للتطبيق + خانة رئيسية أعلى النموذج.
+//  - التحديد صريح: قسم بلا ضرر يصير «سليماً» فوراً؛ قسم فيه ضرر/مغادرة (موروثة أو مُدخَلة الآن) يُظهر تحذيراً بجانبه ولا يُستبدل ضرره إلا بتأكيد صريح لذلك القسم وحده.
+//  - قبل التأكيد: تبقى النتائج كما هي ولا يُحفظ القسم سليماً. الرفض يُبقيها. حالة الخانة مشتقّة دائماً من قيم النموذج (لا تُعرض علامة سليم بوجود ضرر أحمر).
+//  - الدائرتان مستقلتان (عوازل/أسلاك): تحديد إحداهما لا يمسّ الأخرى. الأقسام غير المنطبقة (الدائرة الثانية بخط مفرد، نظافة العوازل، وجود الطريق) مستثناة.
+//  - لا يمسّ المواد ولا الدورات التاريخية (تُعدَّل أعلام الضرر فقط) ولا يُنشئ عمليات جديدة: الحفظ عبر opsBuildObservation كما هو (الأقسام المتغيّرة صراحةً فقط).
+// =====================================================================================================================================
+const CS_H = {
+  ins1: { kind: 'ins', c: 1, sev: 'f_sev_insulator', texts: [], label1: 'عوازل الدائرة الأولى سليمة', labelS: 'العوازل سليمة', name: 'عوازل الدائرة الأولى', nameS: 'العوازل' },
+  ins2: { kind: 'ins', c: 2, double: true, sev: 'f_sev_insulator', texts: [], label1: 'عوازل الدائرة الثانية سليمة', name: 'عوازل الدائرة الثانية' },
+  iron: { kind: 'sev', sec: 'iron', sev: 'f_sev_iron', texts: ['f_iron_intersections'], label1: 'تقاطعات الحديد سليمة', name: 'تقاطعات الحديد' },
+  foundation: { kind: 'sev', sec: 'foundation', sev: 'f_sev_foundation', texts: ['f_tower_foundations'], label1: 'قواعد البرج سليمة', name: 'قواعد البرج' },
+  wires1: { kind: 'wires', c: 1, sec: 'wires', sev: 'f_sev_wires', texts: ['f_wires_r1', 'f_wires_s1', 'f_wires_t1'], label1: 'أسلاك الدائرة الأولى سليمة', labelS: 'الأسلاك سليمة', name: 'أسلاك الدائرة الأولى', nameS: 'الأسلاك' },
+  wires2: { kind: 'wires', c: 2, double: true, sec: 'wires', sev: 'f_sev_wires', texts: ['f_wires_r1_c2', 'f_wires_s1_c2', 'f_wires_t1_c2'], label1: 'أسلاك الدائرة الثانية سليمة', name: 'أسلاك الدائرة الثانية' },
+  ground: { kind: 'sev', sec: 'ground', sev: 'f_sev_ground', texts: ['f_ground_1', 'f_ground_2'], label1: 'الأرضي سليم', name: 'الأرضي' },
+  fire: { kind: 'sev', sec: 'fire', sev: 'f_sev_fire', texts: ['f_fire_causes_notes'], label1: 'مسببات الحرائق سليمة', name: 'مسببات الحرائق' },
+  // v335-C6r15 (N21 تصحيح): نظافة العوازل ووجود الطريق ضمن الخانات والرئيسية؛ «السليم» = القيمة القائمة (نظيف / متاح)
+  washing: { kind: 'wash', sev: 'f_insulator_washing', texts: [], okVal: 'clean', label1: 'نظافة العوازل: نظيفة', name: 'نظافة العوازل' },
+  road: { kind: 'road', sev: 'f_road_access', texts: ['f_road_access_notes'], okVal: 'متاح', label1: 'وجود الطريق: متاح', name: 'وجود الطريق' }
+};
+const CS_H_ORDER = ['ins1', 'ins2', 'iron', 'foundation', 'wires1', 'wires2', 'ground', 'fire', 'washing', 'road'];
+const CS_H_VAL = { needs_washing: 'يحتاج غسل', very_dirty: 'ملوث جداً' };
+const CS_H_SEV = { simple: 'مغادرة بسيطة', moderate: 'مغادرة متوسطة', below_critical: 'مغادرة دون الحرجة', critical: 'مغادرة حرجة' };
+let _hPend = {};          // id -> { base, fp, findings }  تأكيد معلّق (مربوط بسياق البرج ولقطة قيم القسم؛ أي تغيير يُسقطه)
+let _hSnap = {};          // id -> لقطة ما قبل التطبيق للتراجع (صالحة فقط بنفس السياق وبلا تعديل لاحق)
+let _hPrev = {};          // selectId -> آخر قيمة درجة معروفة (لإرجاع القائمة عند طلب «سليم» يستلزم تأكيداً)
+let _hRoadClr = null;     // مسح مؤكَّد لملاحظات الطريق (يُرسل clear_road_notes مع الرصد فقط)
+let _hBuildArgs = null;   // آخر وسائط buildInsulatorUI لإعادة رسم العوازل بعد تغيير الأعلام
+
+function csHDouble() { try { return isDoubleCircuitLine(_v('f_line_name')); } catch (e) { return false; } }
+function csHEl(id) { return document.getElementById(id); }
+function csHApplicable(id) {
+  const m = CS_H[id]; if (!m) return false;
+  if (m.double && !csHDouble()) return false;
+  if (m.kind === 'ins' || m.kind === 'wash') { const s = csHEl('insulatorSection'); return !!s && s.style.display !== 'none' && !!_v('f_tower_number'); }
+  return !!(_v('f_line_name') && _v('f_tower_number'));
 }
+function csHTextAdv(v) { v = String(v || '').trim(); return v !== '' && v !== 'سليم'; }
+function csHRed(c) {
+  const st = c === 1 ? insulatorState : insulatorState2; let total = 0; const parts = [];
+  OPS_PH.forEach(ph => { const n = (st && Array.isArray(st[ph])) ? st[ph].filter(x => x === true).length : 0; if (n) { total += n; parts.push(ph + '×' + n); } });
+  return { total, txt: parts.join('، ') };
+}
+function csHShort(t) { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > 40 ? t.slice(0, 40) + '…' : t; }
+// ما يحتويه القسم من ضرر/مغادرة (نصوص أو علامات حمراء) — يُفقد عند الاستبدال بـ«سليم»
+function csHTextLoss(id) {
+  const m = CS_H[id];
+  if (m.kind === 'ins') return csHRed(m.c).total > 0;
+  if (m.kind === 'wash') return false;
+  return m.texts.some(i => csHTextAdv(_v(i)));
+}
+// كل النتائج السلبية (تشمل درجة الخطورة غير السليمة) للتحذير
+function csHFindings(id) {
+  const m = CS_H[id], out = []; const sv = _v(m.sev); const sevAdv = !!sv && sv !== 'ok'; const sevTxt = CS_H_SEV[sv] || sv;
+  if (m.kind === 'ins') {
+    const red = csHRed(m.c); if (red.total) out.push('علامات ضرر حمراء: ' + red.txt);
+    if (m.c === 1 && sevAdv && (red.total || !(csHDouble() && csHRed(2).total))) out.push('درجة الخطورة: ' + sevTxt);
+    return out;
+  }
+  if (m.kind === 'wash') { if (sv && sv !== m.okVal) out.push('نظافة العوازل: ' + (CS_H_VAL[sv] || sv)); return out; }
+  if (m.kind === 'road') {
+    if (sv && sv !== m.okVal) { out.push('وجود الطريق: ' + sv); if (_v('f_road_access_notes')) out.push('ملاحظات: ' + csHShort(_v('f_road_access_notes'))); }
+    else if (_v('f_road_access_notes')) out.push('ملاحظات الطريق: ' + csHShort(_v('f_road_access_notes')));   // ملاحظات قائمة لا تُخفى لتبدو الخانة سليمة
+    return out;
+  }
+  if (m.kind === 'sev') {
+    if (sevAdv) out.push('درجة الخطورة: ' + sevTxt);
+    m.texts.forEach(i => { if (csHTextAdv(_v(i))) out.push(csHShort(_v(i))); });
+    return out;
+  }
+  const own = m.texts.filter(i => csHTextAdv(_v(i)));
+  const anyAdv = own.length || (csHDouble() && CS_H[m.c === 1 ? 'wires2' : 'wires1'].texts.some(i => csHTextAdv(_v(i))));
+  if (own.length) { if (sevAdv) out.push('درجة الخطورة: ' + sevTxt); own.forEach(i => out.push(csHShort(_v(i)))); }
+  else if (m.c === 1 && sevAdv && !anyAdv) out.push('درجة الخطورة: ' + sevTxt);
+  return out;
+}
+function csHIsHealthy(id) {
+  const m = CS_H[id]; if (csHFindings(id).length) return false;
+  if (m.kind === 'ins') return !!_insHealthy[m.c] || !csInsCircuitUnknown(m.c) || !!(typeof editId !== 'undefined' && editId);   // في تعديل سجل محفوظ: حالة السجل صريحة
+  if (m.kind === 'sev') return _v(m.sev) === 'ok';
+  if (m.kind === 'wash') return _v(m.sev) === m.okVal;
+  if (m.kind === 'road') return _v(m.sev) === m.okVal && !_v('f_road_access_notes');
+  let known = false; try { known = opsSectionHasData(id, _v('f_line_name'), _v('f_tower_number')); } catch (e) { known = false; }
+  return csHCircuitEvidence(id) || (_v(m.sev) === 'ok' && known);
+}
+// دليل سلامة دائرة أسلاك: نصوصها كلها «سليم»، أو حالتها المحفوظة معروفة وسليمة (النصوص تُفرَّغ من النموذج حين تُختار الدائرة الأخرى للمغادرة)
+function csHCircuitEvidence(id) {
+  const m = CS_H[id]; if (m.texts.every(i => _v(i) === 'سليم')) return true;
+  if (m.texts.some(i => _v(i) !== '')) return false;
+  try {
+    if (!_opsBaseline || _opsBaseline.mode === 'blank' || _opsBaseline.line !== _v('f_line_name') || _opsBaseline.tower !== _v('f_tower_number')) return false;
+    const env = opsEnvKnown(_v('f_line_name'), _v('f_tower_number')); const sfx = m.c === 2 ? '_c2' : '';
+    return ['wire_r1', 'wire_s1', 'wire_t1'].every(k => { const c = opsCompOf(env, k + sfx); return !!c && c.ds === 'known' && c.cond === 'ok'; });
+  } catch (e) { return false; }
+}
+function csHFp(id) {
+  const m = CS_H[id]; let v = null; try { v = opsSectionVals()[id]; } catch (e) { v = null; }
+  return JSON.stringify([_v('f_line_name'), _v('f_tower_number'), v, _v(m.sev), id === 'wires1' || id === 'wires2' ? _v('f_wires_circuit') : null]);
+}
+function csHEls(id) {
+  const m = CS_H[id]; const l = [m.sev].concat(m.texts); if (m.kind === 'wires') l.push('f_wires_circuit'); return l;
+}
+function csHRebuildIns() {
+  if (!_hBuildArgs) return;
+  try { buildInsulatorUI(_hBuildArgs.voltage, _hBuildArgs.towerType, insulatorState, insulatorCycleState, insulatorState2, insulatorCycleState2, chainTypes, chainTypes2); } catch (e) { console.warn('[tower-app] N21 insulator rebuild failed', e); }
+}
+function csHSyncBlocks(id) {
+  const m = CS_H[id]; if (m.kind === 'ins' || m.kind === 'wash' || m.kind === 'road') return;
+  const sev = _v(m.sev), adv = !!sev && sev !== 'ok';
+  if (m.kind === 'wires' && csHDouble()) {
+    const circ = _v('f_wires_circuit'); const cb = csHEl('block_wires_circuit'), b1 = csHEl('block_wires'), b2 = csHEl('block_wires_c2');
+    if (cb) cb.style.display = adv ? '' : 'none';
+    if (b1) b1.style.display = adv && (circ === '1' || circ === 'both') ? '' : 'none';
+    if (b2) b2.style.display = adv && (circ === '2' || circ === 'both') ? '' : 'none';
+    return;
+  }
+  const blk = csHEl(m.kind === 'wires' ? 'block_wires' : SEVERITY_SECTION_MAP[m.sec].blockId); if (blk) blk.style.display = adv ? '' : 'none';
+}
+function csHSnapTake(id) {
+  const m = CS_H[id]; const snap = { base: _opsBaseline, vals: {}, ins: null, fp: null };
+  csHEls(id).forEach(i => { const el = csHEl(i); if (el) snap.vals[i] = el.value; });
+  if (m.kind === 'ins') { const st = m.c === 1 ? insulatorState : insulatorState2; snap.ins = { state: JSON.parse(JSON.stringify(st || {})), healthy: !!_insHealthy[m.c] }; }
+  _hSnap[id] = snap;
+}
+function csHSnapValid(id) { const s = _hSnap[id]; return !!s && s.base === _opsBaseline && s.fp === csHFp(id); }
+// تطبيق «سليم» على قسم واحد (بعد التحقق من عدم وجود ضرر أو بعد التأكيد الصريح)
+function csHApply(id) {
+  const m = CS_H[id]; csHSnapTake(id); _prefillUserEdited = true;
+  if (m.kind === 'ins') {
+    const st = m.c === 1 ? insulatorState : insulatorState2;
+    OPS_PH.forEach(ph => { if (st && Array.isArray(st[ph])) st[ph] = st[ph].map(() => false); });
+    _insHealthy[m.c] = true;
+    const other = m.c === 1 ? 2 : 1; const redOther = csHDouble() && csHRed(other).total > 0;
+    const sel = csHEl('f_sev_insulator'); if (sel && !redOther && sel.value && sel.value !== 'ok') sel.value = 'ok';   // الشدة لا تُرفع إلى «سليم» وفي الدائرة الأخرى ضرر قائم
+    csHRebuildIns();
+  } else if (m.kind === 'wash' || m.kind === 'road') {
+    if (m.kind === 'road' && _v('f_road_access_notes')) _hRoadClr = { base: _opsBaseline, line: _v('f_line_name'), tower: _v('f_tower_number') };   // مسح صريح مؤكَّد لملاحظات الطريق => يُرسَل للخادم
+    csHEl(m.sev).value = m.okVal; m.texts.forEach(i => { csHEl(i).value = ''; });   // الطريق: تُفرَّغ الملاحظات المرتبطة بالضرر بعد التأكيد
+  } else if (m.kind === 'sev') {
+    csHEl(m.sev).value = 'ok'; onSeverityChange(m.sec);
+    if (id === 'ground') { const g2 = csHEl('groundBlock2'); if (g2 && g2.style.display === 'none' && csHEl('f_ground_2')) csHEl('f_ground_2').value = ''; }   // لا يُختلق أرضي ثانٍ لبرج بأرضي واحد
+  } else if (!csHDouble()) {
+    csHEl(m.sev).value = 'ok'; onSeverityChange('wires');
+  } else {
+    m.texts.forEach(i => { csHEl(i).value = 'سليم'; });
+    const o = CS_H[m.c === 1 ? 'wires2' : 'wires1'];
+    if (!o.texts.some(i => csHTextAdv(_v(i)))) {
+      csHEl('f_sev_wires').value = 'ok';
+      const oid = m.c === 1 ? 'wires2' : 'wires1';
+      if (csHCircuitEvidence(oid)) { o.texts.forEach(i => { if (_v(i) === '') csHEl(i).value = 'سليم'; }); csHEl('f_wires_circuit').value = ''; }   // الدائرتان سليمتان صراحةً: لا دائرة مغادرة (سلامة الأخرى المحفوظة تُعرض صراحةً)
+    }
+    csHSyncBlocks(id);
+  }
+  _hSnap[id].fp = csHFp(id);
+}
+function csHRestore(id) {
+  const m = CS_H[id]; const s = _hSnap[id]; if (!s) return false;
+  Object.keys(s.vals).forEach(i => { const el = csHEl(i); if (el) el.value = s.vals[i]; });
+  if (m.kind === 'ins' && s.ins) {
+    const st = m.c === 1 ? insulatorState : insulatorState2;
+    OPS_PH.forEach(ph => { if (st && s.ins.state && Array.isArray(s.ins.state[ph])) st[ph] = s.ins.state[ph].slice(); });
+    _insHealthy[m.c] = s.ins.healthy; csHRebuildIns();
+  } else csHSyncBlocks(id);
+  if (id === 'road') _hRoadClr = null;
+  delete _hSnap[id]; _prefillUserEdited = true; return true;
+}
+// طلب «سليم» لقسم: بلا نتائج => يُطبَّق فوراً؛ مع نتائج => تأكيد معلّق بجانب القسم (النتائج محفوظة وغير مُعدَّلة)
+function csHRequest(id) {
+  if (!csHApplicable(id)) return;
+  delete _hPend[id];
+  if (csHIsHealthy(id)) return;
+  const f = csHFindings(id);
+  if (f.length) { _hPend[id] = { base: _opsBaseline, fp: csHFp(id), findings: f }; _prefillUserEdited = true; return; }
+  csHApply(id);
+}
+function csHConfirm(id) {
+  const p = _hPend[id]; delete _hPend[id];
+  if (p && p.base === _opsBaseline && p.fp === csHFp(id) && csHApplicable(id)) csHApply(id);
+  csHRefresh();
+}
+function csHDecline(id) { delete _hPend[id]; csHRefresh(); }
+function csHUncheck(id) {
+  delete _hPend[id];
+  if (csHSnapValid(id)) csHRestore(id);
+  else if (CS_H[id].kind === 'ins' && _insHealthy[CS_H[id].c]) { _insHealthy[CS_H[id].c] = false; _prefillUserEdited = true; }
+  else if (csHIsHealthy(id)) { try { showToast('ℹ️ هذا القسم سليم بحسب القيم الحالية؛ للتغيير عدّل القيمة نفسها (الدرجة/النص/العوازل)'); } catch (e) { /* UI only */ } }
+}
+function csHOnToggle(id, on) { if (on) csHRequest(id); else csHUncheck(id); csHRefresh(); }
+function csHMaster(on) {
+  const ids = CS_H_ORDER.filter(csHApplicable);
+  if (on) ids.forEach(id => { if (!csHIsHealthy(id)) csHRequest(id); });
+  else ids.slice().reverse().forEach(id => { delete _hPend[id]; if (csHSnapValid(id) && csHIsHealthy(id)) csHRestore(id); else if (CS_H[id].kind === 'ins' && _insHealthy[CS_H[id].c] && csHIsHealthy(id)) _insHealthy[CS_H[id].c] = false; });
+  csHRefresh();
+  if (on) { const w = document.querySelector('[data-h-warn]:not([style*="display: none"])'); if (w && typeof w.scrollIntoView === 'function') { try { w.scrollIntoView({ block: 'center' }); } catch (e) { /* UI only */ } } }
+}
+// طلب «سليم» من قائمة الدرجة: يُرجَع المحدَّد إلى قيمته السابقة إن كان في الأقسام المعنيّة ضرر مُدخَل (حتى يُؤكَّد)
+function csHSevOk(selId, ids) {
+  const sel = csHEl(selId); if (!sel) return;
+  ids = ids.filter(csHApplicable);
+  const loss = ids.filter(csHTextLoss);
+  if (loss.length) sel.value = (_hPrev[selId] === undefined) ? '' : _hPrev[selId];
+  ids.forEach(id => { delete _hPend[id]; if (loss.indexOf(id) >= 0) csHRequest(id); else csHApply(id); });
+  if (!loss.length) sel.value = 'ok';
+  _prefillUserEdited = true; csHRefresh();
+}
+// تغيير المستخدم لقائمة الدرجة (يستبدل onchange القديم): «سليم» يمرّ عبر بوابة التأكيد؛ غيره كما كان
+function onSeverityUserChange(section) {
+  const sel = csHEl('f_sev_' + section); if (!sel) return;
+  if (sel.value !== 'ok') { _hPrev[sel.id] = sel.value; onSeverityChange(section); csHRefresh(); return; }
+  const ids = section === 'wires' ? (csHDouble() ? ['wires1', 'wires2'] : ['wires1']) : [section];
+  csHSevOk(sel.id, ids);
+}
+function csHBuild(id) {
+  const m = CS_H[id]; const box = document.createElement('div'); box.setAttribute('data-h-box', id);
+  box.style.cssText = 'margin:2px 0 8px;text-align:right';
+  if (m.kind === 'ins') { box.setAttribute('data-ins-healthy-box', String(m.c)); box.style.textAlign = 'center'; }
+  const lab = document.createElement('label'); lab.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:0.82rem;padding:5px 10px;border-radius:8px;border:1.5px solid #A0AEC0;background:#fff;cursor:pointer';
+  const cb = document.createElement('input'); cb.type = 'checkbox'; cb.setAttribute('data-h-cb', id); if (m.kind === 'ins') cb.setAttribute('data-ins-healthy', String(m.c));
+  cb.addEventListener('change', () => csHOnToggle(id, cb.checked));
+  const sp = document.createElement('span'); sp.setAttribute('data-h-label', id);
+  lab.appendChild(cb); lab.appendChild(sp); box.appendChild(lab);
+  const w = document.createElement('div'); w.setAttribute('data-h-warn', id); w.style.cssText = 'display:none;margin:6px 0;padding:8px 10px;border:1.5px solid #C05621;background:#FFFAF0;border-radius:8px;font-size:0.8rem;color:#7B341E;text-align:right;line-height:1.7';
+  const wt = document.createElement('div'); wt.setAttribute('data-h-warn-text', id); w.appendChild(wt);
+  const bc = document.createElement('button'); bc.type = 'button'; bc.setAttribute('data-h-confirm', id); bc.textContent = '✔ تأكيد الاستبدال بـ«سليم»';
+  bc.style.cssText = 'margin:4px 0 0 6px;font-family:inherit;font-size:0.78rem;padding:4px 10px;border-radius:8px;border:1.5px solid #276749;background:#C6F6D5;color:#22543D;cursor:pointer';
+  bc.addEventListener('click', () => csHConfirm(id));
+  const bd = document.createElement('button'); bd.type = 'button'; bd.setAttribute('data-h-decline', id); bd.textContent = '✖ إبقاء الضرر';
+  bd.style.cssText = 'margin:4px 0 0 6px;font-family:inherit;font-size:0.78rem;padding:4px 10px;border-radius:8px;border:1.5px solid #A0AEC0;background:#fff;color:#4A5568;cursor:pointer';
+  bd.addEventListener('click', () => csHDecline(id));
+  w.appendChild(bc); w.appendChild(bd); box.appendChild(w);
+  return box;
+}
+function csInsHealthyBox(c) { return csHBuild(c === 2 ? 'ins2' : 'ins1'); }
+// يُنشئ (مرة واحدة) الخانات الثابتة: الأقسام النصية + الخانة الرئيسية. العوازل تُنشأ مع كل إعادة رسم لها.
+function csHEnsure() {
+  const put = (id, anchorEl, before) => {
+    if (document.querySelector('[data-h-box="' + id + '"]') || !anchorEl) return;
+    const box = csHBuild(id);
+    if (before) anchorEl.parentNode.insertBefore(box, anchorEl); else anchorEl.parentNode.insertBefore(box, anchorEl.nextSibling);
+  };
+  ['iron', 'foundation', 'ground', 'fire', 'washing', 'road'].forEach(id => { const s = csHEl(CS_H[id].sev); put(id, s && s.closest('.field'), true); });
+  put('wires1', csHEl('wiresSpanHint'), false);
+  put('wires2', document.querySelector('[data-h-box="wires1"]'), false);
+  if (!document.querySelector('[data-h-master]')) {
+    const anchor = csHEl('insulatorSection'); if (!anchor) return;
+    const mb = document.createElement('div'); mb.setAttribute('data-h-master', ''); mb.style.cssText = 'margin:8px 0 10px;padding:8px 10px;border:1.5px solid #276749;border-radius:10px;background:#F0FFF4;text-align:right';
+    const lab = document.createElement('label'); lab.style.cssText = 'display:inline-flex;align-items:center;gap:6px;font-size:0.86rem;font-weight:700;color:#22543D;cursor:pointer';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.setAttribute('data-h-master-cb', '');
+    cb.addEventListener('change', () => csHMaster(cb.checked));
+    const sp = document.createElement('span'); sp.textContent = 'تسجيل كل أقسام هذا البرج سليمة';
+    lab.appendChild(cb); lab.appendChild(sp); mb.appendChild(lab);
+    const note = document.createElement('div'); note.style.cssText = 'font-size:0.72rem;color:#4A5568;margin-top:3px'; note.setAttribute('data-h-master-note', '');
+    note.textContent = 'يشمل كل أقسام الكشف: العوازل (كل دائرة)، نظافة العوازل (نظيفة)، تقاطعات الحديد، القواعد، الأسلاك (كل دائرة)، الأرضي، مسببات الحرائق، وجود الطريق (متاح). القسم الذي فيه ضرر مسجّل يحتاج تأكيده بنفسه.';
+    mb.appendChild(note);
+    const cnt = document.createElement('div'); cnt.setAttribute('data-h-master-pending', ''); cnt.style.cssText = 'font-size:0.78rem;color:#7B341E;margin-top:3px;display:none'; mb.appendChild(cnt);
+    anchor.parentNode.insertBefore(mb, anchor);
+  }
+}
+function csHRefresh() {
+  try { csHEnsure(); } catch (e) { console.warn('[tower-app] N21 ensure failed', e); }
+  const dbl = csHDouble(); let nApp = 0, nOk = 0, nPend = 0;
+  CS_H_ORDER.forEach(id => {
+    const m = CS_H[id];
+    document.querySelectorAll('[data-h-box="' + id + '"]').forEach(box => {
+      const app = csHApplicable(id); box.style.display = app ? '' : 'none';
+      const cb = box.querySelector('[data-h-cb]'), sp = box.querySelector('[data-h-label]'), w = box.querySelector('[data-h-warn]'), wt = box.querySelector('[data-h-warn-text]');
+      if (!app) { delete _hPend[id]; if (w) w.style.display = 'none'; return; }
+      const f = csHFindings(id);
+      if (m.kind === 'ins' && f.length && _insHealthy[m.c] && csHRed(m.c).total) _insHealthy[m.c] = false;   // ظهر ضرر بعد التسجيل: لا علم «سليم» قائم
+      let p = _hPend[id];
+      if (p && (p.base !== _opsBaseline || p.fp !== csHFp(id) || !f.length)) { delete _hPend[id]; p = null; }
+      const healthy = csHIsHealthy(id);
+      cb.checked = healthy;
+      sp.textContent = '🟢 ' + (dbl ? m.label1 : (m.labelS || m.label1)) + (dbl && (m.kind === 'ins' || m.kind === 'wires') ? ' — لا يمسّ الدائرة الأخرى' : '');
+      cb.parentNode.style.borderColor = healthy ? '#276749' : (p ? '#C05621' : '#A0AEC0'); cb.parentNode.style.background = healthy ? '#C6F6D5' : '#fff';
+      if (p) {
+        w.style.display = '';
+        wt.textContent = '⚠️ ' + (dbl ? m.name : (m.nameS || m.name)) + ' فيه ضرر/مغادرة مسجّلة: ' + p.findings.join('؛ ') + ' — الاستبدال بـ«سليم» يحذف هذه النتائج من هذا الكشف عند الحفظ' + (m.kind === 'ins' ? ' (مواد السلاسل ودورات المعالجة السابقة لا تتأثر)' : '') + '. لن يُحفظ القسم سليماً قبل تأكيدك.';
+      } else { w.style.display = 'none'; wt.textContent = ''; }
+    });
+    if (csHApplicable(id)) { nApp++; if (csHIsHealthy(id)) nOk++; if (_hPend[id]) nPend++; }
+  });
+  // اتساق: لا بقايا لأقسام غير موجودة
+  Object.keys(_hPend).forEach(id => { if (!csHApplicable(id)) delete _hPend[id]; });
+  const mcb = document.querySelector('[data-h-master-cb]'), mbox = document.querySelector('[data-h-master]');
+  if (mcb && mbox) {
+    mbox.style.display = nApp ? '' : 'none';
+    mcb.checked = nApp > 0 && nOk === nApp; mcb.indeterminate = nOk > 0 && nOk < nApp;
+    const pc = mbox.querySelector('[data-h-master-pending]');
+    if (pc) { pc.style.display = nPend ? '' : 'none'; pc.textContent = nPend ? ('⚠️ ' + nPend + ' من الأقسام فيها ضرر مسجّل وتنتظر تأكيدك بجانب كل قسم — لم تُسجَّل سليمة بعد.') : ''; }
+  }
+  const anyPend = Object.keys(_hPend).length > 0;
+  [['f_sev_insulator', 'ok'], ['f_sev_iron', 'ok'], ['f_sev_foundation', 'ok'], ['f_sev_wires', 'ok'], ['f_sev_ground', 'ok'], ['f_sev_fire', 'ok'], ['f_insulator_washing', 'clean'], ['f_road_access', 'متاح']].forEach(([i, okv]) => { const el = csHEl(i); if (el && (el.value !== okv || !anyPend)) _hPrev[i] = el.value; });
+}
+function csInsHealthyRefresh() { csHRefresh(); }
 
 function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState2, savedCycle2, savedChainTypes, savedChainTypes2) {
+  _hBuildArgs = { voltage, towerType };   // v335-C6r15 (N21): لإعادة رسم العوازل بعد تطبيق «سليم»
   const sec = document.getElementById('insulatorSection');
   const wrap = document.getElementById('phasesWrap');
   sec.style.display = 'block';
@@ -774,6 +1055,7 @@ function setFormData(d, opts) {
   const savedChainTypes2 = d.insulator_chain_types_2 ? safeParseJSON(d.insulator_chain_types_2) : null;
   buildInsulatorUI(currentVoltage, d.tower_type, saved, savedCycle || null, saved2, savedCycle2, savedChainTypes, savedChainTypes2);
   updateWiresGroundUI();
+  _hPend = {}; _hSnap = {}; _hRoadClr = null; try { csHRefresh(); } catch (e) { /* UI only */ }   // v335-C6r15 (N21): بيانات جديدة تُلغي أي تأكيد/تراجع معلّق
 }
 
 function cancelEdit() {
@@ -924,7 +1206,9 @@ function opsBuildObservation(d) {
     return null;
   };
   const states = {}; OPS_SECTIONS.forEach(s => { states[s.id] = opsSectionAvailable(s) ? opsSectionState(s) : 'skip'; });
-  const isObs = id => states[id] === 'changed';
+  // v335-C6r15 (N21): أسلاك دائرة غير معروفة بلا أي نص وبدرجة «سليم» عامة لم تُسجَّل صراحةً (لا خانتها ولا نصّها) = لا تُختلق لها حالة سليمة؛ تُرسَل الدائرة المسجّلة صراحةً فقط
+  const blankUnk = id => { if (id !== 'wires1' && id !== 'wires2') return false; if (_v('f_sev_wires') !== 'ok') return false; const t = CS_H[id].texts; if (t.some(i => _v(i) !== '')) return false; let kn = false; try { kn = opsSectionHasData(id, line, tower); } catch (e) { kn = false; } return !kn; };
+  const isObs = id => states[id] === 'changed' && !blankUnk(id);
   const err = []; const skippedUnknown = []; const materialOnly = [];
   // العوازل
   // v335-C6r9e: ثلاث حالات لكل دائرة معدَّلة:
@@ -998,6 +1282,7 @@ function opsBuildObservation(d) {
     row: { tower_type: d.tower_type || undefined, voltage: d.voltage || undefined, notes: _v('f_notes'), road_access_notes: _v('f_road_access_notes'), wires_circuit: _v('f_wires_circuit'),
            insulator_svg_r: d.insulator_svg_r, insulator_svg_s: d.insulator_svg_s, insulator_svg_t: d.insulator_svg_t } };
   Object.keys(payload.row).forEach(k => { if (payload.row[k] === undefined || payload.row[k] === '') delete payload.row[k]; });
+  if (isObs('road') && comps.road && comps.road.text === 'متاح' && !_v('f_road_access_notes') && _hRoadClr && _hRoadClr.base === _opsBaseline && _hRoadClr.line === line && _hRoadClr.tower === tower) payload.clear_road_notes = true;   // N21: مسح صريح مؤكَّد فقط
   const extra = { sections: observed, skipped_unknown: skippedUnknown, material_only: materialOnly };
   if (env) { payload.base = opsBaseFor(env, Object.keys(comps)); payload.base_src = env.source ? env.source.inspection_id : null; extra.base_mode = null; }
   else { payload.base = {}; extra.base_mode = 'unknown'; }
@@ -1404,7 +1689,9 @@ function loadPreviousInspection(silent) {
 // تعديل onTowerChange لتفعيل فحص الكشف السابق (بدون قيد زمني)
 function onTowerChange() {
   invalidatePrefill(); // v334: برج جديد = أي تهيئة سابقة معلّقة تُهمل ويُصفَّر تتبّع إدخال الموظف
+  _hPend = {}; _hSnap = {}; _hRoadClr = null; _hPrev = {};   // v335-C6r15 (N21): لا تأكيد/تراجع يعبر إلى برج آخر
   onTowerChangeOriginal();
+  try { csHRefresh(); } catch (e) { /* UI only */ }
   const lineName = document.getElementById('f_line_name').value;
   const towerNum = document.getElementById('f_tower_number').value;
   if (lineName && towerNum) checkPreviousInspection(lineName, towerNum);
@@ -1423,19 +1710,25 @@ function onTowerChange() {
   };
   document.addEventListener('input', mark, true);
   document.addEventListener('change', mark, true);
-  // v335-C6r9e: اختيار تقدير «سليم» للعوازل = كل عوازل الدوائر غير المعروفة (بلا ضرر مُعلَّم) سليمة: يُفعَّل زر كل دائرة ظاهراً (ويمكن التراجع عنه)
+  // v335-C6r15 (N21): قائمة درجة العوازل: «سليم» تمرّ عبر بوابة التأكيد (لا تمسح علامات حمراء بصمت)؛ ما سواها يُسجَّل كقيمة سابقة. بقية القوائم عبر onSeverityUserChange.
   document.addEventListener('change', e => {
-    const t = e && e.target; if (!t || t.id !== 'f_sev_insulator' || t.value !== 'ok') return;
-    let dbl = false; try { dbl = isDoubleCircuitLine(_v('f_line_name')); } catch (x) { dbl = false; }
-    [1, 2].forEach(c => {
-      if (c === 2 && !dbl) return;
-      const st = c === 1 ? insulatorState : insulatorState2;
-      const dmg = OPS_PH.some(ph => st && Array.isArray(st[ph]) && st[ph].some(x => x === true));
-      if (csInsCircuitUnknown(c) && !dmg) _insHealthy[c] = true;
-    });
-    csInsHealthyRefresh();
+    const t = e && e.target; if (!t || t.id !== 'f_sev_insulator') return;
+    if (t.value !== 'ok') { _hPrev[t.id] = t.value; csHRefresh(); return; }
+    csHSevOk('f_sev_insulator', ['ins1', 'ins2']);
   });
-  document.addEventListener('click', e => { const t = e && e.target; if (t && typeof t.closest === 'function' && t.closest('#phasesWrap')) _prefillUserEdited = true; }, true);
+  // نظافة العوازل / وجود الطريق: اختيار القيمة السليمة (نظيف / متاح) من القائمة فوق قيمة سلبية أو ملاحظات قائمة يمرّ بالتحذير والتأكيد نفسهما
+  document.addEventListener('change', e => {
+    const t = e && e.target; const id = t && ({ f_insulator_washing: 'washing', f_road_access: 'road' })[t.id]; if (!id) return;
+    if (t.value !== CS_H[id].okVal) { _hPrev[t.id] = t.value; csHRefresh(); return; }
+    t.value = (_hPrev[t.id] === undefined || _hPrev[t.id] === CS_H[id].okVal) ? '' : _hPrev[t.id];
+    delete _hPend[id]; csHRequest(id); _prefillUserEdited = true; csHRefresh();
+  });
+  // أي تعديل لاحق (حقول النموذج أو نقر العوازل) يعيد اشتقاق حالة الخانات والتأكيدات المعلّقة من القيم الحالية
+  const inForm = e => { const t = e && e.target; return !!(t && (t.id === 'f_line_name' || (typeof t.closest === 'function' && t.closest('#towerInspectionModal')))); };
+  const refreshSoon = e => { if (e && !inForm(e)) return; setTimeout(() => { try { csHRefresh(); } catch (x) { /* UI only */ } }, 0); };
+  document.addEventListener('input', refreshSoon, true);
+  document.addEventListener('change', refreshSoon, true);
+  document.addEventListener('click', e => { const t = e && e.target; if (t && typeof t.closest === 'function' && t.closest('#phasesWrap')) { _prefillUserEdited = true; refreshSoon(e); } }, true);
 })();
 
 // ========================
