@@ -255,6 +255,7 @@ async function fetchInspectionsForReport(lines, from, to, force, out) {
       if (lines && lines.length > 1) rows = rows.filter(r => lines.includes(r.line_name));
     }
   }
+  if (basisNow && basisNow.kind === 'historical') rows = dayCompose(rows, id => csLiveEnabled() && opsIsVoided(id));   // v335-C6r14 (N20): التقرير التاريخي = كشف يومي واحد لكل (خط، برج، تاريخ)
   if (out && typeof out === 'object') out.basis = basisNow;   // v335-C6r8c: أساس هذه القراءة نفسها (لا المتغيّر العام المشترك)
   return rows.filter(r => !(csLiveEnabled() && opsIsVoided(r.id))).map(r => Object.assign({}, r, { _basis: basisNow }));   // إلغاء كامل = إخفاء (الأصل باقٍ في قاعدة البيانات)
 }
@@ -1029,7 +1030,7 @@ let _hubV = _hubV0();
 function hubVisualReset() { _hubSeq++; _hubV = _hubV0(); }
 function hubVoided(id) { try { return typeof opsIsVoided === 'function' && opsIsVoided(id); } catch (e) { return false; } }
 function hubCutoffDate() { const d = new Date(); d.setMonth(d.getMonth() - 6); return d.toISOString().split('T')[0]; }
-const HUB_LIGHT_FIELDS = 'id,line_name,tower_number,tower_type,created_by_name,inspection_date,sev_foundation,sev_iron,sev_insulator,sev_wires,sev_ground,sev_fire';
+const HUB_LIGHT_FIELDS = 'id,line_name,tower_number,tower_type,created_by_name,created_at,inspection_date,sev_foundation,sev_iron,sev_insulator,sev_wires,sev_ground,sev_fire';
 function _hubGuard() {
   const seq = ++_hubSeq, s = _reportSess();
   return { seq, ok: () => seq === _hubSeq && _reportSessOk(s) && hubBrowseType === 'visual' };
@@ -1043,14 +1044,14 @@ async function hubFetchLineIndex(cutoff) {
     if (r && r.ok === true && Array.isArray(r.lines)) return r.lines.map(x => ({ line_name: x.line_name, dates: Number(x.dates) || 0, towers: Number(x.towers) || 0 }));
     if (r && r.code === 'network') throw new Error('network');
   }
-  const rows = await fetchAllPages(`inspections?select=id,line_name,inspection_date&inspection_date=gte.${cutoff}&order=created_at.desc`);
+  const rows = await fetchAllPages(`inspections?select=id,line_name,tower_number,inspection_date&inspection_date=gte.${cutoff}&order=created_at.desc`);
   const per = new Map();
   rows.forEach(r => {
     if (!r.line_name || !r.inspection_date || hubVoided(r.id)) return;
-    if (!per.has(r.line_name)) per.set(r.line_name, { line_name: r.line_name, dset: new Set(), towers: 0 });
-    const o = per.get(r.line_name); o.dset.add(r.inspection_date); o.towers++;
+    if (!per.has(r.line_name)) per.set(r.line_name, { line_name: r.line_name, dset: new Set(), tset: new Set() });
+    const o = per.get(r.line_name); o.dset.add(r.inspection_date); o.tset.add(String(r.tower_number) + '|' + r.inspection_date);   // v335-C6r14 (N20): كشف يومي = (برج، تاريخ)
   });
-  return [...per.values()].map(o => ({ line_name: o.line_name, dates: o.dset.size, towers: o.towers }));
+  return [...per.values()].map(o => ({ line_name: o.line_name, dates: o.dset.size, towers: o.tset.size }));
 }
 
 async function hubVisualOpen() {
@@ -1084,7 +1085,7 @@ async function hubVisualOpenLine(line) {
   try {
     const out = await Promise.all([
       (typeof opsLoadMarks === 'function' ? opsLoadMarks() : Promise.resolve()).catch(() => {}),
-      fetchAllPages(`inspections?select=id,inspection_date&line_name=eq.${encodeURIComponent(line)}&inspection_date=gte.${cutoff}&order=inspection_date.desc`)
+      fetchAllPages(`inspections?select=id,tower_number,inspection_date&line_name=eq.${encodeURIComponent(line)}&inspection_date=gte.${cutoff}&order=inspection_date.desc`)
     ]);
     rows = out[1];
   } catch (e) { if (g.ok() && !(e && e.stale)) showToast('❌ تعذّر تحميل تواريخ الخط', 'error'); return; }
@@ -1120,13 +1121,18 @@ function _hubActionSnap() {
 }
 async function hubFetchFull(id, snap) {
   try {
-    const res = await sbFetch(`inspections?select=*&id=eq.${encodeURIComponent(id)}`);
+    // v335-C6r14 (N20): البطاقة = كشف يومي؛ نجلب كل صفوف اليوم (غالباً صف واحد) ونركّبها في سجل واحد معرّفه معرّف الأساس
+    const cur = (typeof getCurrentHubGroup === 'function' ? getCurrentHubGroup() : null), comp = cur && cur.items ? cur.items.find(x => String(x.id) === String(id)) : null;
+    const ids = comp && comp._day && comp._day.ids && comp._day.ids.length ? comp._day.ids : [id];
+    // app_data_read لا يدعم المعامل in: طلب eq لكل صف من صفوف اليوم (عادةً واحد أو اثنان) بالتوازي
+    const resp = await Promise.all(ids.map(i => sbFetch(`inspections?select=*&id=eq.${encodeURIComponent(i)}`)));
     if (!snap.ok()) return null;
-    if (!res.ok) return null;
-    const rows = await res.json();
+    if (!resp.every(r => r && r.ok)) return null;
+    const rows = (await Promise.all(resp.map(r => r.json()))).map(a => Array.isArray(a) ? a[0] : null);
     if (!snap.ok()) return null;
-    const row = Array.isArray(rows) ? rows[0] : null;
-    if (!row || String(row.id) !== String(id) || !_hubIsFullRow(row)) return null;
+    if (!rows.every(x => x && _hubIsFullRow(x)) || !rows.some(x => String(x.id) === String(id))) return null;
+    const row = dayCompose(rows)[0];
+    if (!row || String(row.id) !== String(id)) return null;
     const i = (records || []).findIndex(x => x.id === row.id);
     if (i >= 0) records[i] = row; else records.unshift(row);   // الاستبدال (لا التجاهل): الصف الكامل هو ما يجده editRecordImpl/opsDeleteInspection أولاً
     return row;
@@ -1229,9 +1235,9 @@ function openHubDates(line) {
 function renderHubDates() {
   let groups;
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') {
-    const per = new Map();
-    _hubV.dates.forEach(r => { if (r.inspection_date && !hubVoided(r.id)) per.set(r.inspection_date, (per.get(r.inspection_date)||0) + 1); });
-    groups = [...per.entries()].map(([date, n]) => ({ line_name: hubSelectedLine, date, items: { length: n }, raw: [], forms: [] })).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+    const per = new Map();   // v335-C6r14 (N20): عدد الأبراج = أبراج مميّزة لكل تاريخ (لا صفوفاً)
+    _hubV.dates.forEach(r => { if (r.inspection_date && !hubVoided(r.id)) { if (!per.has(r.inspection_date)) per.set(r.inspection_date, new Set()); per.get(r.inspection_date).add(String(r.tower_number)); } });
+    groups = [...per.entries()].map(([date, set]) => ({ line_name: hubSelectedLine, date, items: { length: set.size }, raw: [], forms: [] })).sort((a,b) => (b.date||'').localeCompare(a.date||''));
   } else {
     const map = getHubGroups(hubBrowseType);
     groups = [...map.values()].filter(g => g.line_name === hubSelectedLine).sort((a,b) => (b.date||'').localeCompare(a.date||''));
@@ -1258,7 +1264,7 @@ function openHubDetail(date) {
 function getCurrentHubGroup() {
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') {
     if (_hubV.line !== hubSelectedLine || _hubV.date !== hubSelectedDate) return undefined;
-    return { line_name: hubSelectedLine, date: hubSelectedDate, items: _hubV.towers.filter(r => !hubVoided(r.id)), raw: [], forms: [] };
+    return { line_name: hubSelectedLine, date: hubSelectedDate, items: dayCompose(_hubV.towers, hubVoided), raw: [], forms: [] };   // v335-C6r14 (N20): بطاقة واحدة لكل برج في التاريخ
   }
   const map = getHubGroups(hubBrowseType);
   return map.get(hubSelectedLine + '||' + hubSelectedDate);
@@ -1354,7 +1360,7 @@ async function hubDeleteSingleInspection(id) {
       if (!snap.ok()) return;
       if (!row) { showToast('⚠️ تعذّر إيجاد السجل', 'error'); return; }
     }
-    await opsDeleteInspection(id);   // v335-C4: عملية void مسجَّلة (لا DELETE مباشر)؛ يُخفى السجل بعد تأكيد السيرفر
+    await opsDeleteInspection(id);   // v335-C4: عملية void مسجَّلة (لا DELETE مباشر)؛ يُخفى السجل بعد تأكيد السيرفر (v335-C6r14: لكل صفوف الكشف اليومي)
     renderHubDetail();
   } catch (e) { showToast('❌ تعذّر تسجيل الإلغاء', 'error'); }
 }
@@ -1386,11 +1392,12 @@ async function deleteWholeHubDate() {
   const g = getCurrentHubGroup();
   if (!g) return;
   const n = g.items.length;
+  const _dayRows = hubBrowseType === 'visual' ? g.items.flatMap(dayMemberRows) : g.items.slice();   // v335-C6r14 (N20): إلغاء التاريخ يطال كل صفوف كل كشف يومي
   if (!confirm(`🗑️ تأكيد إلغاء كل بيانات ${hubSelectedLine} بتاريخ ${hubSelectedDate} (${n} سجل)؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد الحالة الحالية لكل برج فقط إن كان هذا السجل آخر كاتب لها.`)) return;
   if (hubBrowseType === 'visual' || hubBrowseType === 'treat') {   // v335-C4: عمليات void مسجَّلة بدل DELETE مباشر
-    const rows = g.items.slice();
+    const rows = _dayRows;
     const done = hubBrowseType === 'visual' ? await opsDeleteInspections(rows) : await opsDeleteTreatments(rows);
-    showToast(done === n ? `📦 سُجّل إلغاء ${done} من ${n} وسيُرسل` : `⚠️ سُجّل إلغاء ${done} من ${n} فقط`, done === n ? undefined : 'error');
+    showToast(done === rows.length ? (hubBrowseType === 'visual' ? `📦 سُجّل إلغاء ${n} كشف يومي وسيُرسل` : `📦 سُجّل إلغاء ${done} من ${n} وسيُرسل`) : `⚠️ سُجّل إلغاء ${done} من ${rows.length} صف فقط`, done === rows.length ? undefined : 'error');
     goBackFromOperation();
     return;
   }

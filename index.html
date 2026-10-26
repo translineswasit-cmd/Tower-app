@@ -3114,7 +3114,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {}
   });
   // تحميل الكاش المحلي للسجلات فوراً (يفيد أوف لاين قبل زيارة صفحة السجلات)
-  try { records = JSON.parse(localStorage.getItem(DB_KEY) || '[]'); } catch(e) { records = []; }
+  try { records = dayCompose(JSON.parse(localStorage.getItem(DB_KEY) || '[]')); } catch(e) { records = []; }
 
   const sel = document.getElementById('f_line_name');
   Object.keys(LINES_DATA).forEach(name => {
@@ -4208,6 +4208,84 @@ function pickLatestInspection(list) {
     if (!best || _cmpInspectionRecency(r, best) > 0) best = r;
   });
   return best;
+}
+
+
+// ---- v335-C6r14 (N20): كشف يومي منطقي واحد لكل (خط، برج، تاريخ كشف) ----
+// الحفظ الجديد يُكمل/يحدّث صف اليوم نفسه على الخادم (SQL 53). الصفوف المكرَّرة القديمة لا تُدمج ولا تُحذف ولا تُعدَّل في قاعدة البيانات؛ القراءة (الأرشيف/التعديل/التقارير) تركّبها في سجل واحد:
+//  الصف الأحدث (created_at ثم id) هو الأساس ويحمل المعرّف؛ ما تركه فارغاً يُكمَّل من الصفوف الأخرى؛ قيمتان صريحتان مختلفتان لحقل لا تُحسمان بأقدم/أحدث: تبقى قيمة الأساس كما هي
+//  ويُوسم الحقل في _day.review (للمراجعة من المالك لاحقاً؛ لا واجهة ولا كتابة). الفارغ/المسافات/null = «غير مسجَّل»؛ false والصفر والنص «0» قيم صريحة. JSON غير صالح لا يُخمَّن: يُوسم ويُتجاهل.
+const DAY_COMP_FIELDS = ['sev_insulator', 'sev_iron', 'sev_foundation', 'sev_wires', 'sev_ground', 'sev_fire', 'iron_intersections', 'tower_foundations', 'tower_attachments',
+  'wires_r', 'wires_s', 'wires_t', 'wires_r1', 'wires_r2', 'wires_s1', 'wires_s2', 'wires_t1', 'wires_t2', 'wires_r1_c2', 'wires_s1_c2', 'wires_t1_c2', 'wires_circuit',
+  'ground_r', 'ground_s', 'ground_t', 'ground_1', 'ground_2', 'fire_causes', 'road_access', 'insulator_washing', 'tower_type', 'voltage'];
+const DAY_FILL_FIELDS = ['notes', 'road_access_notes', 'fire_causes_notes', 'insulator_svg_r', 'insulator_svg_s', 'insulator_svg_t', 'insulator_svg_r_2', 'insulator_svg_s_2', 'insulator_svg_t_2'];
+const DAY_PHASE_COLS = ['insulator_state', 'insulator_state_2', 'insulator_cycle', 'insulator_cycle_2', 'insulator_chain_types', 'insulator_chain_types_2'];
+function _dayMissing(v) { return v === null || v === undefined || (typeof v === 'string' && v.trim() === ''); }
+function _dayNorm(v) { return typeof v === 'string' ? v.trim() : JSON.stringify(v); }
+function _dayJson(v) {   // {ok, obj}: obj=null يعني «غير مسجَّل»؛ ok=false يعني JSON غير صالح (لا يُخمَّن)
+  if (_dayMissing(v)) return { ok: true, obj: null };
+  let x = v;
+  for (let i = 0; i < 2 && typeof x === 'string'; i++) { try { x = JSON.parse(x); } catch (e) { return { ok: false, obj: null }; } }
+  if (x === null) return { ok: true, obj: null };
+  return (x && typeof x === 'object' && !Array.isArray(x)) ? { ok: true, obj: x } : { ok: false, obj: null };
+}
+function dayKeyOf(r) { return (r.line_name || '') + '||' + String(r.tower_number) + '||' + (r.inspection_date || ''); }
+function dayComposeGroup(g) {
+  if (g.length === 1) return g[0];
+  const sorted = g.slice().sort((a, b) => { const ca = String(a.created_at || ''), cb = String(b.created_at || ''); return ca !== cb ? (ca < cb ? -1 : 1) : String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0; });
+  const prim = sorted[sorted.length - 1], others = sorted.slice(0, -1).reverse();   // الأحدث أولاً
+  const out = Object.assign({}, prim), review = [];
+  const has = f => sorted.some(r => Object.prototype.hasOwnProperty.call(r, f));
+  DAY_COMP_FIELDS.forEach(f => {
+    if (!has(f)) return;
+    const pv = prim[f];
+    const ov = others.map(r => r[f]).filter(v => !_dayMissing(v));
+    if (!_dayMissing(pv)) { if (ov.some(v => _dayNorm(v) !== _dayNorm(pv))) review.push(f); return; }
+    const d = [...new Set(ov.map(_dayNorm))];
+    if (d.length === 1) out[f] = ov[0]; else if (d.length > 1) review.push(f);
+  });
+  DAY_FILL_FIELDS.forEach(f => { if (has(f) && _dayMissing(prim[f])) { const o = others.find(r => !_dayMissing(r[f])); if (o) out[f] = o[f]; } });
+  DAY_PHASE_COLS.forEach(c => {
+    if (!has(c)) return;
+    const parsed = sorted.slice().reverse().map(r => ({ raw: r[c], j: _dayJson(r[c]) }));   // الأحدث أولاً
+    if (parsed.some(x => !x.j.ok)) review.push(c + ':invalid_json');
+    const good = parsed.filter(x => x.j.ok && x.j.obj);
+    if (!good.length) return;
+    const pj = _dayJson(prim[c]);
+    const res = {}, rev = [];
+    ['R', 'S', 'T'].forEach(ph => {
+      const vals = good.map(x => x.j.obj[ph]).filter(a => Array.isArray(a) && a.length);
+      if (!vals.length) { const any = good.find(x => Object.prototype.hasOwnProperty.call(x.j.obj, ph)); if (any) res[ph] = any.j.obj[ph]; return; }
+      const pa = pj.ok && pj.obj ? pj.obj[ph] : null;
+      if (Array.isArray(pa) && pa.length) { res[ph] = pa; if (vals.some(a => JSON.stringify(a) !== JSON.stringify(pa))) rev.push(c + '.' + ph); return; }
+      const d = [...new Set(vals.map(a => JSON.stringify(a)))];
+      if (d.length === 1) res[ph] = vals[0]; else { res[ph] = vals[0]; rev.push(c + '.' + ph); }   // أساس فارغ والبقية مختلفة: لا حسم — يُعرض الأحدث ويُوسم
+    });
+    rev.forEach(x => review.push(x));
+    const asText = typeof (good.find(x => typeof x.raw === 'string') || {}).raw === 'string' || typeof prim[c] === 'string';
+    out[c] = asText ? JSON.stringify(res) : res;
+  });
+  out._day = { ids: sorted.map(r => r.id).reverse(), review };
+  return out;
+}
+// يحوّل مصفوفة صفوف الكشف إلى سجل واحد لكل (خط، برج، تاريخ). skip(id)=true للصفوف الملغاة (لا تدخل التركيب). صف بلا خط/برج/تاريخ يمرّ كما هو. الترتيب = أول ظهور.
+function dayCompose(rows, skip) {
+  const groups = new Map(), order = [];
+  (rows || []).forEach(r => {
+    if (!r || typeof r !== 'object') return;
+    if (skip && r.id != null && skip(r.id)) return;
+    if (!r.line_name || r.tower_number === undefined || r.tower_number === null || !r.inspection_date) { order.push({ one: r }); return; }
+    const k = dayKeyOf(r);
+    if (!groups.has(k)) { const g = []; groups.set(k, g); order.push({ g }); }
+    groups.get(k).push(r);
+  });
+  return order.map(o => o.one || dayComposeGroup(o.g));
+}
+// صفوف الإلغاء لسجل مركَّب: كل صفوف اليوم (الإلغاء يطال الكشف اليومي كله)
+function dayMemberRows(row) {
+  if (!row) return [];
+  const ids = row._day && row._day.ids && row._day.ids.length ? row._day.ids : [row.id];
+  return ids.map(id => ({ id, line_name: row.line_name, tower_number: row.tower_number }));
 }
 
 // v335-C6r7: وسم مستوى/إصدار صفوف الحالة الحيّة. صف app_line_state (تقارير) يحمل الملاحظات والدورات ولا يحمل insulator_svg_r عمداً،
@@ -5837,7 +5915,7 @@ async function opsDeleteInspection(id) {
   const row = records.find(x => x.id === id) || (fullRecordsCache || []).find(x => x.id === id);
   if (!row) { showToast('⚠️ تعذّر إيجاد السجل', 'error'); return; }
   const reason = opsAskReason('حذف سجل كشف من واجهة السجلات'); if (!reason) { showToast('⚠️ لم يُسجَّل الإلغاء: السبب إلزامي', 'error'); return; }
-  const n = await opsVoidMany('inspection', [row], reason);
+  const n = await opsVoidMany('inspection', dayMemberRows(row), reason);   // v335-C6r14 (N20): إلغاء الكشف اليومي = كل صفوفه
   if (n) showToast('📦 سُجّل إلغاء السجل وسيُرسل — الأصل لا يُحذف ويُخفى بعد التأكيد');
 }
 
@@ -6726,10 +6804,11 @@ async function loadRecords() {
     const data = await fetchAllPages(`inspections?select=*&inspection_date=gte.${cutoffDate}&order=created_at.desc`);
     records = data; _recordsArchiveLoaded = true;
     try { await opsLoadMarks(); } catch (e) {}   // v335-C4: إخفاء المصادر الملغاة
+    records = dayCompose(records, id => opsIsVoided(id));   // v335-C6r14 (N20): سجل واحد لكل (خط، برج، تاريخ)
     // كاش عرض فقط: نقلّله إلى 120 سجل ونتجاهل فشله بصمت — الأولوية المطلقة لمساحة الطوابير الميدانية
     try { localStorage.setItem(DB_KEY, JSON.stringify(data.slice(0, 1000))); } catch(e) { try { localStorage.removeItem(DB_KEY); } catch(e2) {} }
   } catch {
-    records = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+    records = dayCompose(JSON.parse(localStorage.getItem(DB_KEY) || '[]'), id => opsIsVoided(id));
     showToast('⚠️ تعذر الاتصال، عرض بيانات محفوظة', 'error');
   }
   populateLineFilter();
@@ -6754,8 +6833,8 @@ async function searchOlderRecords() {
     if (dateTo) query += `&inspection_date=lte.${dateTo}`;
     const res = await sbFetch(query);
     const data = await res.json();
-    records = data; // نستبدل records مؤقتاً بنتيجة البحث الموسّع
-    showToast(`✅ تم العثور على ${data.length} سجل بكل الأرشيف`);
+    records = dayCompose(data, id => opsIsVoided(id)); // نستبدل records مؤقتاً بنتيجة البحث الموسّع (v335-C6r14: سجل واحد لكل يوم)
+    showToast(`✅ تم العثور على ${records.length} سجل بكل الأرشيف`);
   } catch {
     showToast('❌ تعذر البحث الموسّع، تحقق من الاتصال', 'error');
   }
