@@ -2376,6 +2376,7 @@ function csPurgeUserData() {
   _reportEpoch++; try { if (typeof reportPurgeDerived === 'function') reportPurgeDerived(); } catch (e) {}   // v335-C6r8: كاشات التقارير المشتقة
   _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear(); csSnapPurgeAll();
   try { if (typeof depIndexReset === 'function') depIndexReset(); } catch (e) {}   // v335-C6r9: the departures index belongs to the account that read it
+  try { if (typeof depxPurge === 'function') depxPurge(); } catch (e) {}   // v335-C6r10: ملف PDF الجاهز وعملية التصدير الجارية تخصّ الحساب الذي أنشأها
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -8499,7 +8500,9 @@ function buildInsulatorExportPNG(insulatorStateJSON, voltage, towerType, lineNam
     drawCircuit(state2, cycleAll2, treatedAll2, y, cTypes2);
   }
 
-  return { dataUrl: canvas.toDataURL('image/png'), w: totalW, h: totalH };
+  const pngUrl = canvas.toDataURL('image/png');
+  canvas.width = 0; canvas.height = 0;   // v335-C6r10: تحرير ذاكرة القماش فور الاستخراج
+  return { dataUrl: pngUrl, w: totalW, h: totalH };
 }
 
 // ==================== أبراج الخطوط: تخزين متزامن يحل محل LINES_DATA المدمجة بالكود ====================
@@ -8695,7 +8698,7 @@ function drawArabicTextPNG(items, widthCss, opts) {
   const scale = 1.2; // دقة كافية للطباعة مع توفير بالحجم
   const sidePadding = 14;
   const lineHeightFactor = 1.45;
-  const measureCanvas = document.createElement('canvas');
+  const measureCanvas = drawArabicTextPNG._mc || (drawArabicTextPNG._mc = document.createElement('canvas'));   // v335-C6r10: قماش قياس واحد مشترك (لا قماش جديد لكل برج)
   const mctx = measureCanvas.getContext('2d');
 
   function wrapText(ctx, text, maxWidth) {
@@ -8768,7 +8771,9 @@ function drawArabicTextPNG(items, widthCss, opts) {
     ctx.strokeRect(0.75, 0.75, widthCss - 1.5, totalHeight - 1.5);
   }
 
-  return { dataUrl: canvas.toDataURL('image/jpeg', 0.9), w: widthCss, h: totalHeight };
+  const jpegUrl = canvas.toDataURL('image/jpeg', 0.9);
+  canvas.width = 0; canvas.height = 0;   // v335-C6r10: تحرير ذاكرة القماش فور الاستخراج (iOS لا يحرّرها سريعاً)
+  return { dataUrl: jpegUrl, w: widthCss, h: totalHeight };
 }
 
 // ---- تحميل تدريجي عند الطلب: محرر الكشف البصري، قائمة المغادرات، محرر المعالجة، سجل المعالجات، نوافذ التصدير (v335-C5r8) ----
