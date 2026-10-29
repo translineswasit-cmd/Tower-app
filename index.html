@@ -374,7 +374,7 @@ tbody tr:hover { background: #F7FAFC; }
 <!-- DELETE RECORD MODAL -->
 <div class="modal-bg" id="deleteModal">
   <div class="modal-box">
-    <h3>⚠️ تأكيد الحذف</h3><p>هل تريد حذف هذا السجل نهائياً؟</p>
+    <h3>⚠️ تأكيد الحذف</h3><p>هل تريد حذف هذا السجل نهائياً؟</p><p id="deleteModalLinked" style="white-space:pre-line;font-size:0.82rem;color:#7C4A03"></p>
     <div class="modal-actions">
       <button class="btn btn-del btn-sm" style="padding:10px 24px" onclick="confirmDelete()">نعم، احذف</button>
       <button class="btn btn-secondary" onclick="closeModal()">إلغاء</button>
@@ -5906,6 +5906,24 @@ async function opsVoidMany(kindLabel, rows, reason) {
   return n;
 }
 
+// v335-C6r16 (N05): إلغاء الكشف يُلغي المعالجات المرتبطة به فعلياً (inspection_id المخزَّن) — تُعرض قبل التأكيد. لا استنتاج بالتاريخ أو البرج.
+function opsLinkedTreatments(rows) {
+  const ids = new Set((rows || []).filter(r => r && r.id).map(r => String(r.id)));
+  if (!ids.size) return [];
+  return (treatmentsCache || []).filter(t => t && t.inspection_id != null && ids.has(String(t.inspection_id)));
+}
+function opsLinkedNote(rows) {
+  // الاكتمال لا يمكن إثباته من الجهاز (الكاش قد يكون جزئياً، وروابط السيرفر قد لا تظهر محلياً) فالقائمة المعروضة تُوسَم دائماً «جزئية» وتُرفق دائماً بتحذير.
+  const L = opsLinkedTreatments(rows);
+  let out = '\n\n';
+  if (L.length) {
+    const lines = L.slice(0, 8).map(t => '• ' + (t.treatment_date || '') + ' — ' + (t.line_name || '') + ' برج ' + (t.tower_number || ''));
+    out += 'معالجات مرتبطة بهذا الكشف معروفة محلياً وستُلغى معه (' + L.length + ' — القائمة جزئية):\n' + lines.join('\n') + (L.length > 8 ? '\n… و' + (L.length - 8) + ' أخرى' : '') + '\n';
+  }
+  out += '⚠️ قد تُلغى أيضاً معالجات أخرى مرتبطة بهذا الكشف على السيرفر ولا تظهر هنا. المعالجات المرتبطة بكشوف أخرى لا تُمَسّ، وتُعاد حالة الأبراج من السجل المتبقّي.';
+  return out;
+}
+
 function opsAskReason(defaultText) {
   const r = (prompt('سبب الإلغاء (إلزامي — يُسجَّل بالتدقيق. الأصل لا يُحذف؛ يُخفى من السجلات ويُعاد ما أمكن من الحالة):', defaultText || '') || '').trim();
   return r || null;
@@ -6103,6 +6121,7 @@ async function opsSyncOutbox() {
       if (r && r.ok === true) {
         if (payload && payload.kind === 'void') {
           res.voidApplied = true;
+          try { const cz = r.cascade || {}; const nt = ((cz.treatments || []).length) + ((cz.legacy_hidden || []).length); if (nt) (res.voidNotes = res.voidNotes || []).push('أُلغيت ' + nt + ' معالجة مرتبطة'); if (r.review_required || (cz.uncertain || []).length) (res.voidNotes = res.voidNotes || []).push('⚠️ بعض الأقسام صارت «غير معروفة» وتحتاج مراجعة (تعذّر إثبات حالتها من السجل المتبقّي)'); } catch (x) {}
           // v335-C6r9d: say what the cancellation actually did (never a bare "success")
           try { (res.voidNotes = res.voidNotes || []).push(r.state_reversed === false ? 'أُخفي السجل الملغى (لم يكن مصدر الحالة الحالية فلم تتغيّر الحالة)' : (r.state_reversed === true && (r.no_prior_state || (r.tower && r.tower.status === 'no_source')) ? 'أُلغي الكشف — البرج «لم يُكشف»' : 'أُلغي الكشف واستُعيدت الحالة السابقة')); } catch (x) {}
         }
@@ -6114,6 +6133,12 @@ async function opsSyncOutbox() {
         continue;
       }
       const code = r && r.code;
+      if (code === 'already_voided' && payload && payload.kind === 'void') {   // v335-C6r16 (N05): الهدف أُلغي سابقاً (مثلاً ضمن إلغاء الكشف المرتبط) = المطلوب متحقق؛ لا رفض ولا حجب للبرج
+        if (!opsRemove(e.id)) { opsUpdate(e.id, x => { x.status = 'pending'; x.err = 'removal_unconfirmed'; }); blocked.add(tk); continue; }
+        res.applied++; res.lines.add(e.line); res.voidApplied = true; res.marks = true;
+        try { (res.voidNotes = res.voidNotes || []).push('أُلغي هذا السجل ضمن إلغاء سابق'); } catch (x) {}
+        continue;
+      }
       if (OPS_AUTH_CODES.indexOf(code) >= 0) { res.auth = true; break; }
       if (r && (r.net || code === 'network')) { res.net = true; break; }
       if (OPS_TRANSIENT.indexOf(code) >= 0 || /^http_5/.test(code || '')) { opsUpdate(e.id, x => { x.err = code; x.attempts = (x.attempts || 0) + 1; }); blocked.add(tk); continue; }
@@ -6978,7 +7003,11 @@ function badge(val) {
   return `<span class="badge ${cls}">${val}</span>`;
 }
 
-function openDeleteModal(id) { deleteId = id; document.getElementById('deleteModal').classList.add('show'); }
+function openDeleteModal(id) {
+  deleteId = id;
+  try { const row = records.find(x => x.id === id) || (fullRecordsCache || []).find(x => x.id === id); const el = document.getElementById('deleteModalLinked'); if (el) el.textContent = row ? opsLinkedNote(dayMemberRows(row)).trim() : ''; } catch (x) {}   // v335-C6r16 (N05)
+  document.getElementById('deleteModal').classList.add('show');
+}
 
 function closeModal() { document.getElementById('deleteModal').classList.remove('show'); deleteId = null; }
 
@@ -6996,7 +7025,7 @@ async function bulkDeleteRecords() {
   }
   const n = filteredRecords.length;
   if (!n) { showToast('⚠️ لا توجد سجلات مطابقة للفلتر الحالي', 'error'); return; }
-  if (!confirm(`🗑️ تأكيد إلغاء ${n} سجل مطابق للفلتر الحالي؟ لا يُحذف الأصل؛ يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُستعاد حالة البرج حيث يكون هذا الكشف آخر كاتب لها.`)) return;
+  if (!confirm(`🗑️ تأكيد إلغاء ${n} سجل مطابق للفلتر الحالي؟ لا يُحذف الأصل؛ يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُستعاد حالة البرج من السجل المتبقّي.` + opsLinkedNote(filteredRecords))) return;   // v335-C6r16 (N05)
   const done = await opsDeleteInspections(filteredRecords.slice());   // v335-C4
   showToast(done === n ? `📦 سُجّل إلغاء ${done} من ${n} سجل وسيُرسل` : `⚠️ سُجّل إلغاء ${done} من ${n} سجل فقط — الباقي لم يُسجَّل (راجع الرسائل)`, done === n ? undefined : 'error');
 }

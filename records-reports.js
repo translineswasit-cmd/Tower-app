@@ -1353,7 +1353,7 @@ function renderHubDetail() {
 
 async function hubDeleteSingleInspection(id) {
   if (!(currentUser.role === 'admin')) { showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error'); return; }
-  if (!confirm('🗑️ إلغاء كشف هذا البرج؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد الحالة الحالية فقط إن كان هو آخر كاتب لها.')) return;
+  if (!confirm('🗑️ إلغاء كشف هذا البرج؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد الحالة من السجل المتبقّي.' + (function () { try { const r0 = records.find(x => x.id === id) || (fullRecordsCache || []).find(x => x.id === id); return opsLinkedNote(r0 ? dayMemberRows(r0) : [{ id: id }]); } catch (e) { return ''; } })())) return;   // v335-C6r16 (N05)
   try {
     if (_hubV.mode === 'remote') {   // v335-C6r11: opsDeleteInspection يبحث في records؛ نجلب الصف الكامل عند الحاجة فقط وبحراسة التنقّل/الجلسة
       const snap = _hubActionSnap(); const row = await hubFetchFull(id, snap);
@@ -1393,7 +1393,7 @@ async function deleteWholeHubDate() {
   if (!g) return;
   const n = g.items.length;
   const _dayRows = hubBrowseType === 'visual' ? g.items.flatMap(dayMemberRows) : g.items.slice();   // v335-C6r14 (N20): إلغاء التاريخ يطال كل صفوف كل كشف يومي
-  if (!confirm(`🗑️ تأكيد إلغاء كل بيانات ${hubSelectedLine} بتاريخ ${hubSelectedDate} (${n} سجل)؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد الحالة الحالية لكل برج فقط إن كان هذا السجل آخر كاتب لها.`)) return;
+  if (!confirm(`🗑️ تأكيد إلغاء كل بيانات ${hubSelectedLine} بتاريخ ${hubSelectedDate} (${n} سجل)؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد حالة كل برج من السجل المتبقّي.` + (hubBrowseType === 'visual' ? opsLinkedNote(_dayRows) : ''))) return;   // v335-C6r16 (N05)
   if (hubBrowseType === 'visual' || hubBrowseType === 'treat') {   // v335-C4: عمليات void مسجَّلة بدل DELETE مباشر
     const rows = _dayRows;
     const done = hubBrowseType === 'visual' ? await opsDeleteInspections(rows) : await opsDeleteTreatments(rows);
