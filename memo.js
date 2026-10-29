@@ -46,6 +46,7 @@ function memoOnChange() { memoScheduleFonts(); }
 function memoDestroyEditors() {
   const E = memoME(); Object.keys(memoEdMap).forEach(k => memoEdMap[k].destroy()); memoEdMap = {};
   memoCellEds.forEach(e => e.destroy()); memoCellEds = [];
+  if (memoBar) memoBar.hide(true);
 }
 function memoMountEditors() {
   const E = memoME();
@@ -59,10 +60,11 @@ function memoMountEditors() {
   if (!memoBar) {
     memoBar = new E.Bar(document.getElementById('memoFmtBar'), {
       getState: () => memoState, touch: memoFlagTouched, changed: memoOnChange,
-      editorsOf: area => (memoEdMap[area] ? [memoEdMap[area]] : []), tableCells: () => memoCellEds
+      editorsOf: area => (memoEdMap[area] ? [memoEdMap[area]] : []), tableCells: () => memoCellEds,
+      // الشريط الواحد يُنقل (بنفس عقدة DOM) فوق المحرّر النشط؛ الخلية = فوق الجدول (لا فوق الخلية كي لا يغطي نصاً)
+      anchorOf: ed => (ed.cfg.area === 'table' ? document.getElementById('memoTableEl').parentNode : ed.el)
     });
     E.setBar(memoBar);
-    const note = document.createElement('div'); note.id = 'memoFontNote'; note.style.cssText = 'font-size:0.74rem;margin-top:4px;line-height:1.6'; document.getElementById('memoFmtBar').appendChild(note);
     document.getElementById('memo_from').addEventListener('input', () => { if (memoState) { memoState.from = document.getElementById('memo_from').value; if (memoState.from.trim()) memoFlagTouched(); } });
   }
   renderMemoTableEditor();
@@ -208,6 +210,7 @@ function renderMemoAttachmentsEditor() {
 }
 
 function showMemoHome() {
+  if (memoBar) memoBar.hide(true);
   document.getElementById('memoHomeView').style.display = 'block';
   document.getElementById('memoNewView').style.display = 'none';
   document.getElementById('memoArchiveView').style.display = 'none';
@@ -282,6 +285,7 @@ async function showMemoNew() {
 }
 
 function showMemoArchive() {
+  if (memoBar) memoBar.hide(true);
   pushLevel(showMemoHome);
   document.getElementById('memoHomeView').style.display = 'none';
   document.getElementById('memoNewView').style.display = 'none';

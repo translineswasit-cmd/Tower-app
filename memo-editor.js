@@ -191,7 +191,7 @@
     }
     paras() { return this.cfg.getParas(); }
     base() { return this.cfg.getBase(); }
-    activate() { active = this; if (this.cfg.onActive) this.cfg.onActive(this); if (bar) bar.refresh(); }
+    activate() { active = this; if (this.cfg.onActive) this.cfg.onActive(this); if (bar) bar.show(); }
     draw(s, e) {
       const ps = this.paras(); render(this.el, ps, this.base());
       this.el.classList.toggle('is-empty', ps.length === 1 && !ps[0].r.length);
@@ -240,7 +240,7 @@
   document.addEventListener('selectionchange', () => {
     const sel = window.getSelection(); if (!sel || !sel.anchorNode) return;
     for (const ed of editors) if (ed.el.isConnected && ed.el.contains(sel.anchorNode)) {
-      const s = selOf(ed); if (s) { lastSel = { ed, s: s.s, e: s.e }; if (active !== ed) { active = ed; if (ed.cfg.onActive) ed.cfg.onActive(ed); } if (bar) bar.refresh(); }
+      const s = selOf(ed); if (s) { lastSel = { ed, s: s.s, e: s.e }; if (active !== ed) { active = ed; if (ed.cfg.onActive) ed.cfg.onActive(ed); } if (bar) { if (document.activeElement === ed.el) bar.show(); else bar.refresh(); } }
       return;
     }
   });
@@ -249,16 +249,15 @@
   // ctx: {getState(), touch(), editorsOf(area) → [Ed], tableCells() → [Ed]}
   class Bar {
     constructor(host, ctx) {
-      this.host = host; this.ctx = ctx; this.tableAll = false; this.fontOpen = false;
+      this.host = host; this.ctx = ctx; this.tableAll = false; this.fontOpen = false; this.visible = false;
       host.innerHTML = '';
       const mk = (tag, cls, txt, attrs) => { const el = document.createElement(tag); if (cls) el.className = cls; if (txt != null) el.textContent = txt; if (attrs) Object.keys(attrs).forEach(k => el.setAttribute(k, attrs[k])); return el; };
       const btn = (cls, txt, title, fn) => {
         const b = mk('button', 'mfb ' + cls, txt, { type: 'button', title, 'aria-label': title, tabindex: '-1' });
-        ['mousedown', 'pointerdown'].forEach(ev => b.addEventListener(ev, e => e.preventDefault()));
         b.addEventListener('click', e => { e.preventDefault(); fn(); });
         return b;
       };
-      this.lbl = mk('div', 'mfl'); this.scope = mk('span', 'mfs'); this.areaEl = mk('b'); this.lbl.append(this.areaEl, document.createTextNode(' · النطاق: '), this.scope);
+      this.lbl = mk('div', 'mfl'); this.scope = mk('span', 'mfs'); this.areaEl = mk('b'); this.lbl.append(this.areaEl, document.createTextNode(' · '), this.scope);
       const row = mk('div', 'mfr');
       this.fontBtn = btn('mf-font', 'الخط', 'نوع الخط', () => { this.fontOpen = !this.fontOpen; this.refresh(); });
       this.dec = btn('mf-sz', 'A−', 'تصغير الخط', () => this.step(-1));
@@ -271,7 +270,39 @@
       this.pop = mk('div', 'mf-pop'); this.pop.hidden = true;
       D.PICK.forEach(k => { const f = D.FONTS[k]; const b = btn('mf-pi', f.label + (f.alwaysBold ? ' (غامق أصلاً)' : ''), f.label, () => { this.apply({ f: k }); this.fontOpen = false; this.refresh(); }); b.dataset.f = k; b.style.fontFamily = "'" + f.css + "', sans-serif"; this.pop.appendChild(b); });
       host.append(this.lbl, row, this.pop);
+      // أي لمسة داخل الشريط (أزرار/قائمة الخط/الفراغات) لا تنقل التركيز ولا تمسح التحديد
+      ['mousedown', 'pointerdown'].forEach(ev => host.addEventListener(ev, e => { e.preventDefault(); }));
+      this._wire();
       this.refresh();
+    }
+    inEditors(n) { if (!n || !n.nodeType) return false; if (this.host.contains(n)) return true; for (const ed of editors) if (ed.el.contains(n)) return true; return false; }
+    // إخفاء عند خروج التركيز: بعد رفع الإصبع/الفأرة (لا أثناء الضغط) كي لا ينزاح الهدف تحت الإصبع وتضيع النقرة
+    _wire() {
+      this._down = false; this._pend = false; let t = null;
+      const check = () => { clearTimeout(t); t = null; const a = document.activeElement; if (!this.inEditors(a) || a === document.body) this.hide(); };
+      const later = () => { clearTimeout(t); t = setTimeout(check, 0); };
+      document.addEventListener('pointerdown', e => { this._down = true; this._pend = !this.inEditors(e.target); }, true);
+      const up = () => { const was = this._down; this._down = false; if (was && this._pend) { this._pend = false; clearTimeout(t); t = setTimeout(check, 140); } };
+      document.addEventListener('pointerup', up, true); document.addEventListener('pointercancel', up, true);
+      document.addEventListener('focusin', e => { if (!this.visible || this.inEditors(e.target)) return; if (this._down) this._pend = true; else later(); }, true);
+    }
+    // أبقِ العنصر المرجعي ثابتاً على الشاشة عند تغيّر ارتفاع ما فوقه (لا قفزة تمرير)
+    _keep(anchorEl, fn) {
+      const r0 = anchorEl && anchorEl.isConnected ? anchorEl.getBoundingClientRect().top : null; fn();
+      if (r0 != null) { const d = anchorEl.getBoundingClientRect().top - r0; if (Math.abs(d) > 0.5) window.scrollBy(0, d); }
+    }
+    show() { this.visible = true; this.refresh(); }
+    hide(force) {
+      if (!this.visible && this.host.hidden) return; this.visible = false; this.fontOpen = false;
+      const a = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+      if (force) this.host.hidden = true; else this._keep(a, () => { this.host.hidden = true; });
+    }
+    place(ed) {
+      const anchor = this.ctx.anchorOf ? this.ctx.anchorOf(ed) : ed.el;
+      if (!anchor || !anchor.parentNode) return;
+      if (this.host.hidden || this.host.nextSibling !== anchor || this.host.parentNode !== anchor.parentNode) {
+        this._keep(ed.el, () => { anchor.parentNode.insertBefore(this.host, anchor); this.host.hidden = false; });
+      }
     }
     cur() { return active && active.el.isConnected ? active : null; }
     info() {
@@ -289,10 +320,11 @@
       return { ed, area, base, scope, q: query(ps, base, s0, e0), n: e0 - s0, s0, e0 };
     }
     refresh() {
+      if (!this.visible) return;
       const I = this.info();
-      this.host.classList.toggle('mf-idle', !I);
-      if (!I) { this.areaEl.textContent = 'اضغط داخل أي حقل نصي للتنسيق'; this.scope.textContent = '—'; this.pop.hidden = true; return; }
+      if (!I) { this.hide(); return; }
       const { ed, area, scope, q } = I;
+      this.place(ed);
       this.areaEl.textContent = AREA_LABEL[area];
       this.scope.textContent = scope === 'sel' ? (area === 'table' ? 'المحدد داخل الخلية (' + I.n + ' حرف)' : 'المحدد (' + I.n + ' حرف)') : scope === 'table' ? 'الجدول كله' : scope === 'cell' ? 'الخلية (صف ' + (ed.cfg.row + 1) + '، عمود ' + (ed.cfg.col + 1) + ')' : AREA_LABEL[area] + ' كاملاً';
       this.tBtn.hidden = area !== 'table'; this.tBtn.classList.toggle('on', this.tableAll);
@@ -302,7 +334,7 @@
       this.bBtn.classList.toggle('on', q.b === true); this.iBtn.classList.toggle('on', q.i === true);
       this.bBtn.setAttribute('aria-pressed', String(q.b === true)); this.iBtn.setAttribute('aria-pressed', String(q.i === true));
       const pt = (q.f && D.FONTS[q.f].alwaysBold); this.bBtn.disabled = !!pt; this.bBtn.title = pt ? 'PT Bold Heading غامق أصلاً' : 'غامق';
-      this.pop.hidden = !this.fontOpen;
+      if (this.pop.hidden !== !this.fontOpen) this._keep(ed.el, () => { this.pop.hidden = !this.fontOpen; });
       Array.from(this.pop.children).forEach(b => b.classList.toggle('on', b.dataset.f === q.f));
     }
     // يطبّق patch على النطاق الحالي

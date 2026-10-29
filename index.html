@@ -113,16 +113,18 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .field input, .field select, .field textarea { padding: 9px 12px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.88rem; color: #1a202c; background: #FAFBFC; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: #2E4057; background: white; }
 /* N23: محرّر المذكرة الغني */
-.memo-fmtbar { position: sticky; top: 0; z-index: 20; background: #fff; border: 1.5px solid #2E4057; border-radius: 10px; padding: 6px 8px; margin: 0 0 10px; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
-.memo-fmtbar .mfl { font-size: 0.74rem; color: #4A5568; margin-bottom: 4px; }
-.memo-fmtbar .mfr { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.memo-fmtbar .mfb { min-width: 38px; height: 36px; padding: 0 10px; border: 1.5px solid #CBD5E0; border-radius: 8px; background: #F7FAFC; font-family: inherit; font-size: 0.85rem; cursor: pointer; color: #1a202c; }
+.memo-fmtbar { box-sizing: border-box; max-width: 100%; background: #fff; border: 1.5px solid #2E4057; border-radius: 9px; padding: 3px 6px 5px; margin: 0; box-shadow: 0 1px 4px rgba(0,0,0,.10); }
+.memo-fmtbar[hidden] { display: none !important; }
+.memo-fmtbar .mfl { font-size: 0.68rem; line-height: 1.5; color: #4A5568; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.memo-fmtbar .mfr { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.memo-fmtbar .mfb { min-width: 34px; height: 32px; padding: 0 8px; border: 1.5px solid #CBD5E0; border-radius: 8px; background: #F7FAFC; font-family: inherit; font-size: 0.8rem; cursor: pointer; color: #2D3748; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
 .memo-fmtbar .mfb.on { background: #2E4057; color: #fff; border-color: #2E4057; }
 .memo-fmtbar .mfb:disabled { opacity: .45; }
 .memo-fmtbar .mf-b { font-weight: 900; } .memo-fmtbar .mf-i { font-style: italic; font-weight: 700; }
-.memo-fmtbar .mf-szv { min-width: 34px; text-align: center; font-weight: 700; font-size: 0.9rem; }
-.memo-fmtbar .mf-pop { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; } .memo-fmtbar .mf-pop[hidden] { display: none; }
-.memo-fmtbar .mf-pi { text-align: right; font-size: 1.05rem; } .memo-fmtbar.mf-idle .mfr { opacity: .55; }
+.memo-fmtbar .mf-szv { min-width: 26px; text-align: center; font-weight: 700; font-size: 0.85rem; }
+.memo-fmtbar .mf-pop { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 4px; } .memo-fmtbar .mf-pop[hidden] { display: none; }
+.memo-fmtbar .mf-pi { text-align: right; font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#memoFontNote { font-size: 0.74rem; line-height: 1.6; }
 .memo-ed { position: relative; min-height: 44px; padding: 10px 12px; border: 1.5px solid #CBD5E0; border-radius: 10px; background: #fff; font-size: 16px; line-height: 1.9; direction: rtl; text-align: right; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-user-select: text; user-select: text; -webkit-text-size-adjust: 100%; outline: none; }
 .memo-ed:focus { border-color: #2E4057; box-shadow: 0 0 0 2px rgba(46,64,87,.15); }
 .memo-ed.is-empty::before { content: attr(data-ph); position: absolute; right: 12px; top: 10px; color: #A0AEC0; font-size: 0.9rem; pointer-events: none; font-family: inherit; }
@@ -1435,7 +1437,8 @@ tbody tr:hover { background: #F7FAFC; }
 
   <div id="memoNewView" style="display:none">
     <div class="page-title">📝 مذكرة جديدة</div>
-    <div id="memoFmtBar" class="memo-fmtbar"></div>
+    <div id="memoFontNote"></div>
+    <div id="memoFmtBar" class="memo-fmtbar" hidden></div>
     <div class="form-card">
       <div class="grid-2">
         <div class="field"><label>العدد</label><input type="text" id="memo_number"></div>
