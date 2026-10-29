@@ -415,8 +415,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
-    <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">إحصائيات الموظفين</span></div>
-    <div class="card" id="svcPeriodStatsCard" onclick="openPeriodStatsFeature()"><span class="icon">📈</span><span class="label">إحصائيات الفترة</span></div>
+    <div class="card" id="svcStatsCard" onclick="openStatisticsHub()"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">الإحصائيات</span></div>
     <div class="card" id="svcFormsCard" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
     <div class="card" onclick="openInventoryFeature();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
@@ -1190,16 +1189,12 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="hubDetailList" style="margin-top:14px"></div>
   </div>
 </div>
-<!-- v335-C6r17 (N22): إحصائيات الفترة المتكاملة — الصفحة فارغة حتى أول فتح؛ الواجهة كلها في period-stats.js (تحميل كسول) -->
-<div class="page" id="page-periodStats">
-  <div class="page-title">📈 إحصائيات الفترة</div>
-  <div id="psRoot"><div style="text-align:center;color:#718096;padding:40px 0">… جارٍ التحميل</div></div>
-</div>
 <div class="page" id="page-staffStats">
-  <div class="page-title"><img src="icon-stats.png" style="width:28px;height:28px;vertical-align:middle;margin-left:6px"> إحصائيات الموظفين</div>
+  <div class="page-title"><img src="icon-stats.png" style="width:28px;height:28px;vertical-align:middle;margin-left:6px"> الإحصائيات</div>
 
   <div class="dep-tabs" style="margin-bottom:14px">
-    <button class="dep-tab active" id="staffStatsTabStatsBtn" onclick="switchStaffStatsTab('stats',this)">📊 إحصائيات الكشوفات</button>
+    <button class="dep-tab active" id="staffStatsTabStatsBtn" onclick="switchStaffStatsTab('stats',this)">📊 إحصائيات الموظفين</button>
+    <button class="dep-tab" id="staffStatsTabPeriodBtn" onclick="switchStaffStatsTab('period',this)">📈 إحصائيات الخطوط والفترة</button>
     <button class="dep-tab" id="staffStatsTabRosterBtn" onclick="switchStaffStatsTab('roster',this)">👥 كادر القسم</button>
   </div>
 
@@ -1224,6 +1219,9 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="empty-state">⏳ جاري التحميل...</div>
   </div>
   </div>
+
+  <!-- v335-C6r17 (N22d2): إحصائيات الخطوط والفترة — فارغة حتى أول اختيار لهذا اللسان؛ الواجهة كلها في period-stats.js (تحميل كسول) -->
+  <div id="staffPeriodView" style="display:none"><div id="psRoot"><div style="text-align:center;color:#718096;padding:40px 0">… جارٍ التحميل</div></div></div>
 
   <!-- staffRosterView: تُركَّب عند الطلب من staff-roster.js -->
 </div>
@@ -3276,12 +3274,9 @@ function applyRolePermissions() {
   // النسخ الاحتياطي: للمدير فقط (يتعامل مع كامل بيانات قاعدة البيانات)
   const backupCard = document.getElementById('svcBackupCard');
   if (backupCard) backupCard.style.display = (currentUser.role === 'admin') ? '' : 'none';
-  // v335-C6r17 (N22): إحصائيات الفترة: المدير والمشرف والقراءة فقط (الفني ممنوع، والخادم يفرض نفس القاعدة)
-  const periodStatsCard = document.getElementById('svcPeriodStatsCard');
-  if (periodStatsCard) periodStatsCard.style.display = isTechnician ? 'none' : '';
-  // إحصائيات الموظفين: للمدير والمشرف فقط
+  // الإحصائيات (بطاقة واحدة): المدير والمشرف والقراءة فقط (الفني ممنوع). داخلها: إحصائيات الموظفين وكادر القسم للمدير والمشرف فقط، وإحصائيات الخطوط والفترة للثلاثة (الخادم يفرض القواعد نفسها)
   const statsCard = document.getElementById('svcStatsCard');
-  if (statsCard) statsCard.style.display = isAdminOrSupervisor ? '' : 'none';
+  if (statsCard) statsCard.style.display = isTechnician ? 'none' : '';
   // التقرير اليومي: للمدير والمشرف فقط
   const dailyReportCard = document.getElementById('homeDailyReportCard');
   if (dailyReportCard) dailyReportCard.style.display = isAdminOrSupervisor ? '' : 'none';
@@ -3309,7 +3304,7 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','periodStats','dailyReport','forms','memo','backup','recordsHub','workOrders'];
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','recordsHub','workOrders'];
 
 let pageStack = [];
 
@@ -7704,9 +7699,8 @@ function ensurePeriodStatsLoaded() {
 
 function openPeriodStatsFeature() {
   if (!currentUser || ['admin', 'supervisor', 'readonly'].indexOf(currentUser.role) < 0) { showToast('⚠️ ما عندك صلاحية لهذي الصفحة', 'error'); return; }
-  showPage('periodStats');
-  const tok = { p: pageNavigationRequestSeq, s: staffSessionTag() };
-  const ok = () => tok.p === pageNavigationRequestSeq && tok.s === staffSessionTag();
+  const tok = { p: pageNavigationRequestSeq, s: staffSessionTag(), t: _stNavSeq };
+  const ok = () => tok.p === pageNavigationRequestSeq && tok.s === staffSessionTag() && tok.t === _stNavSeq && _hubTab === 'period';   // تبديل اللسان أثناء التحميل الكسول يُسقط الفتح
   ensurePeriodStatsLoaded().then(() => { if (ok()) window.PeriodStats.open(tok); }).catch(() => {
     if (!ok()) return;
     const root = document.getElementById('psRoot');
@@ -7736,17 +7730,57 @@ function staffRun(mods, fn, bump) {
   );
 }
 
-function staffTabsShow(isRoster) {
-  document.getElementById('staffStatsStatsView').style.display = isRoster ? 'none' : '';
-  const rv = document.getElementById('staffRosterView'); if (rv) rv.style.display = isRoster ? '' : 'none';
-  document.getElementById('staffStatsTabStatsBtn').classList.toggle('active', !isRoster);
-  document.getElementById('staffStatsTabRosterBtn').classList.toggle('active', isRoster);
+// ---- منطقة «الإحصائيات»: ثلاثة ألسنة (موظفين | خطوط وفترة | كادر القسم) داخل الصفحة نفسها ----
+let _hubTab = 'stats';
+const _hubScroll = { stats: 0, period: 0, roster: 0 };
+
+function _hubScrollEl() { return document.scrollingElement || document.documentElement; }
+
+function staffTabsShow(isRoster) { statsHubShow(isRoster ? 'roster' : 'stats'); }
+
+function statsHubShow(tab) {
+  if (tab !== _hubTab) {
+    _hubScroll[_hubTab] = _hubScrollEl().scrollTop;
+    if (_hubTab === 'period' && window.PeriodStats && typeof window.PeriodStats.deactivate === 'function') window.PeriodStats.deactivate();   // يُبطل أي ردّ معلّق ويغلق نافذة التفاصيل
+  }
+  const was = _hubTab; _hubTab = tab;
+  document.getElementById('staffStatsStatsView').style.display = tab === 'stats' ? '' : 'none';
+  const pv = document.getElementById('staffPeriodView'); if (pv) pv.style.display = tab === 'period' ? '' : 'none';
+  const rv = document.getElementById('staffRosterView'); if (rv) rv.style.display = tab === 'roster' ? '' : 'none';
+  document.getElementById('staffStatsTabStatsBtn').classList.toggle('active', tab === 'stats');
+  document.getElementById('staffStatsTabPeriodBtn').classList.toggle('active', tab === 'period');
+  document.getElementById('staffStatsTabRosterBtn').classList.toggle('active', tab === 'roster');
+  if (was !== tab) requestAnimationFrame(() => { _hubScrollEl().scrollTop = _hubScroll[tab] || 0; });
+}
+
+// أي ألسنة يراها الدور: الموظفون وكادر القسم للمدير والمشرف فقط (كما قبل)، والخطوط والفترة للثلاثة
+function statsHubApplyRole() {
+  const r = currentUser && currentUser.role, staffOk = r === 'admin' || r === 'supervisor';
+  document.getElementById('staffStatsTabStatsBtn').style.display = staffOk ? '' : 'none';
+  document.getElementById('staffStatsTabRosterBtn').style.display = staffOk ? '' : 'none';
+  document.getElementById('staffStatsTabPeriodBtn').style.display = (staffOk || r === 'readonly') ? '' : 'none';
+}
+
+function openStatisticsHub() {
+  const r = currentUser && currentUser.role;
+  if (['admin', 'supervisor', 'readonly'].indexOf(r) < 0) { showToast('⚠️ ما عندك صلاحية لهذي الصفحة', 'error'); return; }
+  _hubScroll.stats = _hubScroll.period = _hubScroll.roster = 0;
+  showPage('staffStats');
+  statsHubApplyRole();
+  if (r === 'readonly') { _hubTab = 'stats'; return switchStaffStatsTab('period'); }   // القراءة فقط: لا إحصائيات موظفين ولا كادر
+  statsHubShow('stats'); return loadStaffStats();                                   // الافتراضي كما قبل: إحصائيات الموظفين
 }
 
 function switchStaffStatsTab(tab, btn) {
   _stNavSeq++;                                   // أي تبديل لسان يُبطل طلباً معلّقاً سابقاً
+  const r = currentUser && currentUser.role, staffOk = r === 'admin' || r === 'supervisor';
+  if (tab === 'period') {
+    if (!(staffOk || r === 'readonly')) { showToast('⚠️ ما عندك صلاحية لهذي الصفحة', 'error'); return; }
+    statsHubShow('period'); return openPeriodStatsFeature();
+  }
+  if (!staffOk) { showToast('⚠️ ما عندك صلاحية لهذي الصفحة', 'error'); return; }
   if (tab === 'roster') return staffRun(['roster'], () => switchStaffStatsTabRosterImpl());
-  staffTabsShow(false);
+  statsHubShow('stats');
 }
 
 function loadStaffStats()                       { return staffRun(['stats'], (tok) => loadStaffStatsImpl(tok), true); }

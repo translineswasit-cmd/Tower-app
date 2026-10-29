@@ -79,7 +79,7 @@
 
   function sessTag() { try { return staffSessionTag(); } catch (e) { return ''; } }
   function navSeq() { try { return pageNavigationRequestSeq; } catch (e) { return -1; } }
-  function pageActive() { const p = $('page-periodStats'); return !!(p && p.classList.contains('active')); }
+  function pageActive() { const p = $('page-staffStats'); return !!(p && p.classList.contains('active')) && typeof _hubTab !== 'undefined' && _hubTab === 'period'; }   // N22d2: لسان «الخطوط والفترة» داخل صفحة الإحصائيات
   function tokOk(tok) { return !!tok && tok.p === navSeq() && tok.s === sessTag() && pageActive(); }
   function roleOk() { try { return !!currentUser && ROLES.indexOf(currentUser.role) >= 0; } catch (e) { return false; } }
   function pendingCount() { try { return typeof getTotalPendingCount === 'function' ? getTotalPendingCount() : 0; } catch (e) { return 0; } }
@@ -184,7 +184,7 @@
       root.addEventListener('change', onChange);
     }
     if (!$('psSheet')) {
-      const page = $('page-periodStats');
+      const page = $('page-staffStats');
       page.insertAdjacentHTML('afterend', `
 <div class="modal-bg ps-bg" id="psSheet" onclick="if(event.target===this){closePeriodStatsSheet();}">
   <div class="ps-sheet" role="dialog" aria-modal="true" aria-labelledby="psShTitle">
@@ -844,6 +844,8 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
     renderBar();
     load(false);
   }
+  // تبديل اللسان بعيداً: أي ردّ معلّق يسقط ولا يبقى «جارٍ التحميل»، وتُغلق نافذة التفاصيل (العودة تعيد الفتح من الكاش دون طلب إن كان حديثاً)
+  function deactivate() { S.seq++; S.loading = false; closeSheetHard(); }
   function purge() {
     S.cache.clear(); S.cur = null; S.err = null; S.loading = false; S.seq++; S.sess = ''; S.from = null; S.to = null; S.preset = 'm0'; S.pick = null; S.msg = '';
     closeSheetHard();
@@ -853,5 +855,5 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
   window.addEventListener('online', () => { if (pageActive() && S.mounted && S.tok && tokOk(S.tok)) { renderBody(); if (!S.cur || Date.now() - S.cur.at > FRESH_MS) load(false); } });
   window.addEventListener('offline', () => { if (pageActive() && S.mounted) renderBody(); });
 
-  window.PeriodStats = { open, purge, sheetBack, _state: S, _sheet: SH, _phaseLine: phaseLine, _inspectHtml: inspectHtml };
+  window.PeriodStats = { open, purge, deactivate, sheetBack, _state: S, _sheet: SH, _phaseLine: phaseLine, _inspectHtml: inspectHtml };
 })();
