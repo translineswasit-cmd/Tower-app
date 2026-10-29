@@ -443,35 +443,47 @@ async function memoLoadRecord(id) {
   return { id, m, pend, official, wantNumber, st };
 }
 const memoCanEdit = () => !!currentUser && (currentUser.role === 'admin' || currentUser.role === 'supervisor');   // نفس شرط الخادم (app_memo_save)
-let memoPvSeq = 0, memoPvScroll = 0, memoPvRec = null, memoPvScope = '';
+let memoPvSeq = 0, memoPvRec = null, memoPvScope = '';
 // نطاق الجلسة: المستخدم + رمز الجلسة؛ أي تغيّر (خروج/استبدال حساب) يُبطل المعاينة وما قيد التحميل/الرسم/الطباعة
 const memoScope = () => (typeof currentUser !== 'undefined' && currentUser) ? String(currentUser.id) + '|' + ((typeof CS_AUTH !== 'undefined' && CS_AUTH && CS_AUTH.token) || '') : '';
+// طبقة معاينة: تدخل مكدّس _dlg (صنف modal-bg show) تحت الهيدر؛ الإزاحة العلوية = ارتفاع الهيدر المقيس ويُعاد قياسها عند تغيّر الحجم
+function memoOvTop(ov) {
+  const h = document.getElementById('appHeader'); ov.style.setProperty('--memo-ov-top', Math.max(0, Math.round(h ? h.getBoundingClientRect().bottom : 0)) + 'px');
+}
+const memoOvResizers = new Map();
+function memoOvMount(ov) {
+  ov.className = 'modal-bg show'; memoOvTop(ov);
+  const fn = () => memoOvTop(ov); window.addEventListener('resize', fn); memoOvResizers.set(ov, fn);
+  document.body.appendChild(ov);
+  if (typeof dlgScan === 'function') dlgScan();
+}
+function memoOvUnmount(ov) {
+  if (!ov) return;
+  const fn = memoOvResizers.get(ov); if (fn) { window.removeEventListener('resize', fn); memoOvResizers.delete(ov); }
+  if (ov.isConnected) ov.remove();
+  if (typeof dlgSync === 'function') dlgSync();      // فكّ القفل/الـinert فوراً قبل أي خطوة تالية (مثل الدخول إلى التحرير)
+}
 function memoPvAlive(my) { return my === memoPvSeq && !!memoPvScope && memoPvScope === memoScope(); }
 function memoSessionEnd() {                        // يُستدعى عند الخروج/استبدال الجلسة: لا تبقى معاينة ولا سجل محتفَظ به ولا إطار طباعة
   memoPvSeq++; memoPvRec = null; memoPvScope = '';
-  const ov = document.getElementById('memoArchivePv'); if (ov) ov.remove();
+  memoPvUnmountAll();
+}
+function memoPvUnmountAll() {
   const fr = document.getElementById('memoPrintFrame'); if (fr) fr.remove();
-  if (typeof memoPvPrevOverflow !== 'undefined' && document.body.style.overflow === 'hidden') document.body.style.overflow = memoPvPrevOverflow || '';
-  try { popLevelIfMatches(memoClosePreview); } catch (e) {}
+  memoOvUnmount(document.getElementById('memoArchivePv')); memoOvUnmount(document.getElementById('memoPreviewOv'));
 }
 
-function memoClosePreview(fromBack) {
+function memoClosePreview() {
   memoPvSeq++;                                   // أي استجابة متأخرة بعد الإغلاق تُهمَل
   memoPvRec = null; memoPvScope = '';
   const fr = document.getElementById('memoPrintFrame'); if (fr) fr.remove();
-  const ov = document.getElementById('memoArchivePv');
-  if (ov) ov.remove();
-  document.body.style.overflow = memoPvPrevOverflow || '';
-  if (!fromBack) popLevelIfMatches(memoClosePreview);
-  window.scrollTo(0, memoPvScroll);                // الأرشيف لم يُمسّ (الفلتر والقائمة كما هما)؛ نعيد موضع التمرير فقط
+  memoOvUnmount(document.getElementById('memoArchivePv'));   // القفل والرجوع واستعادة التمرير والتركيز يتولاها مكدّس _dlg؛ الأرشيف (الفلتر/القائمة) لم يُمسّ
 }
-let memoPvPrevOverflow = '';
 async function openMemoFromArchive(id) {
   const my = ++memoPvSeq; const scope = memoPvScope = memoScope();
   if (!scope) { memoPvScope = ''; return; }
   let ov = document.getElementById('memoArchivePv');
-  if (!ov) { memoPvScroll = window.scrollY || 0; memoPvPrevOverflow = document.body.style.overflow; }
-  if (ov) ov.remove();
+  if (ov) memoOvUnmount(ov);
   ov = document.createElement('div'); ov.id = 'memoArchivePv'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'معاينة المذكرة');
   const bar = document.createElement('div'); bar.className = 'pv-bar';
   const mkb = (txt, cls, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = txt; if (cls) b.className = cls; b.onclick = fn; return b; };
@@ -481,8 +493,7 @@ async function openMemoFromArchive(id) {
   const ttl = document.createElement('div'); ttl.className = 'pv-ttl'; ttl.textContent = '⏳ جاري تحميل المذكرة…';
   bar.append(back, printB, editB, ttl); ov.appendChild(bar);
   const msg = document.createElement('div'); msg.className = 'pv-msg'; msg.textContent = '⏳ جاري التحميل…'; ov.appendChild(msg);
-  document.body.style.overflow = 'hidden'; document.body.appendChild(ov);
-  pushLevel(memoClosePreview);
+  memoOvMount(ov);
   memoPvRec = null;
   const fail = (text, retry) => {
     if (my !== memoPvSeq) return;
@@ -529,7 +540,7 @@ function memoPrintCanvases(canvases, alive) {
   alive = alive || (() => true);
   const html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title></title><style>@page{size:A4;margin:0}html,body{margin:0;padding:0}.pg{width:595pt;height:842pt;overflow:hidden;page-break-after:always;break-after:page}.pg:last-child{page-break-after:auto;break-after:auto}.pg img{display:block;width:555pt;margin:20pt auto 0}</style></head><body>' + canvases.map(cv => '<div class="pg"><img src="' + cv.toDataURL('image/png') + '"></div>').join('') + '</body></html>';
   let frame = document.getElementById('memoPrintFrame'); if (frame) frame.remove();
-  frame = document.createElement('iframe'); frame.id = 'memoPrintFrame'; frame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:0;height:0;border:0';
+  frame = document.createElement('iframe'); frame.id = 'memoPrintFrame'; frame.setAttribute('data-dlg-keep', ''); frame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:0;height:0;border:0';
   document.body.appendChild(frame);
   const doc = frame.contentWindow.document; doc.open(); doc.write(html); doc.close();
   const imgs = Array.from(doc.images), go = () => { if (!alive()) { frame.remove(); return; } try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (e) { showToast('❌ تعذرت الطباعة', 'error'); } };
@@ -580,20 +591,23 @@ function memoHdr(official) {
 }
 function memoFontFailMsg(e) { return '❌ تعذّر تحميل الخط (' + (e.failed || []).join('، ') + ') — لم يُنشأ الملف ولم يُستبدل الخط بآخر. اتصل بالإنترنت مرة واحدة وأعد المحاولة'; }
 
+function memoCloseEditorPreview() { memoOvUnmount(document.getElementById('memoPreviewOv')); }
 async function previewMemo() {
   if (!memoState) return;
   const official = memoOfficialNumber !== null && memoDigits(document.getElementById('memo_number').value) === String(memoOfficialNumber);
   showToast('⏳ جاري تحضير المعاينة...');
+  const sc = memoScope();
   try {
     const { canvases } = await memoMD().renderPages(memoOutputState(), memoHdr(official), 2);
-    const ov = document.createElement('div'); ov.id = 'memoPreviewOv'; ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(20,24,32,.88);overflow:auto;-webkit-overflow-scrolling:touch;padding:12px';
+    if (sc !== memoScope()) return;               // تغيّرت الجلسة أثناء الرسم
+    const ov = document.createElement('div'); ov.id = 'memoPreviewOv'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'معاينة المذكرة');
     const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:10px;align-items:center;justify-content:space-between;color:#fff;margin-bottom:10px;font-size:0.85rem';
     const ttl = document.createElement('div'); ttl.textContent = 'معاينة — ' + canvases.length + ' صفحة (هي نفسها صفحات PDF)' + (official ? '' : ' — العدد غير معتمد بعد فلا يظهر');
-    const x = document.createElement('button'); x.textContent = '✕ إغلاق'; x.style.cssText = 'padding:8px 14px;border:none;border-radius:8px;font-family:inherit;font-weight:700'; x.onclick = () => ov.remove();
+    const x = document.createElement('button'); x.type = 'button'; x.textContent = '✕ إغلاق'; x.style.cssText = 'padding:8px 14px;border:none;border-radius:8px;font-family:inherit;font-weight:700'; x.onclick = () => memoCloseEditorPreview();
     bar.append(ttl, x); ov.appendChild(bar);
     canvases.forEach((cv, i) => { cv.style.cssText = 'display:block;width:min(100%,560px);height:auto;margin:0 auto 12px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.4)'; cv.setAttribute('aria-label', 'صفحة ' + (i + 1)); ov.appendChild(cv); });
-    const old = document.getElementById('memoPreviewOv'); if (old) old.remove();
-    document.body.appendChild(ov);
+    const old = document.getElementById('memoPreviewOv'); if (old) memoOvUnmount(old);
+    memoOvMount(ov);
   } catch (e) { showToast(e && e.code === 'FONT_FAIL' ? memoFontFailMsg(e) : '❌ تعذرت المعاينة: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error'); }
 }
 

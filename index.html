@@ -128,7 +128,11 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .memo-fmtbar .mf-algrp { display: inline-flex; gap: 3px; } .memo-fmtbar .mf-al { min-width: 30px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; }
 .memo-ed-att { min-height: 44px; counter-reset: matt; } .memo-ed-att .mp { text-align: right; counter-increment: matt; } .memo-ed-att .mp::before { content: counter(matt) ". "; color: #718096; }
 .memo-ed-sig { min-height: 40px; padding: 6px 8px; }
-#memoArchivePv { position: fixed; inset: 0; z-index: 9990; background: #E9EDF2; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+/* معاينتا المذكرة طبقتان في مكدّس _dlg (صنف modal-bg show): تحت شريط الرجوع (z 700) وبإزاحة علوية بارتفاع الهيدر المقيس (--memo-ov-top) */
+#memoArchivePv, #memoPreviewOv { position: fixed; left: 0; right: 0; bottom: 0; top: var(--memo-ov-top, 0px); inset-inline: 0; z-index: 650; display: block; padding: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+#memoArchivePv:not(.show), #memoPreviewOv:not(.show) { display: none; }   /* إغلاق قسري للنوافذ (showPage) ينزع show فيُخفى */
+#memoArchivePv { background: #E9EDF2; }
+#memoPreviewOv { background: rgba(20,24,32,.88); padding: 12px; }
 #memoArchivePv .pv-bar { position: sticky; top: 0; z-index: 2; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; background: #2E4057; color: #fff; padding: 8px 10px; }
 #memoArchivePv .pv-bar button { height: 36px; padding: 0 12px; border: none; border-radius: 8px; font-family: inherit; font-weight: 700; font-size: 0.85rem; cursor: pointer; background: #fff; color: #2E4057; }
 #memoArchivePv .pv-bar .pv-ttl { flex: 1 1 100%; font-size: 0.8rem; opacity: .9; order: 9; }
@@ -3409,7 +3413,7 @@ const DLG_CLOSERS = {
   deleteUserModal: 'closeDeleteUserModal', accountActionsModal: 'closeAccountActionsModal', viewPasswordModal: 'closeViewPasswordModal', addMemberModal: 'closeAddMemberModal',
   depExportModalBg: 'closeDepExportModal', exportModalBg: 'closeExportModal', printStaffRosterModalBg: 'closePrintStaffRosterModal',
   staffMemberModal: 'closeStaffMemberModal', treatmentEditModalBg: 'closeTreatmentEditModal', depLogExportModalBg: 'closeDepLogExportModal', workOrderModal: 'closeWorkOrderModal',
-  addBorrowModal: 'closeAddBorrowModal', addToolModal: 'closeAddToolModal', editToolModal: 'closeEditToolModal', addMaterialModal: 'closeAddMaterialModal', editMaterialModal: 'closeEditMaterialModal', lineModal: 'closeLineModal', psSheet: 'closePeriodStatsSheet'
+  addBorrowModal: 'closeAddBorrowModal', addToolModal: 'closeAddToolModal', editToolModal: 'closeEditToolModal', addMaterialModal: 'closeAddMaterialModal', editMaterialModal: 'closeEditMaterialModal', lineModal: 'closeLineModal', memoArchivePv: 'memoClosePreview', memoPreviewOv: 'memoCloseEditorPreview', psSheet: 'closePeriodStatsSheet'
 };   // addStaffColumnModal و staffStatsDetailModal: لا دالة إغلاق مخصصة (إخفاء مباشر) → الإغلاق الافتراضي
 const DLG_DISPLAY_IDS = ['addBorrowModal', 'addToolModal', 'editToolModal', 'addMaterialModal', 'editMaterialModal', 'lineModal'];
 const _dlg = { known: new Map(), stack: [], inerted: new Set(), locked: false, saved: null, y: 0, lst: false, act: null, actAt: 0, ty: 0, mo: null, bmo: null,
@@ -3427,6 +3431,7 @@ function _dlgRestoreScrolls(list) { (list || []).forEach(r => { if (r[0].isConne
 function _dlgZ(el) { return parseInt(getComputedStyle(el).zIndex, 10) || 0; }
 
 function dlgScan() {
+  _dlg.known.forEach((info, el) => { if (!el.isConnected && _dlg.stack.indexOf(el) < 0) _dlg.known.delete(el); });   // عناصر ديناميكية أُزيلت (معاينات المذكرة): لا تتراكم في السجل
   const found = [].slice.call(document.querySelectorAll('.modal-bg, .treat-modal-bg')).map(el => [el, false]);
   DLG_DISPLAY_IDS.forEach(id => { const el = document.getElementById(id); if (el) found.push([el, true]); });
   if (!_dlg.mo) {
@@ -3520,7 +3525,7 @@ function _dlgLock() {
     b.style.position = 'fixed'; b.style.top = (-_dlg.y) + 'px'; b.style.left = '0'; b.style.right = '0'; b.style.width = '100%'; b.style.overflow = 'hidden';
   } else {
     const gw = window.innerWidth - h.clientWidth;   // عرض شريط التمرير: يُعوَّض حتى لا يقفز المحتوى عند إخفائه
-    h.style.overflow = 'hidden'; b.style.overflow = 'hidden';
+    h.style.overflow = 'hidden';   // على الجذر فقط: overflow:hidden على html وbody معاً يجعل body حاوية التمرير فيخرج الهيدر اللاصق مع الصفحة (N17)
     if (gw > 0) { if (getComputedStyle(b).direction === 'rtl') h.style.paddingLeft = gw + 'px'; else h.style.paddingRight = gw + 'px'; }
   }
 }
