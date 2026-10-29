@@ -17,15 +17,21 @@
   const PICK = ['SA', 'TNR', 'TA', 'PT'];   // ما يعرضه الشريط (LEG مخفي: خط المذكرات القديمة)
   const SIZE_MIN = 8, SIZE_MAX = 40;
   const SKEW = 0.25;                       // إمالة مصطنعة موحّدة للمائل (لا يوجد خط عربي مائل مُرفق)
-  const KEYS = ['subject', 'body', 'table', 'after', 'closing'];
+  const KEYS = ['subject', 'body', 'table', 'after', 'closing', 'att', 'stitle', 'sname'];
+  const NEW_KEYS = ['att', 'stitle', 'sname'];              // N24b: مرفقات / عنوان مقدم الطلب / اسمه (كانت نصاً خاماً بخط قديم)
+  const AL = ['r', 'c', 'l', 'j'];                          // محاذاة الفقرة: يمين / وسط / يسار / ضبط (كشيدة = ضبط بتوزيع المسافات؛ لا تطويل ولا محارف تطويل)
+  const AL_DEFAULT = { subject: 'c', body: 'j', table: 'c', after: 'j', closing: 'c', att: 'r', stitle: 'c', sname: 'c' };
+  const cleanA = v => (AL.indexOf(v) >= 0 ? v : undefined);
   const LEG_PT = 16 * U, LEG_TBL_PT = 15 * U;
   const baseDefaults = () => ({
     subject: { f: 'SA', s: 14, b: true, i: false }, body: { f: 'SA', s: 14, b: false, i: false },
-    table: { f: 'SA', s: 12, b: false, i: false }, after: { f: 'SA', s: 14, b: false, i: false }, closing: { f: 'SA', s: 14, b: true, i: false }
+    table: { f: 'SA', s: 12, b: false, i: false }, after: { f: 'SA', s: 14, b: false, i: false }, closing: { f: 'SA', s: 14, b: true, i: false },
+    att: { f: 'SA', s: 14, b: false, i: false }, stitle: { f: 'SA', s: 14, b: false, i: false }, sname: { f: 'SA', s: 14, b: false, i: false }
   });
   const baseLegacy = () => ({
     subject: { f: 'LEG', s: LEG_PT, b: true, i: false }, body: { f: 'LEG', s: LEG_PT, b: false, i: false },
-    table: { f: 'LEG', s: LEG_TBL_PT, b: false, i: false }, after: { f: 'LEG', s: LEG_PT, b: false, i: false }, closing: { f: 'LEG', s: LEG_PT, b: false, i: false }
+    table: { f: 'LEG', s: LEG_TBL_PT, b: false, i: false }, after: { f: 'LEG', s: LEG_PT, b: false, i: false }, closing: { f: 'LEG', s: LEG_PT, b: false, i: false },
+    att: { f: 'LEG', s: LEG_PT, b: false, i: false }, stitle: { f: 'LEG', s: LEG_PT, b: false, i: false }, sname: { f: 'LEG', s: LEG_PT, b: false, i: false }
   });
   const CLOSING_TEXT = 'مع التقدير …';
 
@@ -56,17 +62,20 @@
     return out;
   }
   const runsText = runs => (runs || []).map(r => r.t).join('');
+  const mkLine = (runs, a) => { const o = { r: cleanRuns(runs) }; a = cleanA(a); if (a) o.a = a; return o; };      // سطر واحد {r, a?}
+  const attPlainList = att => (att ? att.map(p => paraText(p).replace(/\n/g, ' ')) : null);
+  const normList = l => (Array.isArray(l) ? l : []).map(x => String(x == null ? '' : x).trim()).filter(Boolean).join('\n');
   const paraText = p => runsText(p.r);
   const parasPlain = paras => (paras || []).map(paraText).join('\n');
   const normPlain = s => String(s == null ? '' : s).replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\s+$/g, '');
   function cleanParas(arr, max) {
     const out = [];
-    (Array.isArray(arr) ? arr : []).slice(0, max || 2000).forEach(p => { out.push({ r: cleanRuns(p && p.r) }); });
+    (Array.isArray(arr) ? arr : []).slice(0, max || 2000).forEach(p => { const o = { r: cleanRuns(p && p.r) }, a = cleanA(p && p.a); if (a) o.a = a; out.push(o); });
     return out.length ? out : [{ r: [] }];
   }
   function cleanTable(t) {
     if (!t || typeof t !== 'object' || !Array.isArray(t.c)) return null;
-    const rows = t.c.slice(0, 60).map(row => (Array.isArray(row) ? row : []).slice(0, 12).map(cell => ({ r: cleanRuns(cell && cell.r) })));
+    const rows = t.c.slice(0, 60).map(row => (Array.isArray(row) ? row : []).slice(0, 12).map(cell => { const o = { r: cleanRuns(cell && cell.r) }, a = cleanA(cell && cell.a); if (a) o.a = a; return o; }));
     const cols = Math.max(0, ...rows.map(r => r.length)); if (!rows.length || !cols) return null;
     rows.forEach(r => { while (r.length < cols) r.push({ r: [] }); });
     return { c: rows };
@@ -80,16 +89,18 @@
 
   // ---------------- state ----------------
   // state = { mode:'legacy'|'v1', from, subject:{r}, body:[para], table:{c}|null, after:[para], closing:{r}, base:{subject,body,table,after,closing}, touched:bool, notes:[] }
+  const strLines = a => (Array.isArray(a) ? a.map(x => ({ r: x == null || x === '' ? [] : [{ t: cleanText(x, 2000) }] })) : null);
   function legacyState(row) {
     row = row || {};
     return {
       mode: 'legacy', from: '', touched: false, notes: [], base: baseLegacy(),
       subject: { r: row.subject ? [{ t: cleanText(row.subject, 2000) }] : [] },
-      body: plainToParas(row.content || ''), table: plainToTable(row.table_data), after: [{ r: [] }], closing: { r: [{ t: CLOSING_TEXT }] }
+      body: plainToParas(row.content || ''), table: plainToTable(row.table_data), after: [{ r: [] }], closing: { r: [{ t: CLOSING_TEXT }] },
+      att: strLines(row.attachments), stitle: mkLine(row.sender_title ? [{ t: cleanText(row.sender_title, 2000) }] : []), sname: mkLine(row.sender_name ? [{ t: cleanText(row.sender_name, 2000) }] : [])
     };
   }
   function newState() {
-    return { mode: 'v1', from: '', touched: true, notes: [], base: baseDefaults(), subject: { r: [] }, body: [{ r: [] }], table: null, after: [{ r: [] }], closing: { r: [{ t: CLOSING_TEXT }] } };
+    return { mode: 'v1', from: '', touched: true, notes: [], base: baseDefaults(), subject: { r: [] }, body: [{ r: [] }], table: null, after: [{ r: [] }], closing: { r: [{ t: CLOSING_TEXT }] }, att: null, stitle: { r: [] }, sname: { r: [] } };
   }
   // layout JSON (as stored) → state. Returns {state, notes}. Never throws: invalid → null (caller falls back to legacy).
   function stateFromLayout(layout, row) {
@@ -97,14 +108,23 @@
     row = row || {};
     const st = { mode: 'v1', touched: false, notes: [] };
     const bs = layout.base || {}, bd = baseDefaults(), lg = baseLegacy();
-    st.base = {}; KEYS.forEach(k => { const d = (bs[k] && bs[k].f === 'LEG') ? lg[k] : bd[k]; st.base[k] = cleanBase(bs[k], d); });
+    // مفاتيح N24b الجديدة غير الموجودة في layout قديم = مظهرها القديم (خط قديم) فلا يتغيّر شيء في مذكرة محفوظة سابقاً
+    st.base = {}; KEYS.forEach(k => { const d = (bs[k] && bs[k].f === 'LEG') || (!bs[k] && NEW_KEYS.indexOf(k) >= 0) ? lg[k] : bd[k]; st.base[k] = cleanBase(bs[k], d); });
     st.from = cleanText(layout.from, 2000);
-    st.subject = { r: cleanRuns(layout.subject && (layout.subject.r || layout.subject)) };
+    const ln = x => mkLine(x && (x.r || (Array.isArray(x) ? x : [])), x && x.a);
+    st.subject = ln(layout.subject);
     st.body = cleanParas(layout.body); st.table = cleanTable(layout.table); st.after = cleanParas(layout.after);
-    st.closing = { r: cleanRuns(layout.closing && (layout.closing.r || layout.closing)) };
+    st.closing = ln(layout.closing);
+    // N24b: المرفقات/العنوان/الاسم — من layout إن وُجدت مفاتيحها وإلا من أعمدة الصف كنص خام (مذكرة محفوظة قبل N24b)
+    st.att = Array.isArray(layout.att) ? cleanParas(layout.att) : strLines(row.attachments);
+    st.stitle = ('stitle' in layout) ? ln(layout.stitle) : mkLine(row.sender_title ? [{ t: cleanText(row.sender_title, 2000) }] : []);
+    st.sname = ('sname' in layout) ? ln(layout.sname) : mkLine(row.sender_name ? [{ t: cleanText(row.sender_name, 2000) }] : []);
     // older client edited content/table_data/subject after this layout was saved → the plain columns win, styles of that area return to its base (never lose the rest)
     if (row.content != null && normPlain(parasPlain(st.body)) !== normPlain(row.content)) { st.body = plainToParas(row.content); st.notes.push('body'); }
     if (row.subject != null && normPlain(runsText(st.subject.r)) !== normPlain(row.subject)) { st.subject = { r: row.subject ? [{ t: cleanText(row.subject, 2000) }] : [] }; st.notes.push('subject'); }
+    if (Array.isArray(layout.att) && row.attachments !== undefined && normList(attPlainList(st.att)) !== normList(row.attachments)) { st.att = strLines(row.attachments); st.notes.push('att'); }
+    if (('stitle' in layout) && row.sender_title != null && normPlain(runsText(st.stitle.r)) !== normPlain(row.sender_title)) { st.stitle = mkLine(row.sender_title ? [{ t: cleanText(row.sender_title, 2000) }] : []); st.notes.push('stitle'); }
+    if (('sname' in layout) && row.sender_name != null && normPlain(runsText(st.sname.r)) !== normPlain(row.sender_name)) { st.sname = mkLine(row.sender_name ? [{ t: cleanText(row.sender_name, 2000) }] : []); st.notes.push('sname'); }
     if (row.table_data !== undefined) {
       const lp = JSON.stringify(tablePlain(st.table)), rp = JSON.stringify(Array.isArray(row.table_data) && row.table_data.length ? row.table_data.map(r => (r || []).map(c => String(c == null ? '' : c))) : null);
       if (lp !== rp) { st.table = plainToTable(row.table_data); st.notes.push('table'); }
@@ -112,14 +132,23 @@
     return st;
   }
   function layoutFromState(st) {
-    const L = { v: 1, base: {}, subject: { r: cleanRuns(st.subject.r) }, body: cleanParas(st.body), after: cleanParas(st.after), closing: { r: cleanRuns(st.closing.r) }, table: st.table ? cleanTable(st.table) : null };
+    const L = { v: 1, base: {}, subject: mkLine(st.subject.r, st.subject.a), body: cleanParas(st.body), after: cleanParas(st.after), closing: mkLine(st.closing.r, st.closing.a), table: st.table ? cleanTable(st.table) : null };
     KEYS.forEach(k => { L.base[k] = st.base[k]; });
     if (st.from) L.from = cleanText(st.from, 2000);
+    if (st.att) L.att = cleanParas(st.att);
+    if (st.stitle) L.stitle = mkLine(st.stitle.r, st.stitle.a);
+    if (st.sname) L.sname = mkLine(st.sname.r, st.sname.a);
     L.plain = parasPlain(L.body);
     return L;
   }
   // الجهة المصدِرة («من»): من hdr إن مُرّرت، وإلا من الحالة؛ فارغة = لا تُطبع
   const fromOf = (state, hdr) => String(hdr && hdr.from !== undefined ? hdr.from : (state.from || '')).trim();
+  // السطر المطبوع للجهة المصدِرة: «من / » + النص (كما «إلى /»)؛ فارغ = لا سطر. لا يُكرَّر إن كتب المستخدم «من /» بنفسه.
+  const fromLine = (state, hdr) => { const t = fromOf(state, hdr); return t ? (/^من\s*\//.test(t) ? t : 'من / ' + t) : ''; };
+  // المرفقات/العنوان/الاسم: من الحالة (N24b) أو من hdr القديمة (نص خام) لو لم تكن في الحالة
+  const attOf = (state, hdr) => (state.att !== undefined ? (state.att || []) : strLines(hdr && hdr.attachments) || []).filter(p => paraText(p).trim() !== '');
+  const lineOf = (state, hdr, key, hk) => (state[key] !== undefined ? state[key] : mkLine(hdr && hdr[hk] ? [{ t: String(hdr[hk]) }] : []));
+  const lineHas = l => !!l && paraText(l).trim() !== '';
   const afterHasText = st => st.after.some(p => paraText(p).trim() !== '');
   const closingRuns = st => st.closing.r;
   // table → plain array for the legacy column / older clients (null when no table)
@@ -167,6 +196,7 @@
     const set = new Map(), add = (run, base) => { const r = resolve(run, base); if (r.fam.legacy) return; set.set(faceKey(r.f, r.fam.files[700] && r.b ? 700 : 400), [r.f, r.fam.files[700] && r.b ? 700 : 400]); };
     const walkRuns = (runs, base) => { if (!runs.length) add({}, base); runs.forEach(r => add(r, base)); };
     walkRuns(st.subject.r, st.base.subject); st.body.forEach(p => walkRuns(p.r, st.base.body)); st.after.forEach(p => walkRuns(p.r, st.base.after)); walkRuns(st.closing.r, st.base.closing);
+    (st.att || []).forEach(p => { if (paraText(p).trim()) walkRuns(p.r, st.base.att); }); if (st.stitle && lineHas(st.stitle)) walkRuns(st.stitle.r, st.base.stitle); if (st.sname && lineHas(st.sname)) walkRuns(st.sname.r, st.base.sname);
     if (st.table) st.table.c.forEach(row => row.forEach(c => walkRuns(c.r, st.base.table)));
     return [...set.values()];
   }
@@ -297,11 +327,11 @@
     if (mode === 'justify' && n > 1) gap = Math.max(firstSp, (maxW - wsum) / (n - 1));
     const gapAt = (a, b) => gap != null ? gap : (words[Math.max(a, b)].sp || firstSp);
     let total = 0; order.forEach((wi, k) => { total += words[wi].w; if (k) total += gapAt(order[k - 1], wi); });
-    let x = mode === 'center' ? xRight + total / 2 : xRight;
+    let x = mode === 'center' ? xRight + total / 2 : (mode === 'left' ? xRight - maxW + total : xRight);
     const baseline = y + row.h * 0.7;
     // سطر بنمط واحد بلا كلمات LTR وغير مسطَّب: يُرسم نصاً متصلاً (كالمذكرة القديمة، ويحفظ التشكيل)
     const u = words[0].segs[0] && words.every(w => w.segs.length === 1 && sameStyle(w.segs[0].st, words[0].segs[0].st));
-    if (u && mode !== 'justify' && new Set(words.map(w => w.dir).filter(d => d !== 'n')).size <= 1 && words[0].segs[0].st.fam.legacy) {
+    if (u && (mode === 'right' || mode === 'center') && new Set(words.map(w => w.dir).filter(d => d !== 'n')).size <= 1 && words[0].segs[0].st.fam.legacy) {
       const st0 = words[0].segs[0].st, txt = words.map(w => w.segs[0].t).join(' ');
       ops.push({ t: 'text', text: txt, x: xRight, y: baseline, st: st0, al: mode === 'center' ? 'center' : 'right' }); return 0;
     }
@@ -339,9 +369,17 @@
     const op = o => pg.ops.push(o);
     const contentW = W - SIDE * 2, right = W - SIDE;
     const f16 = legSt(false, 16), f16b = legSt(true, 16), lh = 16 * 1.9;
+    // محاذاة صف داخل صندوق [boxRight-boxW … boxRight]: r يمين / c وسط / l يسار / j ضبط (آخر سطر/سطر مفصول/كلمة واحدة يبقى يميناً)
+    const emitA = (row, isLast, boxRight, boxW, yy, a) => {
+      if (a === 'c') emitRow(pg.ops, row, boxRight - boxW / 2, boxW, yy, 'center');
+      else if (a === 'l') emitRow(pg.ops, row, boxRight, boxW, yy, 'left');
+      else if (a === 'j') emitRow(pg.ops, row, boxRight, boxW, yy, (isLast || row.soft || row.words.length <= 1) ? 'right' : 'justify');
+      else emitRow(pg.ops, row, boxRight, boxW, yy, 'right');
+    };
+    const isIndA = a => a === 'j' || a === 'r';
     // ---- header (page 1 only): إلى / من | العدد التاريخ ----
     const toLines = plainWrap(hdr.to || '', W - SIDE * 2 - 160 - 10, f16b);
-    const fromTxt = fromOf(state, hdr), fromLines = fromTxt ? plainWrap(fromTxt, W - SIDE * 2 - 160 - 10, f16b) : [];
+    const fromTxt = fromLine(state, hdr), fromLines = fromTxt ? plainWrap(fromTxt, W - SIDE * 2 - 160 - 10, f16b) : [];
     toLines.concat(fromLines).forEach((ln, i) => op({ t: 'text', text: ln, x: right, y: y + i * lh * 0.85 + lh * 0.7, st: f16b, al: 'right' }));
     const headerX = SIDE + contentW * 0.20;
     op({ t: 'text', text: 'العدد : ' + (hdr.number || ''), x: headerX, y: y + lh * 0.7, st: f16, al: 'right' });
@@ -349,63 +387,78 @@
     y += Math.max((toLines.length + fromLines.length) * lh * 0.85, lh * 1.7) + lh * 1.5;
     // ---- subject (centered, same position) ----
     const subjPara = { r: [{ t: 'م / ', f: state.base.subject.f, s: state.base.subject.s, b: state.base.subject.b, i: state.base.subject.i }].concat(state.subject.r) };
-    layoutPara(subjPara, state.base.subject, () => contentW).forEach(row => { need(row.h); emitRow(pg.ops, row, W / 2, contentW, y, 'center'); y += row.h; });
+    { const sr = layoutPara(subjPara, state.base.subject, () => contentW), sa = state.subject.a || AL_DEFAULT.subject; sr.forEach((row, ri) => { need(row.h); emitA(row, ri === sr.length - 1, right, contentW, y, sa); y += row.h; }); }
     y += lh * 0.3;                                      // (1.3 − 1 سطر) كما في المذكرة القديمة
     // ---- body ----
     const bodySt = resolve({}, state.base.body), indentW = meas('ممممم', bodySt);
     let firstContent = true;
-    const flow = (paras, base, indentFirst) => {
+    const flow = (paras, base, indentFirst, defA) => {
       let first = indentFirst;
       paras.forEach(p => {
+        const pa = p.a || defA, ia = isIndA(pa);
         const empty = paraText(p).trim() === '' && !p.r.some(r => /\n/.test(r.t));
         if (empty) { need(lineHFor(resolve({}, base))); y += lineHFor(resolve({}, base)); return; }
-        const rows = layoutPara(trimPara(p), base, isFirst => contentW - (first && (isFirst || state.mode === 'legacy') ? indentW : 0));
+        const rows = layoutPara(trimPara(p), base, isFirst => contentW - (first && ia && (isFirst || state.mode === 'legacy') ? indentW : 0));
         rows.forEach((row, ri) => {
           need(row.h);
-          const ind = (first && ri === 0) ? indentW : 0, last = ri === rows.length - 1;
-          emitRow(pg.ops, row, right - ind, contentW - ind, y, (last || row.soft || row.words.length <= 1) ? 'right' : 'justify');
+          const ind = (first && ia && ri === 0) ? indentW : 0, last = ri === rows.length - 1;
+          emitA(row, last, right - ind, contentW - ind, y, pa);
           y += row.h;
         });
         first = false;
       });
     };
-    flow(state.body, state.base.body, true);
+    flow(state.body, state.base.body, true, AL_DEFAULT.body);
     y += lh * 0.6;
     // ---- table ----
     if (state.table) layoutTable();
     // ---- below-table text (only when non-empty: no extra space) ----
-    if (afterHasText(state)) { if (state.table) y += lh * 0.6; flow(state.after, state.base.after, false); }
+    if (afterHasText(state)) { if (state.table) y += lh * 0.6; flow(state.after, state.base.after, false, AL_DEFAULT.after); }
     // ---- closing ----
     y += lh;
     const closeRows = layoutPara({ r: state.closing.r.length ? state.closing.r : [] }, state.base.closing, () => contentW);
     const closeH = closeRows.reduce((a, r) => a + r.h, 0);
     need(closeH + lh * 2.6);
     const afterClosingStart = y;
-    closeRows.forEach(row => { emitRow(pg.ops, row, W / 2, contentW, y, 'center'); y += row.h; });
+    { const ca = state.closing.a || AL_DEFAULT.closing; closeRows.forEach((row, ri) => { emitA(row, ri === closeRows.length - 1, right, contentW, y, ca); y += row.h; }); }
     y += lh * 0.6;
     // ---- attachments ----
-    const att = (hdr.attachments || []).filter(a => a && String(a).trim());
-    if (att.length) {
+    const attP = attOf(state, hdr);
+    if (attP.length) {
       need(lh * 3);
       const tw = meas('المرفقات :', f16b);
       op({ t: 'text', text: 'المرفقات :', x: right, y: y + lh * 0.7, st: f16b, al: 'right' });
       op({ t: 'line', x1: right - tw, y1: y + lh * 0.7 + 3, x2: right, y2: y + lh * 0.7 + 3 });
       y += lh;
-      att.forEach((a, i) => plainWrap((i + 1) + '. ' + String(a).trim(), contentW, f16).forEach(ln => { need(lh); op({ t: 'text', text: ln, x: right, y: y + lh * 0.7, st: f16, al: 'right' }); y += lh; }));
+      attP.forEach((p, i) => {
+        const base = state.base.att || baseLegacy().att, tp = trimPara(p), plainRuns = tp.r.every(r => r.f == null && r.s == null && r.b == null && r.i == null);
+        if (base.f === 'LEG' && plainRuns && (!p.a || p.a === 'r') && !tp.r.some(r => /\n/.test(r.t))) {
+          // مذكرة قديمة/نص خام بالخط القديم: نفس رسم المنفِّذ القديم بالضبط (نص متّصل لكل سطر)
+          plainWrap((i + 1) + '. ' + runsText(tp.r), contentW, f16).forEach(ln => { need(lh); op({ t: 'text', text: ln, x: right, y: y + lh * 0.7, st: f16, al: 'right' }); y += lh; });
+        } else {
+          const rows = layoutPara({ r: [{ t: '.' + (i + 1) }].concat(tp.r) }, base, () => contentW);   // «.n» كي يظهر الترقيم كما في الرسم القديم (نقطة يسار الرقم)
+          rows.forEach((row, ri) => { need(row.h); emitA(row, ri === rows.length - 1, right, contentW, y, p.a || AL_DEFAULT.att); y += row.h; });
+        }
+      });
       y += lh * 0.5;
     }
     // ---- signature ----
-    if (hdr.senderTitle || hdr.senderName) {
-      const sigBlock = lh * 2.5, tenW = meas('مممممممممم', f16);
+    const sT = lineOf(state, hdr, 'stitle', 'senderTitle'), sN = lineOf(state, hdr, 'sname', 'senderName'), hasT = lineHas(sT), hasN = lineHas(sN);
+    if (hasT || hasN) {
+      const tenW = meas('مممممممممم', f16), sx = W * 0.40 - tenW;
+      const half = Math.max(sx - SIDE, 60), boxW = half * 2, boxRight = sx + half;           // صندوق التوقيع: مركزه نفس نقطة التوسيط القديمة وحدّه الأيسر على الهامش
+      const sigRows = (ln, key) => { const tp = trimPara(ln), base = state.base[key] || baseLegacy()[key]; const plain = base.f === 'LEG' && tp.r.every(r => r.f == null && r.s == null && r.b == null && r.i == null) && (!ln.a || ln.a === 'c') && !tp.r.some(r => /\n/.test(r.t)) && meas(runsText(tp.r), f16) <= boxW; return plain ? { legacy: true, text: runsText(tp.r), h: lh } : { rows: layoutPara(tp, base, () => boxW), a: ln.a || AL_DEFAULT[key] }; };
+      const rT = hasT ? sigRows(sT, 'stitle') : null, rN = hasN ? sigRows(sN, 'sname') : null;
+      const hOf = r => (r ? (r.legacy ? r.h : r.rows.reduce((a, x) => a + x.h, 0)) : 0);
+      const sigBlock = Math.max(lh * 2.5, hOf(rT) + hOf(rN) + lh * 0.5);
       const sigShortY = afterClosingStart + lh * 7, sigLongY = afterClosingStart + lh;
       const single = pages.length === 1;
       const isShort = single && (sigShortY + sigBlock) <= SIG_LIMIT;
       let sy = Math.max(y, isShort ? sigShortY : sigLongY);
       if (sy + sigBlock > BOTTOM) { addPage(); sy = y; }
-      const sx = W * 0.40 - tenW;
-      if (hdr.senderTitle) { op({ t: 'text', text: hdr.senderTitle, x: sx, y: sy + lh * 0.7, st: f16, al: 'center' }); sy += lh; }
-      if (hdr.senderName) op({ t: 'text', text: hdr.senderName, x: sx, y: sy + lh * 0.7, st: f16, al: 'center' });
-      y = sy + lh;
+      const drawSig = r => { if (!r) return; if (r.legacy) { op({ t: 'text', text: r.text, x: sx, y: sy + lh * 0.7, st: f16, al: 'center' }); sy += lh; } else r.rows.forEach((row, ri) => { emitA(row, ri === r.rows.length - 1, boxRight, boxW, sy, r.a); sy += row.h; }); };
+      drawSig(rT); drawSig(rN);
+      y = sy + (rN ? 0 : 0) + lh * 0;
     }
     pages.forEach((p, i) => { p.n = i + 1; });
     return { pages, W, H, tableCols: tableCapped ? tableCols : null };
@@ -430,7 +483,7 @@
         colW = colW.map(w => Math.min(w, lo));
       }
       tableCols = colW.slice(); const total = colW.reduce((a, b) => a + b, 0), rightEdge = W / 2 + total / 2;
-      const prepared = rowsData.map(row => row.map((cell, ci) => layoutPara({ r: cell.r }, baseT, () => colW[ci] - pad).map(r => { r.h = Math.max(18, r.words.length ? Math.max(...r.words.map(w => Math.max(...w.segs.map(s => s.st.px * 1.2)))) : tblSt.px * 1.2); return r; })));
+      const prepared = rowsData.map(row => row.map((cell, ci) => layoutPara({ r: cell.r }, baseT, () => colW[ci] - pad).map((r, ri, arr) => { r._last = ri === arr.length - 1; r._a = cell.a || AL_DEFAULT.table; r.h = Math.max(18, r.words.length ? Math.max(...r.words.map(w => Math.max(...w.segs.map(s => s.st.px * 1.2)))) : tblSt.px * 1.2); return r; })));
       prepared.forEach(cells => {
         let idx = cells.map(() => 0), guard = 0;
         while (cells.some((c, i) => idx[i] < c.length) && guard++ < 1000) {
@@ -447,7 +500,7 @@
             const w = colW[ci]; cx -= w;
             op({ t: 'rect', x: cx, y, w, h: fh });
             const th = lines.reduce((a, r) => a + r.h, 0); let ty = y + (fh - th) / 2;
-            lines.forEach(r => { emitRow(pg.ops, r, cx + w / 2, w - pad, ty, 'center'); ty += r.h; });
+            lines.forEach(r => { emitA(r, r._last, cx + w - pad / 2, w - pad, ty, r._a); ty += r.h; });
           });
           y += fh; idx = idx.map((v, i) => v + take[i]);
           if (cells.some((c, i) => idx[i] < c.length)) addPage();
@@ -509,18 +562,21 @@
     const legRun = (text, o) => new TextRun(Object.assign({ text, rightToLeft: true }, o || {}));
     const P = (children, opts) => new Paragraph(Object.assign({ bidirectional: true, children }, opts || {}));
     const toRuns = [legRun(hdr.to || '', { bold: true })];
-    const leftCell = (text) => new TableCell({ borders: noBorders, children: [P([legRun(text)], { alignment: AlignmentType.LEFT })] });
-    const toParas = [P(toRuns, { alignment: AlignmentType.RIGHT })];
-    if (fromOf(state, hdr)) toParas.push(P([legRun(fromOf(state, hdr), { bold: true })], { alignment: AlignmentType.RIGHT }));
+    // فقرات Word هنا RTL (bidi): في Word/LibreOffice تُفسَّر jc=left/right كـ بداية/نهاية السطر، أي تنعكس فيزيائياً؛ لذلك: يمين فعلي = jc left ويسار فعلي = jc right (تحقق بعرض LibreOffice؛ Word الحقيقي لم يُجرَّب)
+    const AT = { r: AlignmentType.LEFT, c: AlignmentType.CENTER, l: AlignmentType.RIGHT, j: AlignmentType.JUSTIFIED }, alOf = (a, def) => AT[a || def];
+    const leftCell = (text) => new TableCell({ borders: noBorders, children: [P([legRun(text)], { alignment: AT.l })] });
+    const toParas = [P(toRuns, { alignment: AT.r })];
+    if (fromLine(state, hdr)) toParas.push(P([legRun(fromLine(state, hdr), { bold: true })], { alignment: AT.r }));
+    // الجدول LTR: الخلية الأولى أقصى اليسار. المعاينة/PDF: العدد والتاريخ يساراً، إلى/من يميناً (والمحاذاة الفيزيائية معكوسة داخل فقرات RTL: AT.r/AT.l)
     const headerTable = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [
-      new TableRow({ children: [new TableCell({ borders: noBorders, children: toParas }), leftCell('العدد : ' + (hdr.number || ''))] }),
-      new TableRow({ children: [new TableCell({ borders: noBorders, children: [new Paragraph({ text: '' })] }), leftCell('التاريخ : ' + (hdr.date || ''))] })
+      new TableRow({ children: [leftCell('العدد : ' + (hdr.number || '')), new TableCell({ borders: noBorders, children: toParas })] }),
+      new TableRow({ children: [leftCell('التاريخ : ' + (hdr.date || '')), new TableCell({ borders: noBorders, children: [new Paragraph({ text: '' })] })] })
     ] });
     const ch = [headerTable, new Paragraph({ text: '' })];
     const sb = state.base.subject;
-    ch.push(P(docxRuns(D, [{ t: 'م / ' }].concat(state.subject.r), sb), { alignment: AlignmentType.CENTER }));
+    ch.push(P(docxRuns(D, [{ t: 'م / ' }].concat(state.subject.r), sb), { alignment: alOf(state.subject.a, 'c') }));
     ch.push(new Paragraph({ text: '' }));
-    const bodyParas = (paras, base, indentFirst) => paras.forEach((p, i) => ch.push(P(docxRuns(D, p.r, base), { alignment: AlignmentType.JUSTIFIED, indent: indentFirst && i === 0 ? { firstLine: 280 } : undefined })));
+    const bodyParas = (paras, base, indentFirst) => paras.forEach((p, i) => ch.push(P(docxRuns(D, p.r, base), { alignment: alOf(p.a, 'j'), indent: indentFirst && i === 0 && (!p.a || p.a === 'j' || p.a === 'r') ? { firstLine: 280 } : undefined })));
     bodyParas(state.body, state.base.body, true);
     if (state.table) {
       ch.push(new Paragraph({ text: '' }));
@@ -530,21 +586,22 @@
       try { const f = await ensureFonts(neededFaces(state)); if (f.ok) { cw = layoutDocument(state, hdr).tableCols; } } catch (e) { cw = null; if (window.console) console.warn("memo word table", e); }
       const wideOpts = cw && cw.length === state.table.c[0].length ? (() => { const sum = cw.reduce((a, b) => a + b, 0), tw = D.WidthType.DXA, CONTENT_TW = 9026; const cols = cw.map(w => Math.max(300, Math.floor(w / sum * CONTENT_TW))); return { cols, total: cols.reduce((a, b) => a + b, 0) }; })() : null;
       const tblOpts = wideOpts ? { width: { size: wideOpts.total, type: WidthType.DXA }, columnWidths: wideOpts.cols, layout: D.TableLayoutType.FIXED } : { width: { size: 0, type: WidthType.AUTO } };
-      ch.push(new Table(Object.assign({}, tblOpts, { alignment: AlignmentType.CENTER, rows: state.table.c.map(row => new TableRow({ children: row.map((cell, ci) => new TableCell({ borders: full, width: wideOpts ? { size: wideOpts.cols[ci], type: WidthType.DXA } : { size: 0, type: WidthType.AUTO }, children: [P(docxRuns(D, cell.r, state.base.table), { alignment: AlignmentType.CENTER })] })) })) })));
+      ch.push(new Table(Object.assign({}, tblOpts, { alignment: AlignmentType.CENTER, rows: state.table.c.map(row => new TableRow({ children: row.map((cell, ci) => new TableCell({ borders: full, width: wideOpts ? { size: wideOpts.cols[ci], type: WidthType.DXA } : { size: 0, type: WidthType.AUTO }, children: [P(docxRuns(D, cell.r, state.base.table), { alignment: alOf(cell.a, 'c') })] })) })) })));
     }
     if (afterHasText(state)) { ch.push(new Paragraph({ text: '' })); bodyParas(state.after, state.base.after, false); }
     ch.push(new Paragraph({ text: '' }));
-    ch.push(P(docxRuns(D, state.closing.r, state.base.closing), { alignment: AlignmentType.CENTER }));
-    const att = (hdr.attachments || []).filter(a => a && String(a).trim());
-    if (att.length) {
+    ch.push(P(docxRuns(D, state.closing.r, state.base.closing), { alignment: alOf(state.closing.a, 'c') }));
+    const attP = attOf(state, hdr);
+    if (attP.length) {
       ch.push(new Paragraph({ text: '' }));
-      ch.push(P([legRun('المرفقات :', { bold: true, underline: {} })], { alignment: AlignmentType.RIGHT }));
-      att.forEach((a, i) => ch.push(P([legRun((i + 1) + '. ' + String(a).trim())], { alignment: AlignmentType.RIGHT })));
+      ch.push(P([legRun('المرفقات :', { bold: true, underline: {} })], { alignment: AT.r }));
+      attP.forEach((p, i) => ch.push(P(docxRuns(D, [{ t: (i + 1) + '. ' }].concat(p.r), state.base.att || baseLegacy().att), { alignment: alOf(p.a, 'r') })));
     }
-    if (hdr.senderTitle || hdr.senderName) {
+    const sT = lineOf(state, hdr, 'stitle', 'senderTitle'), sN = lineOf(state, hdr, 'sname', 'senderName');
+    if (lineHas(sT) || lineHas(sN)) {
       for (let i = 0; i < 7; i++) ch.push(new Paragraph({ text: '' }));
-      if (hdr.senderTitle) ch.push(P([legRun(hdr.senderTitle)], { alignment: AlignmentType.CENTER, indent: { right: 4500 } }));
-      if (hdr.senderName) ch.push(P([legRun(hdr.senderName)], { alignment: AlignmentType.CENTER, indent: { right: 4500 } }));
+      if (lineHas(sT)) ch.push(P(docxRuns(D, sT.r, state.base.stitle || baseLegacy().stitle), { alignment: alOf(sT.a, 'c'), indent: { left: 4500 } }));
+      if (lineHas(sN)) ch.push(P(docxRuns(D, sN.r, state.base.sname || baseLegacy().sname), { alignment: alOf(sN.a, 'c'), indent: { left: 4500 } }));
     }
     return await Packer.toBlob(new Document({ sections: [{ properties: {}, children: ch }] }));
   }
@@ -559,23 +616,24 @@
     }).join('');
   }
   function buildDocHtml(state, hdr) {
-    const e = escHtml, att = (hdr.attachments || []).filter(a => a && String(a).trim());
-    const para = (p, base, ind) => '<p style="' + (ind ? 'text-indent:5ch;' : '') + 'margin:0 0 4px 0">' + (runsHtml(p.r, base) || '&#160;') + '</p>';
+    const sT = lineOf(state, hdr, 'stitle', 'senderTitle'), sN = lineOf(state, hdr, 'sname', 'senderName');
+    const e = escHtml, att = attOf(state, hdr), TA = { r: 'right', c: 'center', l: 'left', j: 'justify' }, ta = (a, def) => 'text-align:' + TA[a || def] + ';';
+    const para = (p, base, ind, def) => '<p style="' + ta(p.a, def) + (ind && (!p.a || p.a === 'j' || p.a === 'r') ? 'text-indent:5ch;' : '') + 'margin:0 0 4px 0">' + (runsHtml(p.r, base) || '&#160;') + '</p>';
     return '<div style="font-family:Arial,sans-serif;direction:rtl;font-size:16px;line-height:1.9">' +
-      '<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="font-weight:700" align="right">' + e(hdr.to) + (fromOf(state, hdr) ? '<br>' + e(fromOf(state, hdr)) : '') + '</td><td align="left" style="white-space:nowrap">العدد&#160;:&#160;' + e(hdr.number) + '</td></tr><tr><td>&#160;</td><td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;' + e(hdr.date) + '</td></tr></table>' +
-      '<p align="center" style="margin-top:14px">' + runsHtml([{ t: 'م / ' }].concat(state.subject.r), state.base.subject) + '</p>' +
-      '<div style="margin-top:18px;text-align:justify">' + state.body.map((p, i) => para(p, state.base.body, i === 0)).join('') + '</div>' +
-      (state.table ? '<table style="border-collapse:collapse;margin:18px auto 0;width:auto">' + state.table.c.map(row => '<tr>' + row.map(c => '<td style="border:1px solid #000;padding:6px 14px;text-align:center;white-space:normal;word-wrap:break-word">' + runsHtml(c.r, state.base.table) + '</td>').join('') + '</tr>').join('') + '</table>' : '') +
-      (afterHasText(state) ? '<div style="margin-top:12px;text-align:justify">' + state.after.map(p => para(p, state.base.after, false)).join('') + '</div>' : '') +
-      '<p align="center" style="margin-top:18px">' + runsHtml(state.closing.r, state.base.closing) + '</p>' +
-      (att.length ? '<div style="margin-top:18px;text-align:right"><div style="display:inline-block;font-weight:700;text-decoration:underline">المرفقات :</div><div style="margin-top:4px">' + att.map((a, i) => '<div>' + (i + 1) + '. ' + e(String(a).trim()) + '</div>').join('') + '</div></div>' : '') +
-      '<div style="margin-top:60px;margin-right:40%;text-align:center">' + (hdr.senderTitle ? '<p>' + e(hdr.senderTitle) + '</p>' : '') + (hdr.senderName ? '<p>' + e(hdr.senderName) + '</p>' : '') + '</div></div>';
+      '<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="font-weight:700" align="right">' + e(hdr.to) + (fromLine(state, hdr) ? '<br>' + e(fromLine(state, hdr)) : '') + '</td><td align="left" style="white-space:nowrap">العدد&#160;:&#160;' + e(hdr.number) + '</td></tr><tr><td>&#160;</td><td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;' + e(hdr.date) + '</td></tr></table>' +
+      '<p style="margin-top:14px;' + ta(state.subject.a, 'c') + '">' + runsHtml([{ t: 'م / ' }].concat(state.subject.r), state.base.subject) + '</p>' +
+      '<div style="margin-top:18px;text-align:justify">' + state.body.map((p, i) => para(p, state.base.body, i === 0, 'j')).join('') + '</div>' +
+      (state.table ? '<table style="border-collapse:collapse;margin:18px auto 0;width:auto">' + state.table.c.map(row => '<tr>' + row.map(c => '<td style="border:1px solid #000;padding:6px 14px;' + ta(c.a, 'c') + 'white-space:normal;word-wrap:break-word">' + runsHtml(c.r, state.base.table) + '</td>').join('') + '</tr>').join('') + '</table>' : '') +
+      (afterHasText(state) ? '<div style="margin-top:12px;text-align:justify">' + state.after.map(p => para(p, state.base.after, false, 'j')).join('') + '</div>' : '') +
+      '<p style="margin-top:18px;' + ta(state.closing.a, 'c') + '">' + runsHtml(state.closing.r, state.base.closing) + '</p>' +
+      (att.length ? '<div style="margin-top:18px;text-align:right"><div style="display:inline-block;font-weight:700;text-decoration:underline">المرفقات :</div><div style="margin-top:4px">' + att.map((p, i) => '<div style="' + ta(p.a, 'r') + '">' + e((i + 1) + '. ') + runsHtml(p.r, state.base.att || baseLegacy().att) + '</div>').join('') + '</div></div>' : '') +
+      '<div style="margin-top:60px;margin-right:40%">' + (lineHas(sT) ? '<p style="' + ta(sT.a, 'c') + '">' + runsHtml(sT.r, state.base.stitle || baseLegacy().stitle) + '</p>' : '') + (lineHas(sN) ? '<p style="' + ta(sN.a, 'c') + '">' + runsHtml(sN.r, state.base.sname || baseLegacy().sname) + '</p>' : '') + '</div></div>';
   }
 
   window.MemoDoc = {
     U, W, H, FONTS, PICK, KEYS, SIZE_MIN, SIZE_MAX, CLOSING_TEXT, SKEW,
     baseDefaults, baseLegacy, legacyState, newState, stateFromLayout, layoutFromState, plainTableData,
-    cleanRuns, cleanParas, cleanTable, cleanText, cleanStyle, cleanBase, clampS, runsText, paraText, parasPlain, tablePlain, plainToParas, plainToTable, afterHasText, normPlain,
+    KEYS_ALL: KEYS, AL, AL_DEFAULT, cleanA, mkLine, attPlainList, normList, fromLine, attOf, lineHas, cleanRuns, cleanParas, cleanTable, cleanText, cleanStyle, cleanBase, clampS, runsText, paraText, parasPlain, tablePlain, plainToParas, plainToTable, afterHasText, normPlain,
     resolve, fontString, ensureFonts, neededFaces, layoutDocument, drawPage, renderPages, buildDocxBlob, buildDocHtml, escHtml, runsHtml,
     _meas: meas, _joinsNext: joinsNext, _joinsPrev: joinsPrev, _prepWord: prepWord, _tokens: tokens
   };

@@ -8,7 +8,7 @@
   const clone = o => JSON.parse(JSON.stringify(o));
   const plen = p => D.paraText(p).length;
   const flatLen = ps => ps.reduce((a, p) => a + plen(p), 0) + Math.max(0, ps.length - 1);
-  const AREA_LABEL = { subject: 'الموضوع', body: 'المتن', table: 'الجدول', after: 'ما بعد الجدول', closing: 'الخاتمة' };
+  const AREA_LABEL = { subject: 'الموضوع', body: 'المتن', table: 'الجدول', after: 'ما بعد الجدول', closing: 'الخاتمة', att: 'المرفقات', stitle: 'عنوان مقدم الطلب', sname: 'اسم مقدم الطلب' };
 
   // ---------------- نموذج: عمليات على الفقرات (إزاحات مسطّحة؛ فاصل الفقرة = حرف واحد) ----------------
   function locate(ps, o) {
@@ -29,16 +29,17 @@
   // يستبدل [s,e) بنص. soft=true: كل '\n' فاصل سطر داخل الفقرة (لا فقرات جديدة).
   function replaceRange(paras, s, e, text, soft) {
     const ps = clone(paras), a = locate(ps, s), b = locate(ps, e);
-    const st = stylePart(styleAt(ps[a.pi].r, a.off));
+    const st = stylePart(styleAt(ps[a.pi].r, a.off)), pa = ps[a.pi].a;
     const L = ps[a.pi].r.map(x => Object.assign({}, x)), li = splitRuns(L, a.off), left = L.slice(0, li);
     const R = ps[b.pi].r.map(x => Object.assign({}, x)), ri = splitRuns(R, b.off), right = R.slice(ri);
     const mk = t => (t === '' ? [] : [Object.assign({ t }, st)]);
     const lines = soft ? [String(text)] : String(text).split('\n'), out = [];
-    if (lines.length === 1) out.push({ r: D.cleanRuns(left.concat(mk(lines[0]), right)) });
+    const P = runs => { const o = { r: D.cleanRuns(runs) }; if (pa) o.a = pa; return o; };      // الفقرات الناتجة ترث محاذاة الفقرة المقسومة (كما في Word)
+    if (lines.length === 1) out.push(P(left.concat(mk(lines[0]), right)));
     else {
-      out.push({ r: D.cleanRuns(left.concat(mk(lines[0]))) });
-      for (let k = 1; k < lines.length - 1; k++) out.push({ r: D.cleanRuns(mk(lines[k])) });
-      out.push({ r: D.cleanRuns(mk(lines[lines.length - 1]).concat(right)) });
+      out.push(P(left.concat(mk(lines[0]))));
+      for (let k = 1; k < lines.length - 1; k++) out.push(P(mk(lines[k])));
+      out.push(P(mk(lines[lines.length - 1]).concat(right)));
     }
     ps.splice(a.pi, b.pi - a.pi + 1, ...out);
     return { paras: ps, caret: s + String(text).length };
@@ -52,6 +53,13 @@
     });
     return ps;
   }
+  // فهارس الفقرات التي يمسّها التحديد [s,e] (أو الفقرة التي فيها المؤشر)؛ المحاذاة تخص الفقرة لا الحرف
+  function parasIn(ps, s, e) {
+    const out = []; let pos = 0;
+    ps.forEach((p, i) => { const end = pos + plen(p); if (s === e ? (s >= pos && s <= end) : (e > pos && s <= end)) out.push(i); pos = end + 1; });
+    return out.length ? out : [Math.max(0, ps.length - 1)];
+  }
+  function setAlign(paras, idx, a) { const ps = clone(paras); idx.forEach(i => { if (ps[i]) ps[i].a = a; }); return ps; }
   const applyPatch = (paras, s, e, patch) => mapRange(paras, s, e, r => Object.assign(r, patch));
   function clearAttrs(paras, keys) { const ps = clone(paras); ps.forEach(p => { p.r.forEach(r => keys.forEach(k => { delete r[k]; })); p.r = D.cleanRuns(p.r); }); return ps; }
   // الأنماط المحلولة ضمن [s,e) (أو كل النص): {f,s,b,i} بقيمة null إن اختلفت
@@ -80,10 +88,11 @@
     sp.style.fontStyle = st.i ? 'italic' : 'normal';
     return sp;
   }
+  const ALCSS = { r: 'right', c: 'center', l: 'left', j: 'justify' };
   function render(root, paras, base) {
     root.textContent = '';
     paras.forEach(p => {
-      const d = document.createElement('div'); d.className = 'mp';
+      const d = document.createElement('div'); d.className = 'mp'; if (p.a) { d.dataset.a = p.a; d.style.textAlign = ALCSS[p.a]; }
       if (!p.r.length) { const sp = spanFor({}, base); sp.appendChild(document.createElement('br')); d.appendChild(sp); }
       else {
         p.r.forEach(r => {
@@ -106,7 +115,7 @@
   }
   function readParas(root, partial) {
     const paras = []; let cur = null;
-    const start = () => { cur = { r: [], endsBr: false }; paras.push(cur); };
+    const start = (a) => { cur = { r: [], endsBr: false }; if (a) cur.a = a; paras.push(cur); };
     const add = (t, st, isBr) => { if (t === '') return; if (!cur) start(); cur.r.push(Object.assign({ t }, st)); cur.endsBr = !!isBr; };
     const walk = (node, st) => {
       node.childNodes.forEach(ch => {
@@ -115,7 +124,7 @@
           const tag = ch.tagName;
           if (tag === 'BR') add('\n', st, true);
           else if (tag === 'DIV' || tag === 'P' || tag === 'LI') {
-            if (!(cur && !cur.r.length && paras[paras.length - 1] === cur)) start();
+            if (!(cur && !cur.r.length && paras[paras.length - 1] === cur)) start(ch.dataset && ch.dataset.a); else if (ch.dataset && ch.dataset.a && !cur.a) cur.a = ch.dataset.a;
             walk(ch, styleOf(ch, st)); cur = null;
           } else if (tag !== 'SCRIPT' && tag !== 'STYLE') walk(ch, styleOf(ch, st));
         }
@@ -128,7 +137,7 @@
         const last = p.r[p.r.length - 1]; last.t = last.t.slice(0, -1); if (!last.t) p.r.pop();
       }
     });
-    return paras.map(p => ({ r: D.cleanRuns(p.r) }));
+    return paras.map(p => { const o = { r: D.cleanRuns(p.r) }, a = D.cleanA(p.a); if (a) o.a = a; return o; });
   }
   function offsetOf(root, node, off) {
     const r = document.createRange(); r.setStart(root, 0);
@@ -207,18 +216,20 @@
       if (this.composing) return;
       if (!this.burst) { this.snap(); this.burst = true; clearTimeout(this._bt); this._bt = setTimeout(() => { this.burst = false; }, 1200); }
       let ps = readParas(this.el);
-      if (this.cfg.single) { ps = [{ r: D.cleanRuns([].concat(...ps.map((p, i) => (i ? [{ t: '\n' }] : []).concat(p.r)))) }]; }
+      if (this.cfg.single) { ps = [D.mkLine([].concat(...ps.map((p, i) => (i ? [{ t: '\n' }] : []).concat(p.r))), ps[0] && ps[0].a)]; }
       this.cfg.setParas(ps);
       this.el.classList.toggle('is-empty', ps.length === 1 && !ps[0].r.length);
       this.cfg.onChange && this.cfg.onChange(this); if (bar) bar.refresh();
     }
     insert(text, soft) {
+      if (this.cfg.noBreak) { text = String(text).replace(/\s*[\r\n]+\s*/g, ' '); if (!text) return; }       // اسم/عنوان مقدم الطلب: سطر واحد كما كانا حقلَي إدخال (Enter لا يضيف شيئاً)
       const { s, e } = this.sel(), ps = this.paras(), tot = flatLen(ps);
       const r = replaceRange(ps, Math.min(s, tot), Math.min(e, tot), D.cleanText(text, 20000), soft || this.cfg.single);
       this.commit(r.paras, r.caret);
     }
     before(e) {
       const t = e.inputType;
+      if (this.cfg.noBreak && (t === 'insertParagraph' || t === 'insertLineBreak')) { e.preventDefault(); return; }
       if (t === 'insertParagraph') { e.preventDefault(); this.insert('\n', this.cfg.single); }
       else if (t === 'insertLineBreak') { e.preventDefault(); this.insert('\n', true); }
       else if (t === 'formatBold') { e.preventDefault(); bar && bar.toggle('b'); }
@@ -266,7 +277,17 @@
       this.bBtn = btn('mf-b', 'B', 'غامق', () => this.toggle('b'));
       this.iBtn = btn('mf-i', 'I', 'مائل', () => this.toggle('i'));
       this.tBtn = btn('mf-t', 'الجدول كله', 'تنسيق الجدول كله بدل الخلية', () => { this.tableAll = !this.tableAll; this.refresh(); });
-      row.append(this.fontBtn, this.dec, this.sz, this.inc, this.bBtn, this.iBtn, this.tBtn);
+      // أزرار المحاذاة: يمين / وسط / يسار / ضبط (كشيدة). أيقونات SVG ثابتة (لا نص مستخدم).
+      const NS = 'http://www.w3.org/2000/svg', ICON = { r: [14, 9, 14, 6], c: [14, 8, 14, 8], l: [14, 9, 14, 6], j: [14, 14, 14, 14] }, ALT = { r: 'محاذاة لليمين', c: 'توسيط', l: 'محاذاة لليسار', j: 'ضبط الأطراف (كشيدة)' };
+      this.alBtns = {};
+      D.AL.forEach(a => {
+        const b = btn('mf-al mf-al-' + a, '', ALT[a], () => this.setAlign(a));
+        const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 16 12'); svg.setAttribute('width', '16'); svg.setAttribute('height', '12'); svg.setAttribute('aria-hidden', 'true');
+        ICON[a].forEach((w, k) => { const x = a === 'r' || a === 'j' ? 15 - w : (a === 'c' ? (16 - w) / 2 : 1); const ln = document.createElementNS(NS, 'line'); ln.setAttribute('x1', String(x + 0.5)); ln.setAttribute('x2', String(x + w - 0.5)); ln.setAttribute('y1', String(1.5 + k * 3)); ln.setAttribute('y2', String(1.5 + k * 3)); ln.setAttribute('stroke', 'currentColor'); ln.setAttribute('stroke-width', '1.4'); ln.setAttribute('stroke-linecap', 'round'); svg.appendChild(ln); });
+        b.appendChild(svg); this.alBtns[a] = b;
+      });
+      this.alGrp = mk('span', 'mf-algrp'); D.AL.forEach(a => this.alGrp.appendChild(this.alBtns[a]));
+      row.append(this.fontBtn, this.dec, this.sz, this.inc, this.bBtn, this.iBtn, this.alGrp, this.tBtn);
       this.pop = mk('div', 'mf-pop'); this.pop.hidden = true;
       D.PICK.forEach(k => { const f = D.FONTS[k]; const b = btn('mf-pi', f.label + (f.alwaysBold ? ' (غامق أصلاً)' : ''), f.label, () => { this.apply({ f: k }); this.fontOpen = false; this.refresh(); }); b.dataset.f = k; b.style.fontFamily = "'" + f.css + "', sans-serif"; this.pop.appendChild(b); });
       host.append(this.lbl, row, this.pop);
@@ -319,6 +340,23 @@
       }
       return { ed, area, base, scope, q: query(ps, base, s0, e0), n: e0 - s0, s0, e0 };
     }
+    // المحاذاة الفعلية للفقرات المستهدفة (صريحة أو افتراض الحقل) أو null إن اختلفت
+    alignState(I) {
+      const def = D.AL_DEFAULT[I.area]; let list;
+      if (I.scope === 'table') list = this.ctx.tableCells().map(c => c.paras()[0]);
+      else { const sel = I.ed.sel(), ps = I.ed.paras(); list = parasIn(ps, sel.s, sel.e).map(i => ps[i]); }
+      const v = list.map(p => (p && p.a) || def); return v.every(x => x === v[0]) ? v[0] : null;
+    }
+    setAlign(a) {
+      const I = this.info(); if (!I || D.AL.indexOf(a) < 0) return;
+      this.ctx.touch();
+      if (I.scope === 'table') { this.ctx.tableCells().forEach(c => { c.snap(); c.cfg.setParas(setAlign(c.paras(), [0], a)); c.draw(); }); this.ctx.changed(); }
+      else {
+        const ed = I.ed, sel = ed.sel(), ps = setAlign(ed.paras(), parasIn(ed.paras(), sel.s, sel.e), a);
+        ed.commit(ps, sel.s, false); ed.draw(sel.s, sel.e);          // التحديد كما هو بالضبط؛ الأنماط على مستوى الحرف لا تُمسّ
+      }
+      this.refresh();
+    }
     refresh() {
       if (!this.visible) return;
       const I = this.info();
@@ -332,6 +370,7 @@
       this.fontBtn.textContent = (fam ? fam.label : 'خطوط مختلفة') + ' ▾';
       this.sz.textContent = q.s == null ? '—' : String(Math.round(q.s * 10) / 10);
       this.bBtn.classList.toggle('on', q.b === true); this.iBtn.classList.toggle('on', q.i === true);
+      const as = this.alignState(I); D.AL.forEach(a => { const on = as === a; this.alBtns[a].classList.toggle('on', on); this.alBtns[a].setAttribute('aria-pressed', String(on)); });
       this.bBtn.setAttribute('aria-pressed', String(q.b === true)); this.iBtn.setAttribute('aria-pressed', String(q.i === true));
       const pt = (q.f && D.FONTS[q.f].alwaysBold); this.bBtn.disabled = !!pt; this.bBtn.title = pt ? 'PT Bold Heading غامق أصلاً' : 'غامق';
       if (this.pop.hidden !== !this.fontOpen) this._keep(ed.el, () => { this.pop.hidden = !this.fontOpen; });
@@ -368,6 +407,6 @@
   window.MemoEditor = {
     Ed, Bar, AREA_LABEL, editors,
     setBar(b) { bar = b; }, getActive: () => active,
-    _t: { replaceRange, applyPatch, mapRange, clearAttrs, query, readParas, render, offsetOf, posOf, flatLen, locate }
+    _t: { parasIn, setAlign, replaceRange, applyPatch, mapRange, clearAttrs, query, readParas, render, offsetOf, posOf, flatLen, locate }
   };
 })();

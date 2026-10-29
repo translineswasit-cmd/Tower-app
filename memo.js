@@ -51,12 +51,15 @@ function memoDestroyEditors() {
 function memoMountEditors() {
   const E = memoME();
   memoDestroyEditors();
-  const line = (id, area, key) => new E.Ed(document.getElementById(id), { area, single: true, getBase: () => memoState.base[area], getParas: () => [memoState[key]], setParas: ps => { memoState[key] = { r: ps[0].r }; }, onChange: memoOnChange });
+  const line = (id, area, key) => new E.Ed(document.getElementById(id), { area, single: true, noBreak: area === 'stitle' || area === 'sname', getBase: () => memoState.base[area], getParas: () => [memoState[key]], setParas: ps => { memoState[key] = memoMD().mkLine(ps[0].r, ps[0].a); }, onChange: memoOnChange });
   const rich = (id, area) => new E.Ed(document.getElementById(id), { area, single: false, getBase: () => memoState.base[area], getParas: () => memoState[area], setParas: ps => { memoState[area] = ps; }, onChange: memoOnChange });
   memoEdMap.subject = line('memo_subject_ed', 'subject', 'subject');
   memoEdMap.body = rich('memo_body_ed', 'body');
   memoEdMap.after = rich('memo_after_ed', 'after');
   memoEdMap.closing = line('memo_closing_ed', 'closing', 'closing');
+  memoEdMap.stitle = line('memo_stitle_ed', 'stitle', 'stitle');
+  memoEdMap.sname = line('memo_sname_ed', 'sname', 'sname');
+  memoEdMap.att = new E.Ed(document.getElementById('memo_att_ed'), { area: 'att', single: false, getBase: () => memoState.base.att, getParas: () => memoState.att || [{ r: [] }], setParas: ps => { memoState.att = ps; }, onChange: memoOnChange });
   if (!memoBar) {
     memoBar = new E.Bar(document.getElementById('memoFmtBar'), {
       getState: () => memoState, touch: memoFlagTouched, changed: memoOnChange,
@@ -67,7 +70,7 @@ function memoMountEditors() {
     E.setBar(memoBar);
     document.getElementById('memo_from').addEventListener('input', () => { if (memoState) { memoState.from = document.getElementById('memo_from').value; if (memoState.from.trim()) memoFlagTouched(); } });
   }
-  renderMemoTableEditor();
+  renderMemoTableEditor(); renderMemoAttachmentsEditor();
   memoFacesDrawn = ''; memoEnsureFonts();
   setTimeout(() => { memoMD().ensureFonts(MEMO_ALL_FACES.filter(f => f[0] !== 'TNR')).catch(() => {}); }, 4000);     // تخزين مسبق هادئ للخطوط العربية (TNR عند أول استخدام)
 }
@@ -155,7 +158,7 @@ function renderMemoTableEditor() {
     row.forEach((cell, c) => {
       const td = document.createElement('td'); td.style.cssText = 'border:1px solid #ddd;padding:2px'; td.dataset.r = r; td.dataset.c = c;
       const div = document.createElement('div'); div.className = 'memo-ed memo-cell'; td.appendChild(div); tr.appendChild(td);
-      memoCellEds.push(new E.Ed(div, { area: 'table', single: true, row: r, col: c, getBase: () => memoState.base.table, getParas: () => [memoState.table.c[r][c]], setParas: ps => { memoState.table.c[r][c] = { r: ps[0].r }; }, onChange: memoOnChange, onActive: () => { memoActiveCell = { r, c }; memoMarkActiveCell(); } }));
+      memoCellEds.push(new E.Ed(div, { area: 'table', single: true, row: r, col: c, getBase: () => memoState.base.table, getParas: () => [memoState.table.c[r][c]], setParas: ps => { memoState.table.c[r][c] = ps[0].a ? { r: ps[0].r, a: ps[0].a } : { r: ps[0].r }; }, onChange: memoOnChange, onActive: () => { memoActiveCell = { r, c }; memoMarkActiveCell(); } }));
     });
     tbl.appendChild(tr);
   });
@@ -165,48 +168,23 @@ function renderMemoTableEditor() {
   memoScheduleFonts();
 }
 
-// ---- قسم المرفقات (اختياري) — قائمة أسطر تترقم تلقائياً عند العرض/التصدير ----
-let memoAttachments = null; // مصفوفة نصوص اختيارية، null = لا يوجد قسم مرفقات
-
+// ---- قسم المرفقات (اختياري) — فقرات منسّقة تترقم تلقائياً عند العرض/التصدير؛ تعيش في memoState.att (null = لا قسم) ----
 function addMemoAttachments() {
-  memoAttachments = [''];
+  if (!memoState) return;
+  memoState.att = [{ r: [] }];
   renderMemoAttachmentsEditor();
+  const ed = memoEdMap.att; if (ed) ed.draw();
 }
 function removeMemoAttachments() {
-  memoAttachments = null;
+  if (!memoState) return;
+  memoState.att = null;
   renderMemoAttachmentsEditor();
-}
-function addMemoAttachmentLine() {
-  if (!memoAttachments) return;
-  memoAttachments.push('');
-  renderMemoAttachmentsEditor();
-}
-function removeMemoAttachmentLine(i) {
-  if (!memoAttachments) return;
-  memoAttachments.splice(i, 1);
-  if (!memoAttachments.length) memoAttachments.push('');
-  renderMemoAttachmentsEditor();
-}
-function updateMemoAttachmentLine(i, val) {
-  if (memoAttachments) memoAttachments[i] = val;
+  const ed = memoEdMap.att; if (ed) ed.draw();
 }
 function renderMemoAttachmentsEditor() {
-  const wrap = document.getElementById('memoAttachmentsWrap');
-  const addBtn = document.getElementById('memoAddAttachmentsBtn');
-  if (!memoAttachments) {
-    wrap.style.display = 'none';
-    addBtn.style.display = '';
-    return;
-  }
-  addBtn.style.display = 'none';
-  wrap.style.display = 'block';
-  const listWrap = document.getElementById('memoAttachmentsListWrap');
-  listWrap.innerHTML = memoAttachments.map((line, i) => `
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-      <span style="font-weight:700;min-width:18px">${i+1}.</span>
-      <input type="text" value="${(line||'').replace(/"/g,'&quot;')}" oninput="updateMemoAttachmentLine(${i},this.value)" style="flex:1;padding:8px 10px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.9rem">
-      <button class="btn-sm btn-del" onclick="removeMemoAttachmentLine(${i})">✕</button>
-    </div>`).join('');
+  const wrap = document.getElementById('memoAttachmentsWrap'), addBtn = document.getElementById('memoAddAttachmentsBtn');
+  const on = !!(memoState && memoState.att);
+  wrap.style.display = on ? 'block' : 'none'; addBtn.style.display = on ? 'none' : '';
 }
 
 function showMemoHome() {
@@ -273,12 +251,8 @@ async function showMemoNew() {
   ensureMemoNumberUI(); memoSetStatus('');
   document.getElementById('memo_number').value = '';
   document.getElementById('memo_to').value = 'الى / السيـد المـديـر الـمحتـرم...';
-  document.getElementById('memo_sender_title').value = '';
-  document.getElementById('memo_sender_name').value = '';
   memoActiveCell = null;
   memoSetState(memoMD().newState(), null);
-  memoAttachments = null;
-  renderMemoAttachmentsEditor();
   memoSuggestedNumber = null; memoUpdateNumberHint();
   memoSuggestedNumber = await generateNextMemoNumber();     // اقتراح فقط، يُعرض ولا يُحجز ولا يُملأ بالحقل
   if (!editingMemoId) memoUpdateNumberHint();
@@ -314,10 +288,16 @@ function memoBuildPayload(intent) {
     const norm = t => JSON.stringify(Array.isArray(t) && t.length ? t.map(r => (r || []).map(c => D.cleanText(c == null ? '' : c, big))) : null);
     if (memoOrig.table_data !== undefined && norm(memoOrig.table_data) === JSON.stringify(table)) table = memoOrig.table_data || null;
   }
+  let attachments = D.attPlainList(st.att), senderTitle = D.runsText(st.stitle.r).replace(/\n/g, ' '), senderName = D.runsText(st.sname.r).replace(/\n/g, ' ');
+  if (memoOrig) {                                 // مذكرة قديمة لم تتغيّر مرفقاتها/عنوانها/اسمها: القيم الأصلية حرفياً
+    if (memoOrig.attachments !== undefined && D.normList(memoOrig.attachments) === D.normList(attachments)) attachments = memoOrig.attachments || null;
+    if (memoOrig.sender_title != null && D.normPlain(memoOrig.sender_title) === D.normPlain(senderTitle)) senderTitle = memoOrig.sender_title;
+    if (memoOrig.sender_name != null && D.normPlain(memoOrig.sender_name) === D.normPlain(senderName)) senderName = memoOrig.sender_name;
+  }
   const payload = {
     memo_date: document.getElementById('memo_date').value, memo_to: document.getElementById('memo_to').value, subject, content,
-    sender_title: document.getElementById('memo_sender_title').value, sender_name: document.getElementById('memo_sender_name').value,
-    table_data: table, attachments: memoAttachments, number_mode: intent.mode
+    sender_title: senderTitle, sender_name: senderName,
+    table_data: table, attachments, number_mode: intent.mode
   };
   if (st.mode === 'v1') payload.layout = D.layoutFromState(st);
   return payload;
@@ -430,30 +410,144 @@ async function deleteMemoFromArchive(id) {
   }
 }
 
-async function openMemoFromArchive(id) {
-  try {
-    const pend = docqEntries('memo').find(e => docqMatch(e, 'memo', id) && (!currentUser || String(e.uid) === String(currentUser.id)));
-    let m = null, official = null, wantNumber = null;
-    if (docqIsLocal(id)) {
-      if (!pend) { showToast('❌ غير موجود', 'error'); return; }
-      m = Object.assign({}, pend.payload, { id });
-    } else {
-      let base = null;
-      try {
-        const res = await sbFetch(`memos?id=eq.${encodeURIComponent(id)}`);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const list = await res.json();
-        if (!Array.isArray(list)) throw new Error('bad');
-        if (!list.length) { showToast('❌ غير موجود', 'error'); return; }
-        base = list[0];
-      } catch (e) {
-        if (!pend) throw e;                       // بلا اتصال: تُفتح فقط المذكرة التي لها تعديل معلّق محفوظ كاملاً على الجهاز
-        base = Object.assign({}, docqCacheGet('memo').rows.find(x => String(x.id) === String(id)) || { id });
-      }
-      m = Object.assign({}, base, pend ? pend.payload : {});     // حمولة قديمة بلا layout لا تمحو layout المخزَّن: يُصالَح نصها مع التنسيق (stateFromLayout)
-      official = base.memo_number == null ? (base.memo_number === undefined ? null : '') : String(base.memo_number);
-      if (pend && pend.payload.number_mode === 'manual') wantNumber = pend.payload.memo_number;
+// ---- أرشيف المذكرات: فتح البطاقة = معاينة للقراءة فقط (لا تغيير بيانات ولا حجز عدد)؛ التعديل بزر «تعديل المذكرة» وحده ----
+// تحميل سجل المذكرة (الخادم + أي تعديل معلّق محفوظ على الجهاز). يرمي عند الفشل؛ يُرجع null إن لم تُوجد.
+async function memoLoadRecord(id) {
+  const pend = docqEntries('memo').find(e => docqMatch(e, 'memo', id) && (!currentUser || String(e.uid) === String(currentUser.id)));
+  let m = null, official = null, wantNumber = null;
+  if (docqIsLocal(id)) {
+    if (!pend) return null;
+    m = Object.assign({}, pend.payload, { id });
+  } else {
+    let base = null;
+    try {
+      const res = await sbFetch(`memos?id=eq.${encodeURIComponent(id)}`);
+      if (res.status === 401 || res.status === 403) { const fe = new Error('forbidden'); fe.code = 'FORBIDDEN'; throw fe; }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const list = await res.json();
+      if (!Array.isArray(list)) throw new Error('bad');
+      if (!list.length) return null;
+      base = list[0];
+    } catch (e) {
+      if (e && e.code === 'FORBIDDEN') throw e;
+      if (!pend) throw e;                       // بلا اتصال: تُفتح فقط المذكرة التي لها تعديل معلّق محفوظ كاملاً على الجهاز
+      base = Object.assign({}, docqCacheGet('memo').rows.find(x => String(x.id) === String(id)) || { id });
     }
+    m = Object.assign({}, base, pend ? pend.payload : {});     // حمولة قديمة بلا layout لا تمحو layout المخزَّن: يُصالَح نصها مع التنسيق (stateFromLayout)
+    official = base.memo_number == null ? (base.memo_number === undefined ? null : '') : String(base.memo_number);
+    if (pend && pend.payload.number_mode === 'manual') wantNumber = pend.payload.memo_number;
+  }
+  const D = memoMD();
+  let st = m.layout ? D.stateFromLayout(m.layout, m) : null;
+  if (!st) st = D.legacyState(m);
+  return { id, m, pend, official, wantNumber, st };
+}
+const memoCanEdit = () => !!currentUser && (currentUser.role === 'admin' || currentUser.role === 'supervisor');   // نفس شرط الخادم (app_memo_save)
+let memoPvSeq = 0, memoPvScroll = 0, memoPvRec = null, memoPvScope = '';
+// نطاق الجلسة: المستخدم + رمز الجلسة؛ أي تغيّر (خروج/استبدال حساب) يُبطل المعاينة وما قيد التحميل/الرسم/الطباعة
+const memoScope = () => (typeof currentUser !== 'undefined' && currentUser) ? String(currentUser.id) + '|' + ((typeof CS_AUTH !== 'undefined' && CS_AUTH && CS_AUTH.token) || '') : '';
+function memoPvAlive(my) { return my === memoPvSeq && !!memoPvScope && memoPvScope === memoScope(); }
+function memoSessionEnd() {                        // يُستدعى عند الخروج/استبدال الجلسة: لا تبقى معاينة ولا سجل محتفَظ به ولا إطار طباعة
+  memoPvSeq++; memoPvRec = null; memoPvScope = '';
+  const ov = document.getElementById('memoArchivePv'); if (ov) ov.remove();
+  const fr = document.getElementById('memoPrintFrame'); if (fr) fr.remove();
+  if (typeof memoPvPrevOverflow !== 'undefined' && document.body.style.overflow === 'hidden') document.body.style.overflow = memoPvPrevOverflow || '';
+  try { popLevelIfMatches(memoClosePreview); } catch (e) {}
+}
+
+function memoClosePreview(fromBack) {
+  memoPvSeq++;                                   // أي استجابة متأخرة بعد الإغلاق تُهمَل
+  memoPvRec = null; memoPvScope = '';
+  const fr = document.getElementById('memoPrintFrame'); if (fr) fr.remove();
+  const ov = document.getElementById('memoArchivePv');
+  if (ov) ov.remove();
+  document.body.style.overflow = memoPvPrevOverflow || '';
+  if (!fromBack) popLevelIfMatches(memoClosePreview);
+  window.scrollTo(0, memoPvScroll);                // الأرشيف لم يُمسّ (الفلتر والقائمة كما هما)؛ نعيد موضع التمرير فقط
+}
+let memoPvPrevOverflow = '';
+async function openMemoFromArchive(id) {
+  const my = ++memoPvSeq; const scope = memoPvScope = memoScope();
+  if (!scope) { memoPvScope = ''; return; }
+  let ov = document.getElementById('memoArchivePv');
+  if (!ov) { memoPvScroll = window.scrollY || 0; memoPvPrevOverflow = document.body.style.overflow; }
+  if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'memoArchivePv'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'معاينة المذكرة');
+  const bar = document.createElement('div'); bar.className = 'pv-bar';
+  const mkb = (txt, cls, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = txt; if (cls) b.className = cls; b.onclick = fn; return b; };
+  const back = mkb('→ رجوع', 'pv-back', () => memoClosePreview());
+  const printB = mkb('🖨️ طباعة', 'pv-print', () => memoPrintRecord(my)); printB.disabled = true;
+  const editB = mkb('✏️ تعديل المذكرة', 'pv-edit', () => memoEditFromPreview(my)); editB.disabled = true;
+  const ttl = document.createElement('div'); ttl.className = 'pv-ttl'; ttl.textContent = '⏳ جاري تحميل المذكرة…';
+  bar.append(back, printB, editB, ttl); ov.appendChild(bar);
+  const msg = document.createElement('div'); msg.className = 'pv-msg'; msg.textContent = '⏳ جاري التحميل…'; ov.appendChild(msg);
+  document.body.style.overflow = 'hidden'; document.body.appendChild(ov);
+  pushLevel(memoClosePreview);
+  memoPvRec = null;
+  const fail = (text, retry) => {
+    if (my !== memoPvSeq) return;
+    msg.textContent = ''; const t = document.createElement('div'); t.textContent = text; msg.appendChild(t);
+    if (retry) { const r = mkb('↻ إعادة المحاولة', '', () => openMemoFromArchive(id)); r.style.cssText = 'margin-top:12px;height:38px;padding:0 16px;border:none;border-radius:8px;font-family:inherit;font-weight:700;background:#2E4057;color:#fff'; msg.appendChild(r); }
+    ttl.textContent = '⚠️ تعذّر عرض المذكرة';
+  };
+  let rec;
+  try { rec = await memoLoadRecord(id); } catch (e) {  if (!memoPvAlive(my)) return; if (e && e.code === 'FORBIDDEN') fail('⛔ لا تملك صلاحية عرض هذه المذكرة — المذكرات للمدير والمشرف', false); else fail('❌ تعذّر تحميل المذكرة — تحقق من الاتصال ثم أعد المحاولة', true); return; }
+  if (!memoPvAlive(my)) { if (my === memoPvSeq) memoSessionEnd(); return; }
+  if (!rec) { fail('❌ المذكرة غير موجودة (ربما حُذفت)', false); return; }
+  memoPvRec = rec; rec.scope = scope;
+  let canvases;
+  try {
+    const D = memoMD();
+    ({ canvases } = await D.renderPages(rec.st, memoPvHdr(rec), 2));
+  } catch (e) { if (!memoPvAlive(my)) { if (my === memoPvSeq) memoSessionEnd(); return; } fail(e && e.code === 'FONT_FAIL' ? memoFontFailMsg(e) : '❌ تعذّر رسم المعاينة: ' + (e && e.message ? e.message : 'خطأ غير معروف'), true); return; }
+  if (!memoPvAlive(my)) { if (my === memoPvSeq) memoSessionEnd(); return; }                  // وصلت الاستجابة بعد إغلاق/فتح مذكرة أخرى
+  msg.remove();
+  const pages = document.createElement('div'); pages.className = 'pv-pages';
+  canvases.forEach((cv, i) => { cv.setAttribute('aria-label', 'صفحة ' + (i + 1)); pages.appendChild(cv); });
+  ov.appendChild(pages);
+  const num = rec.official ? ('العدد ' + rec.official) : (rec.official === '' ? 'بلا عدد' : 'العدد يُحدَّد عند المزامنة');
+  ttl.textContent = 'معاينة للقراءة فقط — ' + num + ' — ' + canvases.length + ' صفحة' + (rec.pend ? ' — يوجد تعديل معلّق على الجهاز' : '');
+  printB.disabled = false;
+  editB.disabled = false;
+  if (!memoCanEdit()) { editB.title = 'تعديل المذكرات للمدير والمشرف فقط'; editB.style.opacity = '.55'; editB.setAttribute('aria-disabled', 'true'); }
+}
+function memoPvHdr(rec) {
+  const m = rec.m, num = rec.official != null && rec.official !== '' ? rec.official : (rec.wantNumber != null ? String(rec.wantNumber) : '');
+  return { number: rec.official ? num : '', date: m.memo_date || '', to: m.memo_to || 'الى / السيـد المـديـر الـمحتـرم...', from: (rec.st.from || '').trim() };
+}
+// طباعة صفحات المعاينة: نفس الصور (نفس أبعاد PDF: عرض 555pt وإزاحة 20pt) داخل iframe مخفي
+async function memoPrintRecord(my) {
+  const rec = memoPvRec; if (!rec) return;
+  if (!memoPvAlive(my) || rec.scope !== memoScope()) { memoSessionEnd(); return; }
+  try {
+    const { canvases } = await memoMD().renderPages(rec.st, memoPvHdr(rec), 3);
+    if (!memoPvAlive(my) || rec.scope !== memoScope()) { if (my === memoPvSeq) memoSessionEnd(); return; }
+    memoPrintCanvases(canvases, () => memoPvAlive(my) && rec.scope === memoScope());
+  } catch (e) { showToast(e && e.code === 'FONT_FAIL' ? memoFontFailMsg(e) : '❌ تعذرت الطباعة', 'error'); }
+}
+function memoPrintCanvases(canvases, alive) {
+  alive = alive || (() => true);
+  const html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title></title><style>@page{size:A4;margin:0}html,body{margin:0;padding:0}.pg{width:595pt;height:842pt;overflow:hidden;page-break-after:always;break-after:page}.pg:last-child{page-break-after:auto;break-after:auto}.pg img{display:block;width:555pt;margin:20pt auto 0}</style></head><body>' + canvases.map(cv => '<div class="pg"><img src="' + cv.toDataURL('image/png') + '"></div>').join('') + '</body></html>';
+  let frame = document.getElementById('memoPrintFrame'); if (frame) frame.remove();
+  frame = document.createElement('iframe'); frame.id = 'memoPrintFrame'; frame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:0;height:0;border:0';
+  document.body.appendChild(frame);
+  const doc = frame.contentWindow.document; doc.open(); doc.write(html); doc.close();
+  const imgs = Array.from(doc.images), go = () => { if (!alive()) { frame.remove(); return; } try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (e) { showToast('❌ تعذرت الطباعة', 'error'); } };
+  Promise.all(imgs.map(im => im.complete ? 1 : new Promise(r => { im.onload = im.onerror = r; }))).then(() => setTimeout(go, 150));
+}
+function memoEditFromPreview(my) {
+  if (!memoPvRec) return;
+  if (!memoPvAlive(my) || memoPvRec.scope !== memoScope()) { memoSessionEnd(); return; }
+  if (!memoCanEdit()) { showToast('⛔ تعديل المذكرات للمدير والمشرف فقط — المعاينة والطباعة متاحتان', 'error'); return; }
+  const rec = memoPvRec;
+  memoClosePreview();
+  memoEnterEdit(rec);
+}
+// الدخول إلى التحرير (الوحيد المسموح به من الأرشيف): نفس ما كان يفعله فتح البطاقة سابقاً
+function memoEnterEdit(rec) {
+  if (rec.scope !== memoScope() || !memoCanEdit()) return;
+  try {
+    const { id, m, pend, official, wantNumber, st } = rec;
     editingMemoId = docqIsLocal(id) ? id : (m.id != null ? m.id : id);
     memoOfficialNumber = official;
     document.getElementById('memoHomeView').style.display = 'none';
@@ -464,18 +558,11 @@ async function openMemoFromArchive(id) {
     numberField.value = wantNumber != null ? String(wantNumber) : (pend && pend.payload.number_mode === 'manual' ? String(pend.payload.memo_number) : (official !== null ? official : ''));
     document.getElementById('memo_date').value = m.memo_date || '';
     document.getElementById('memo_to').value = m.memo_to || 'الى / السيـد المـديـر الـمحتـرم...';
-    document.getElementById('memo_sender_title').value = m.sender_title || '';
-    document.getElementById('memo_sender_name').value = m.sender_name || '';
-    const D = memoMD();
-    let st = m.layout ? D.stateFromLayout(m.layout, m) : null;
-    if (!st) st = D.legacyState(m);
     memoActiveCell = null;
-    memoSetState(st, st.mode === 'legacy' ? { content: m.content, subject: m.subject, table_data: m.table_data } : null);
-    memoAttachments = m.attachments || null;
-    renderMemoAttachmentsEditor();
+    memoSetState(st, st.mode === 'legacy' ? { content: m.content, subject: m.subject, table_data: m.table_data, attachments: m.attachments, sender_title: m.sender_title, sender_name: m.sender_name } : null);
     memoSetStatus(pend ? docqStatusHTML(pend.rejected ? 'rejected' : 'pending', pend.rejected && pend.rejected.code) : '');
     memoUpdateNumberHint();
-    if (st.notes && st.notes.length) showToast('ℹ️ عُدِّل ' + st.notes.map(n => ({ body: 'المتن', subject: 'الموضوع', table: 'الجدول' }[n] || n)).join('، ') + ' من نسخة أقدم من التطبيق؛ أُعيد تنسيق هذه الأجزاء إلى الافتراضي وبقي غيرها', undefined);
+    if (st.notes && st.notes.length) showToast('ℹ️ عُدِّل ' + st.notes.map(n => ({ body: 'المتن', subject: 'الموضوع', table: 'الجدول', att: 'المرفقات', stitle: 'عنوان مقدم الطلب', sname: 'اسم مقدم الطلب' }[n] || n)).join('، ') + ' من نسخة أقدم من التطبيق؛ أُعيد تنسيق هذه الأجزاء إلى الافتراضي وبقي غيرها', undefined);
     else showToast('📂 تم تحميل المذكرة، تكدر تعدّلها');
   } catch (e) { showToast('❌ تعذر الفتح', 'error'); }
 }
@@ -488,7 +575,7 @@ function memoOutputState() {
 function memoHdr(official) {
   return {
     number: official ? (document.getElementById('memo_number').value || '') : '', date: document.getElementById('memo_date').value || '', to: document.getElementById('memo_to').value || '',
-    from: (document.getElementById('memo_from').value || '').trim(), attachments: (memoAttachments || []).slice(), senderTitle: document.getElementById('memo_sender_title').value || '', senderName: document.getElementById('memo_sender_name').value || ''
+    from: (document.getElementById('memo_from').value || '').trim()
   };
 }
 function memoFontFailMsg(e) { return '❌ تعذّر تحميل الخط (' + (e.failed || []).join('، ') + ') — لم يُنشأ الملف ولم يُستبدل الخط بآخر. اتصل بالإنترنت مرة واحدة وأعد المحاولة'; }
