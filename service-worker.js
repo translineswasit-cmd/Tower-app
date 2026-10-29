@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v335-C6r16-N05b';
+const CACHE_NAME = 'tower-app-v335-C6r17-N22d';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -13,6 +13,7 @@ const CRITICAL_ASSETS = [
   './daily-report.js',
   './inventory.js',
   './records-reports.js',
+  './period-stats.js',   // v335-C6r17 (N22): إحصائيات الفترة (تخزين مسبق للعمل بدون إنترنت؛ لا يُنفَّذ إلا عند فتح الصفحة)
   // v335-C5r6: وحدات الكشف الحراري (تُخزَّن للعمل بدون إنترنت؛ التخزين المسبق ليس تنفيذاً — تُنفَّذ عند الطلب فقط)
   './thermal-inspection.js',
   './thermal-archive.js',

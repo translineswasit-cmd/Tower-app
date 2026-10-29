@@ -416,6 +416,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
     <div class="card" id="svcStatsCard" onclick="showPage('staffStats');loadStaffStats();"><img src="icon-stats.png" class="icon-img icon-img-xl"><span class="label">إحصائيات الموظفين</span></div>
+    <div class="card" id="svcPeriodStatsCard" onclick="openPeriodStatsFeature()"><span class="icon">📈</span><span class="label">إحصائيات الفترة</span></div>
     <div class="card" id="svcFormsCard" onclick="showPage('forms');showFormsHome();"><span class="icon">📑</span><span class="label">الاستمارات</span></div>
     <div class="card" onclick="openInventoryFeature();"><span class="icon">📦</span><span class="label">المخزن</span></div>
     <div class="card" id="svcAdminCard" onclick="showPage('admin')"><span class="icon">⚙️</span><span class="label">الإدارة</span></div>
@@ -1188,6 +1189,11 @@ tbody tr:hover { background: #F7FAFC; }
     <div id="hubDetailSummary" class="admin-card"></div>
     <div id="hubDetailList" style="margin-top:14px"></div>
   </div>
+</div>
+<!-- v335-C6r17 (N22): إحصائيات الفترة المتكاملة — الصفحة فارغة حتى أول فتح؛ الواجهة كلها في period-stats.js (تحميل كسول) -->
+<div class="page" id="page-periodStats">
+  <div class="page-title">📈 إحصائيات الفترة</div>
+  <div id="psRoot"><div style="text-align:center;color:#718096;padding:40px 0">… جارٍ التحميل</div></div>
 </div>
 <div class="page" id="page-staffStats">
   <div class="page-title"><img src="icon-stats.png" style="width:28px;height:28px;vertical-align:middle;margin-left:6px"> إحصائيات الموظفين</div>
@@ -2379,6 +2385,7 @@ function csPurgeUserData() {
   _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear(); csSnapPurgeAll();
   try { if (typeof depIndexReset === 'function') depIndexReset(); } catch (e) {}   // v335-C6r9: the departures index belongs to the account that read it
   try { if (typeof depxPurge === 'function') depxPurge(); } catch (e) {}   // v335-C6r10: ملف PDF الجاهز وعملية التصدير الجارية تخصّ الحساب الذي أنشأها
+  try { if (window.PeriodStats && typeof window.PeriodStats.purge === 'function') window.PeriodStats.purge(); } catch (e) {}   // v335-C6r17 (N22): نتائج الإحصائيات تخصّ الحساب الذي قرأها
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -3269,6 +3276,9 @@ function applyRolePermissions() {
   // النسخ الاحتياطي: للمدير فقط (يتعامل مع كامل بيانات قاعدة البيانات)
   const backupCard = document.getElementById('svcBackupCard');
   if (backupCard) backupCard.style.display = (currentUser.role === 'admin') ? '' : 'none';
+  // v335-C6r17 (N22): إحصائيات الفترة: المدير والمشرف والقراءة فقط (الفني ممنوع، والخادم يفرض نفس القاعدة)
+  const periodStatsCard = document.getElementById('svcPeriodStatsCard');
+  if (periodStatsCard) periodStatsCard.style.display = isTechnician ? 'none' : '';
   // إحصائيات الموظفين: للمدير والمشرف فقط
   const statsCard = document.getElementById('svcStatsCard');
   if (statsCard) statsCard.style.display = isAdminOrSupervisor ? '' : 'none';
@@ -3299,7 +3309,7 @@ function applyRolePermissions() {
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','recordsHub','workOrders'];
+const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','periodStats','dailyReport','forms','memo','backup','recordsHub','workOrders'];
 
 let pageStack = [];
 
@@ -3348,7 +3358,7 @@ const DLG_CLOSERS = {
   deleteUserModal: 'closeDeleteUserModal', accountActionsModal: 'closeAccountActionsModal', viewPasswordModal: 'closeViewPasswordModal', addMemberModal: 'closeAddMemberModal',
   depExportModalBg: 'closeDepExportModal', exportModalBg: 'closeExportModal', printStaffRosterModalBg: 'closePrintStaffRosterModal',
   staffMemberModal: 'closeStaffMemberModal', treatmentEditModalBg: 'closeTreatmentEditModal', depLogExportModalBg: 'closeDepLogExportModal', workOrderModal: 'closeWorkOrderModal',
-  addBorrowModal: 'closeAddBorrowModal', addToolModal: 'closeAddToolModal', editToolModal: 'closeEditToolModal', addMaterialModal: 'closeAddMaterialModal', editMaterialModal: 'closeEditMaterialModal', lineModal: 'closeLineModal'
+  addBorrowModal: 'closeAddBorrowModal', addToolModal: 'closeAddToolModal', editToolModal: 'closeEditToolModal', addMaterialModal: 'closeAddMaterialModal', editMaterialModal: 'closeEditMaterialModal', lineModal: 'closeLineModal', psSheet: 'closePeriodStatsSheet'
 };   // addStaffColumnModal و staffStatsDetailModal: لا دالة إغلاق مخصصة (إخفاء مباشر) → الإغلاق الافتراضي
 const DLG_DISPLAY_IDS = ['addBorrowModal', 'addToolModal', 'editToolModal', 'addMaterialModal', 'editMaterialModal', 'lineModal'];
 const _dlg = { known: new Map(), stack: [], inerted: new Set(), locked: false, saved: null, y: 0, lst: false, act: null, actAt: 0, ty: 0, mo: null, bmo: null,
@@ -7674,6 +7684,40 @@ function staffLoadModule(name) {
     document.head.appendChild(el);
   });
   return s.promise;
+}
+
+// ---- v335-C6r17 (N22): إحصائيات الفترة — تحميل كسول لـ period-stats.js عند أول فتح فقط (لا طلبات ولا تنفيذ عند بدء التطبيق) ----
+let _psLoadPromise = null;
+
+function ensurePeriodStatsLoaded() {
+  if (window.PeriodStats) return Promise.resolve();
+  if (_psLoadPromise) return _psLoadPromise;
+  _psLoadPromise = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = './period-stats.js';
+    el.onload = () => { if (window.PeriodStats) resolve(); else { _psLoadPromise = null; el.remove(); reject(new Error('period-stats init')); } };
+    el.onerror = () => { _psLoadPromise = null; el.remove(); reject(new Error('period-stats load')); };
+    document.head.appendChild(el);
+  });
+  return _psLoadPromise;
+}
+
+function openPeriodStatsFeature() {
+  if (!currentUser || ['admin', 'supervisor', 'readonly'].indexOf(currentUser.role) < 0) { showToast('⚠️ ما عندك صلاحية لهذي الصفحة', 'error'); return; }
+  showPage('periodStats');
+  const tok = { p: pageNavigationRequestSeq, s: staffSessionTag() };
+  const ok = () => tok.p === pageNavigationRequestSeq && tok.s === staffSessionTag();
+  ensurePeriodStatsLoaded().then(() => { if (ok()) window.PeriodStats.open(tok); }).catch(() => {
+    if (!ok()) return;
+    const root = document.getElementById('psRoot');
+    if (root) root.innerHTML = '<div class="form-card" style="text-align:center"><div style="font-weight:700;color:#C53030;margin-bottom:8px">تعذر تحميل هذا الجزء</div><div style="color:#718096;font-size:0.85rem;margin-bottom:12px">تأكد من الاتصال ثم أعد المحاولة</div><button class="btn btn-primary" onclick="openPeriodStatsFeature()">إعادة المحاولة</button></div>';
+  });
+}
+
+// زر رجوع/Escape على نافذة التفاصيل: يرجع مستوى واحداً داخلها أو يغلقها (الدالة نفسها بـ period-stats.js)
+function closePeriodStatsSheet() {
+  if (window.PeriodStats && typeof window.PeriodStats.sheetBack === 'function') return window.PeriodStats.sheetBack();
+  const el = document.getElementById('psSheet'); if (el) el.classList.remove('show');
 }
 
 function staffEnsure(names) { return Promise.all(names.map(staffLoadModule)); }
