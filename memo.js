@@ -533,12 +533,33 @@ async function memoPrintRecord(my) {
   try {
     const { canvases } = await memoMD().renderPages(rec.st, memoPvHdr(rec), 3);
     if (!memoPvAlive(my) || rec.scope !== memoScope()) { if (my === memoPvSeq) memoSessionEnd(); return; }
-    memoPrintCanvases(canvases, () => memoPvAlive(my) && rec.scope === memoScope());
+    const alive = () => memoPvAlive(my) && rec.scope === memoScope();
+    // iOS: طباعة iframe تُضيف رأس/تذييل المتصفح (الرابط والتاريخ وأرقام الصفحات) ولا يمكن إيقافها من الصفحة → نستخدم نفس PDF النظيف ونمرّره لقائمة المشاركة (منها «طباعة»)
+    if (typeof _dlg !== 'undefined' && _dlg.ios) { await memoSharePdfForPrint(canvases, rec, alive, my); return; }
+    memoPrintCanvases(canvases, alive);
   } catch (e) { showToast(e && e.code === 'FONT_FAIL' ? memoFontFailMsg(e) : '❌ تعذرت الطباعة', 'error'); }
+}
+// بناء PDF المذكرة (نفس مقاسات exportMemoPDF: A4، عرض 555pt، هامش علوي 20pt، صفحة لكل canvas بلا صفحات زائدة)
+async function memoBuildPdfBlob(canvases) {
+  const D = memoMD();
+  await ensureJsPDFLoaded();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true });
+  const pageW = doc.internal.pageSize.getWidth(), w = 555, h = w * D.H / D.W;
+  canvases.forEach((cv, i) => { if (i) doc.addPage(); doc.addImage(cv.toDataURL('image/png'), 'PNG', (pageW - w) / 2, 20, w, h); });
+  return doc.output('blob');
+}
+async function memoSharePdfForPrint(canvases, rec, alive, my) {
+  showToast('⏳ جاري تجهيز ملف PDF للطباعة...');
+  const blob = await memoBuildPdfBlob(canvases);
+  if (!alive()) { if (my === memoPvSeq) memoSessionEnd(); return; }       // تغيّرت الجلسة أثناء التجهيز
+  const nm = 'مذكرة_' + ((rec.m && rec.m.memo_date) || '') + (rec.official ? '_' + rec.official : '') + '.pdf';
+  await shareOrDownloadFile(blob, nm, 'application/pdf');
+  showToast('✅ ملف PDF جاهز — من قائمة المشاركة اختر «طباعة» (بدون رأس/تذييل المتصفح)');
 }
 function memoPrintCanvases(canvases, alive) {
   alive = alive || (() => true);
-  const html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title></title><style>@page{size:A4;margin:0}html,body{margin:0;padding:0}.pg{width:595pt;height:842pt;overflow:hidden;page-break-after:always;break-after:page}.pg:last-child{page-break-after:auto;break-after:auto}.pg img{display:block;width:555pt;margin:20pt auto 0}</style></head><body>' + canvases.map(cv => '<div class="pg"><img src="' + cv.toDataURL('image/png') + '"></div>').join('') + '</body></html>';
+  const html = '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title></title><style>@page{size:A4;margin:0}html,body{margin:0;padding:0}.pg{width:595pt;height:841pt;overflow:hidden;page-break-after:always;break-after:page}.pg:last-child{page-break-after:auto;break-after:auto}.pg img{display:block;width:555pt;margin:20pt auto 0}</style></head><body>' + canvases.map(cv => '<div class="pg"><img src="' + cv.toDataURL('image/png') + '"></div>').join('') + '</body></html>';
   let frame = document.getElementById('memoPrintFrame'); if (frame) frame.remove();
   frame = document.createElement('iframe'); frame.id = 'memoPrintFrame'; frame.setAttribute('data-dlg-keep', ''); frame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:0;height:0;border:0';
   document.body.appendChild(frame);
