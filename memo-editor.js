@@ -1,0 +1,341 @@
+/* memo-editor.js — v335-C6r18 (N23)
+   محرّر نص غني مدمج للمذكرة (RTL). النموذج هو المرجع: DOM → نموذج (قائمة بيضاء) → إعادة رسم DOM عند تطبيق التنسيق/اللصق/الإدخال المُدار.
+   لا يدخل نص المستخدم إلى innerHTML أبداً (textContent فقط)، واللصق نص خام فقط، ولا يُوسَّع التحديد إلى كلمات.
+   يعتمد على window.MemoDoc (memo-doc.js). */
+(function () {
+  'use strict';
+  const D = window.MemoDoc, PX = 96 / 72;
+  const clone = o => JSON.parse(JSON.stringify(o));
+  const plen = p => D.paraText(p).length;
+  const flatLen = ps => ps.reduce((a, p) => a + plen(p), 0) + Math.max(0, ps.length - 1);
+  const AREA_LABEL = { subject: 'الموضوع', body: 'المتن', table: 'الجدول', after: 'ما بعد الجدول', closing: 'الخاتمة' };
+
+  // ---------------- نموذج: عمليات على الفقرات (إزاحات مسطّحة؛ فاصل الفقرة = حرف واحد) ----------------
+  function locate(ps, o) {
+    for (let i = 0; i < ps.length; i++) { const l = plen(ps[i]); if (o <= l) return { pi: i, off: o }; o -= l + 1; }
+    return { pi: ps.length - 1, off: plen(ps[ps.length - 1]) };
+  }
+  function styleAt(runs, off) { let acc = 0; for (const r of runs) { if (off > acc && off <= acc + r.t.length) return r; acc += r.t.length; } return runs[0] || null; }
+  const stylePart = r => { const o = {}; ['f', 's', 'b', 'i'].forEach(k => { if (r && r[k] != null) o[k] = r[k]; }); return o; };
+  function splitRuns(runs, off) {
+    let acc = 0;
+    for (let i = 0; i < runs.length; i++) {
+      const l = runs[i].t.length; if (off === acc) return i;
+      if (off < acc + l) { runs.splice(i, 1, Object.assign({}, runs[i], { t: runs[i].t.slice(0, off - acc) }), Object.assign({}, runs[i], { t: runs[i].t.slice(off - acc) })); return i + 1; }
+      acc += l;
+    }
+    return runs.length;
+  }
+  // يستبدل [s,e) بنص. soft=true: كل '\n' فاصل سطر داخل الفقرة (لا فقرات جديدة).
+  function replaceRange(paras, s, e, text, soft) {
+    const ps = clone(paras), a = locate(ps, s), b = locate(ps, e);
+    const st = stylePart(styleAt(ps[a.pi].r, a.off));
+    const L = ps[a.pi].r.map(x => Object.assign({}, x)), li = splitRuns(L, a.off), left = L.slice(0, li);
+    const R = ps[b.pi].r.map(x => Object.assign({}, x)), ri = splitRuns(R, b.off), right = R.slice(ri);
+    const mk = t => (t === '' ? [] : [Object.assign({ t }, st)]);
+    const lines = soft ? [String(text)] : String(text).split('\n'), out = [];
+    if (lines.length === 1) out.push({ r: D.cleanRuns(left.concat(mk(lines[0]), right)) });
+    else {
+      out.push({ r: D.cleanRuns(left.concat(mk(lines[0]))) });
+      for (let k = 1; k < lines.length - 1; k++) out.push({ r: D.cleanRuns(mk(lines[k])) });
+      out.push({ r: D.cleanRuns(mk(lines[lines.length - 1]).concat(right)) });
+    }
+    ps.splice(a.pi, b.pi - a.pi + 1, ...out);
+    return { paras: ps, caret: s + String(text).length };
+  }
+  function mapRange(paras, s, e, fn) {
+    const ps = clone(paras); let pos = 0;
+    ps.forEach(p => {
+      const l = plen(p), a = Math.max(s, pos) - pos, b = Math.min(e, pos + l) - pos;
+      if (b > a) { const runs = p.r, i0 = splitRuns(runs, a), i1 = splitRuns(runs, b); for (let k = i0; k < i1; k++) fn(runs[k]); p.r = D.cleanRuns(runs); }
+      pos += l + 1;
+    });
+    return ps;
+  }
+  const applyPatch = (paras, s, e, patch) => mapRange(paras, s, e, r => Object.assign(r, patch));
+  function clearAttrs(paras, keys) { const ps = clone(paras); ps.forEach(p => { p.r.forEach(r => keys.forEach(k => { delete r[k]; })); p.r = D.cleanRuns(p.r); }); return ps; }
+  // الأنماط المحلولة ضمن [s,e) (أو كل النص): {f,s,b,i} بقيمة null إن اختلفت
+  function query(paras, base, s, e) {
+    const seen = []; let pos = 0;
+    paras.forEach(p => {
+      let q = pos;
+      p.r.forEach(r => { const a = q, b = q + r.t.length; q = b; if (b > s && a < e) seen.push(D.resolve(r, base)); });
+      pos += plen(p) + 1;
+    });
+    if (!seen.length) seen.push(D.resolve({}, base));
+    const out = {};
+    ['f', 's', 'b', 'i'].forEach(k => { out[k] = seen.every(x => x[k] === seen[0][k]) ? seen[0][k] : null; });
+    out.first = seen[0];
+    return out;
+  }
+
+  // ---------------- DOM: رسم النموذج ----------------
+  function spanFor(run, base) {
+    const st = D.resolve(run, base), sp = document.createElement('span');
+    ['f', 's', 'b', 'i'].forEach(k => { if (run[k] != null) sp.dataset[k] = k === 'b' || k === 'i' ? (run[k] ? '1' : '0') : String(run[k]); });
+    const fam = st.fam;
+    sp.style.fontFamily = fam.legacy ? 'Tahoma, Arial, sans-serif' : "'" + fam.css + "', sans-serif";
+    sp.style.fontSize = (st.s * PX).toFixed(2) + 'px';
+    sp.style.fontWeight = st.b && !fam.alwaysBold ? '700' : '400';
+    sp.style.fontStyle = st.i ? 'italic' : 'normal';
+    return sp;
+  }
+  function render(root, paras, base) {
+    root.textContent = '';
+    paras.forEach(p => {
+      const d = document.createElement('div'); d.className = 'mp';
+      if (!p.r.length) { const sp = spanFor({}, base); sp.appendChild(document.createElement('br')); d.appendChild(sp); }
+      else {
+        p.r.forEach(r => {
+          const sp = spanFor(r, base);
+          r.t.split('\n').forEach((part, i) => { if (i) sp.appendChild(document.createElement('br')); if (part !== '') sp.appendChild(document.createTextNode(part)); });
+          d.appendChild(sp);
+        });
+        if (/\n$/.test(D.paraText(p))) d.lastChild.appendChild(document.createElement('br'));
+      }
+      root.appendChild(d);
+    });
+  }
+  // ---------------- DOM → نموذج (تسامح مع ما يُنتجه المتصفح؛ لا يُقرأ إلا النص ووسوم data-*) ----------------
+  function styleOf(el, st) {
+    const d = el.dataset; if (!d || (d.f === undefined && d.s === undefined && d.b === undefined && d.i === undefined)) return st;
+    const o = Object.assign({}, st);
+    if (d.f !== undefined) o.f = d.f; if (d.s !== undefined && isFinite(Number(d.s))) o.s = Number(d.s);
+    if (d.b !== undefined) o.b = d.b === '1'; if (d.i !== undefined) o.i = d.i === '1';
+    return o;
+  }
+  function readParas(root, partial) {
+    const paras = []; let cur = null;
+    const start = () => { cur = { r: [], endsBr: false }; paras.push(cur); };
+    const add = (t, st, isBr) => { if (t === '') return; if (!cur) start(); cur.r.push(Object.assign({ t }, st)); cur.endsBr = !!isBr; };
+    const walk = (node, st) => {
+      node.childNodes.forEach(ch => {
+        if (ch.nodeType === 3) add(ch.nodeValue.replace(/[​﻿]/g, '').replace(/ /g, ' '), st, false);
+        else if (ch.nodeType === 1) {
+          const tag = ch.tagName;
+          if (tag === 'BR') add('\n', st, true);
+          else if (tag === 'DIV' || tag === 'P' || tag === 'LI') {
+            if (!(cur && !cur.r.length && paras[paras.length - 1] === cur)) start();
+            walk(ch, styleOf(ch, st)); cur = null;
+          } else if (tag !== 'SCRIPT' && tag !== 'STYLE') walk(ch, styleOf(ch, st));
+        }
+      });
+    };
+    walk(root, {});
+    if (!paras.length) paras.push({ r: [], endsBr: false });
+    paras.forEach((p, i) => {
+      if (p.endsBr && !(partial && i === paras.length - 1)) {      // فاصل السطر الأخير في الفقرة = مُحجِز المتصفح
+        const last = p.r[p.r.length - 1]; last.t = last.t.slice(0, -1); if (!last.t) p.r.pop();
+      }
+    });
+    return paras.map(p => ({ r: D.cleanRuns(p.r) }));
+  }
+  function offsetOf(root, node, off) {
+    const r = document.createRange(); r.setStart(root, 0);
+    try { r.setEnd(node, off); } catch (e) { return null; }
+    const tmp = document.createElement('div'); tmp.appendChild(r.cloneContents());
+    return flatLen(readParas(tmp, true));
+  }
+  // إزاحة → موضع DOM بعد render() مباشرة
+  function posOf(root, o) {
+    const divs = Array.from(root.children);
+    for (let i = 0; i < divs.length; i++) {
+      const units = []; const walk = n => n.childNodes.forEach(ch => { if (ch.nodeType === 3) units.push({ n: ch, l: ch.nodeValue.length }); else if (ch.tagName === 'BR') units.push({ n: ch, l: 1, br: true }); else walk(ch); }); walk(divs[i]);
+      if (units.length && units[units.length - 1].br) units[units.length - 1].l = 0;     // مُحجِز
+      const total = units.reduce((a, u) => a + u.l, 0);
+      if (o <= total || i === divs.length - 1) {
+        let acc = 0;
+        for (const u of units) {
+          if (u.br) { if (u.l && o === acc) return { node: u.n.parentNode, off: Array.prototype.indexOf.call(u.n.parentNode.childNodes, u.n) }; acc += u.l; continue; }
+          if (o <= acc + u.l) return { node: u.n, off: o - acc };
+          acc += u.l;
+        }
+        const last = units[units.length - 1];
+        if (last && last.br) return { node: last.n.parentNode, off: Array.prototype.indexOf.call(last.n.parentNode.childNodes, last.n) + (last.l ? 1 : 0) };
+        return { node: divs[i], off: divs[i].childNodes.length ? 1 : 0 };
+      }
+      o -= total + 1;
+    }
+    return { node: root, off: 0 };
+  }
+  function setSel(root, s, e) {
+    const a = posOf(root, s), b = e === s ? a : posOf(root, e), sel = window.getSelection(), r = document.createRange();
+    try { r.setStart(a.node, a.off); r.setEnd(b.node, b.off); sel.removeAllRanges(); sel.addRange(r); } catch (x) {}
+  }
+
+  // ---------------- المحرّر ----------------
+  const editors = new Set();
+  let active = null, lastSel = { ed: null, s: 0, e: 0 }, bar = null;
+  function selOf(ed) {
+    const sel = window.getSelection(); if (!sel || !sel.anchorNode || !ed.el.contains(sel.anchorNode) || !ed.el.contains(sel.focusNode)) return null;
+    const a = offsetOf(ed.el, sel.anchorNode, sel.anchorOffset), b = offsetOf(ed.el, sel.focusNode, sel.focusOffset);
+    if (a == null || b == null) return null;
+    return { s: Math.min(a, b), e: Math.max(a, b) };
+  }
+  class Ed {
+    // cfg: {area, single, getBase(), getParas(), setParas(ps), onChange(), onActive(), row, col}
+    constructor(el, cfg) {
+      this.el = el; this.cfg = cfg; this.undo = []; this.redo = []; this.burst = false; this.composing = false;
+      el.setAttribute('contenteditable', 'true'); el.setAttribute('dir', 'rtl'); el.setAttribute('role', 'textbox'); el.setAttribute('aria-multiline', cfg.single ? 'false' : 'true');
+      el.setAttribute('autocapitalize', 'off'); el.setAttribute('autocorrect', 'off'); el.spellcheck = false;
+      el.addEventListener('beforeinput', e => this.before(e));
+      el.addEventListener('input', () => this.input());
+      el.addEventListener('compositionstart', () => { this.composing = true; });
+      el.addEventListener('compositionend', () => { this.composing = false; this.input(); });
+      el.addEventListener('paste', e => this.paste(e));
+      el.addEventListener('drop', e => e.preventDefault());
+      el.addEventListener('dragover', e => e.preventDefault());
+      el.addEventListener('focus', () => this.activate());
+      el.addEventListener('blur', () => { if (!this.composing) this.draw(); });
+      editors.add(this); this.draw();
+    }
+    paras() { return this.cfg.getParas(); }
+    base() { return this.cfg.getBase(); }
+    activate() { active = this; if (this.cfg.onActive) this.cfg.onActive(this); if (bar) bar.refresh(); }
+    draw(s, e) {
+      const ps = this.paras(); render(this.el, ps, this.base());
+      this.el.classList.toggle('is-empty', ps.length === 1 && !ps[0].r.length);
+      if (s != null && document.activeElement === this.el) setSel(this.el, s, e == null ? s : e);
+    }
+    snap() { this.undo.push(clone(this.paras())); if (this.undo.length > 60) this.undo.shift(); this.redo.length = 0; }
+    commit(ps, caret, noSnap) {
+      if (!noSnap) this.snap();
+      this.cfg.setParas(ps); this.draw(caret); this.cfg.onChange && this.cfg.onChange(this); if (bar) bar.refresh();
+    }
+    sel() { return selOf(this) || (lastSel.ed === this ? { s: lastSel.s, e: lastSel.e } : { s: 0, e: 0 }); }
+    input() {
+      if (this.composing) return;
+      if (!this.burst) { this.snap(); this.burst = true; clearTimeout(this._bt); this._bt = setTimeout(() => { this.burst = false; }, 1200); }
+      let ps = readParas(this.el);
+      if (this.cfg.single) { ps = [{ r: D.cleanRuns([].concat(...ps.map((p, i) => (i ? [{ t: '\n' }] : []).concat(p.r)))) }]; }
+      this.cfg.setParas(ps);
+      this.el.classList.toggle('is-empty', ps.length === 1 && !ps[0].r.length);
+      this.cfg.onChange && this.cfg.onChange(this); if (bar) bar.refresh();
+    }
+    insert(text, soft) {
+      const { s, e } = this.sel(), ps = this.paras(), tot = flatLen(ps);
+      const r = replaceRange(ps, Math.min(s, tot), Math.min(e, tot), D.cleanText(text, 20000), soft || this.cfg.single);
+      this.commit(r.paras, r.caret);
+    }
+    before(e) {
+      const t = e.inputType;
+      if (t === 'insertParagraph') { e.preventDefault(); this.insert('\n', this.cfg.single); }
+      else if (t === 'insertLineBreak') { e.preventDefault(); this.insert('\n', true); }
+      else if (t === 'formatBold') { e.preventDefault(); bar && bar.toggle('b'); }
+      else if (t === 'formatItalic') { e.preventDefault(); bar && bar.toggle('i'); }
+      else if (/^format/.test(t)) e.preventDefault();                        // لا شطب/تسطير/ألوان…
+      else if (t === 'historyUndo') { e.preventDefault(); this.doUndo(); }
+      else if (t === 'historyRedo') { e.preventDefault(); this.doRedo(); }
+      else if (t === 'insertFromPaste' || t === 'insertFromDrop' || t === 'insertFromYank') { e.preventDefault(); const dt = e.dataTransfer; if (dt) this.insert(dt.getData('text/plain') || ''); }
+    }
+    paste(e) {
+      e.preventDefault();
+      const cd = e.clipboardData || window.clipboardData; let txt = cd ? cd.getData('text/plain') : '';
+      if (txt) this.insert(String(txt).replace(/ /g, ' '));
+    }
+    doUndo() { if (!this.undo.length) return; this.redo.push(clone(this.paras())); const ps = this.undo.pop(); this.cfg.setParas(ps); this.draw(flatLen(ps)); this.cfg.onChange && this.cfg.onChange(this); bar && bar.refresh(); }
+    doRedo() { if (!this.redo.length) return; this.undo.push(clone(this.paras())); const ps = this.redo.pop(); this.cfg.setParas(ps); this.draw(flatLen(ps)); this.cfg.onChange && this.cfg.onChange(this); bar && bar.refresh(); }
+    destroy() { editors.delete(this); if (active === this) active = null; }
+  }
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection(); if (!sel || !sel.anchorNode) return;
+    for (const ed of editors) if (ed.el.isConnected && ed.el.contains(sel.anchorNode)) {
+      const s = selOf(ed); if (s) { lastSel = { ed, s: s.s, e: s.e }; if (active !== ed) { active = ed; if (ed.cfg.onActive) ed.cfg.onActive(ed); } if (bar) bar.refresh(); }
+      return;
+    }
+  });
+
+  // ---------------- شريط التنسيق ----------------
+  // ctx: {getState(), touch(), editorsOf(area) → [Ed], tableCells() → [Ed]}
+  class Bar {
+    constructor(host, ctx) {
+      this.host = host; this.ctx = ctx; this.tableAll = false; this.fontOpen = false;
+      host.innerHTML = '';
+      const mk = (tag, cls, txt, attrs) => { const el = document.createElement(tag); if (cls) el.className = cls; if (txt != null) el.textContent = txt; if (attrs) Object.keys(attrs).forEach(k => el.setAttribute(k, attrs[k])); return el; };
+      const btn = (cls, txt, title, fn) => {
+        const b = mk('button', 'mfb ' + cls, txt, { type: 'button', title, 'aria-label': title, tabindex: '-1' });
+        ['mousedown', 'pointerdown'].forEach(ev => b.addEventListener(ev, e => e.preventDefault()));
+        b.addEventListener('click', e => { e.preventDefault(); fn(); });
+        return b;
+      };
+      this.lbl = mk('div', 'mfl'); this.scope = mk('span', 'mfs'); this.areaEl = mk('b'); this.lbl.append(this.areaEl, document.createTextNode(' · النطاق: '), this.scope);
+      const row = mk('div', 'mfr');
+      this.fontBtn = btn('mf-font', 'الخط', 'نوع الخط', () => { this.fontOpen = !this.fontOpen; this.refresh(); });
+      this.dec = btn('mf-sz', 'A−', 'تصغير الخط', () => this.step(-1));
+      this.sz = mk('span', 'mf-szv', '—');
+      this.inc = btn('mf-sz', 'A+', 'تكبير الخط', () => this.step(1));
+      this.bBtn = btn('mf-b', 'B', 'غامق', () => this.toggle('b'));
+      this.iBtn = btn('mf-i', 'I', 'مائل', () => this.toggle('i'));
+      this.tBtn = btn('mf-t', 'الجدول كله', 'تنسيق الجدول كله بدل الخلية', () => { this.tableAll = !this.tableAll; this.refresh(); });
+      row.append(this.fontBtn, this.dec, this.sz, this.inc, this.bBtn, this.iBtn, this.tBtn);
+      this.pop = mk('div', 'mf-pop'); this.pop.hidden = true;
+      D.PICK.forEach(k => { const f = D.FONTS[k]; const b = btn('mf-pi', f.label + (f.alwaysBold ? ' (غامق أصلاً)' : ''), f.label, () => { this.apply({ f: k }); this.fontOpen = false; this.refresh(); }); b.dataset.f = k; b.style.fontFamily = "'" + f.css + "', sans-serif"; this.pop.appendChild(b); });
+      host.append(this.lbl, row, this.pop);
+      this.refresh();
+    }
+    cur() { return active && active.el.isConnected ? active : null; }
+    info() {
+      const ed = this.cur(); if (!ed) return null;
+      const area = ed.cfg.area, st = this.ctx.getState(), base = st.base[area], ps = ed.paras(), sel = ed.sel(), tot = flatLen(ps);
+      const picked = sel.e > sel.s;
+      let scope;
+      if (picked) scope = 'sel'; else if (area === 'table') scope = this.tableAll ? 'table' : 'cell'; else scope = 'area';
+      let s0 = 0, e0 = tot;
+      if (scope === 'sel') { s0 = sel.s; e0 = sel.e; }
+      if (scope === 'table') {                        // قيم الجدول كله: نجمع الخلايا
+        const cells = this.ctx.tableCells(); const all = cells.map(c => query(c.paras(), base, 0, flatLen(c.paras())));
+        const q = {}; ['f', 's', 'b', 'i'].forEach(k => { q[k] = all.every(x => x[k] === all[0][k]) ? all[0][k] : null; }); q.first = all[0].first; return { ed, area, base, scope, q, n: 0 };
+      }
+      return { ed, area, base, scope, q: query(ps, base, s0, e0), n: e0 - s0, s0, e0 };
+    }
+    refresh() {
+      const I = this.info();
+      this.host.classList.toggle('mf-idle', !I);
+      if (!I) { this.areaEl.textContent = 'اضغط داخل أي حقل نصي للتنسيق'; this.scope.textContent = '—'; this.pop.hidden = true; return; }
+      const { ed, area, scope, q } = I;
+      this.areaEl.textContent = AREA_LABEL[area];
+      this.scope.textContent = scope === 'sel' ? (area === 'table' ? 'المحدد داخل الخلية (' + I.n + ' حرف)' : 'المحدد (' + I.n + ' حرف)') : scope === 'table' ? 'الجدول كله' : scope === 'cell' ? 'الخلية (صف ' + (ed.cfg.row + 1) + '، عمود ' + (ed.cfg.col + 1) + ')' : AREA_LABEL[area] + ' كاملاً';
+      this.tBtn.hidden = area !== 'table'; this.tBtn.classList.toggle('on', this.tableAll);
+      const fam = q.f ? D.FONTS[q.f] : null;
+      this.fontBtn.textContent = (fam ? fam.label : 'خطوط مختلفة') + ' ▾';
+      this.sz.textContent = q.s == null ? '—' : String(Math.round(q.s * 10) / 10);
+      this.bBtn.classList.toggle('on', q.b === true); this.iBtn.classList.toggle('on', q.i === true);
+      this.bBtn.setAttribute('aria-pressed', String(q.b === true)); this.iBtn.setAttribute('aria-pressed', String(q.i === true));
+      const pt = (q.f && D.FONTS[q.f].alwaysBold); this.bBtn.disabled = !!pt; this.bBtn.title = pt ? 'PT Bold Heading غامق أصلاً' : 'غامق';
+      this.pop.hidden = !this.fontOpen;
+      Array.from(this.pop.children).forEach(b => b.classList.toggle('on', b.dataset.f === q.f));
+    }
+    // يطبّق patch على النطاق الحالي
+    apply(patch) {
+      const I = this.info(); if (!I) { return; }
+      const { ed, area, scope } = I, st = this.ctx.getState(); this.ctx.touch();
+      const keys = Object.keys(patch);
+      if (scope === 'sel') { const ps = applyPatch(ed.paras(), I.s0, I.e0, patch); ed.commit(ps, I.s0, false); ed.draw(I.s0, I.e0); }
+      else if (scope === 'cell') { const ps = applyPatch(ed.paras(), 0, flatLen(ed.paras()), patch); ed.commit(ps, 0, false); }
+      else if (scope === 'table') { Object.assign(st.base.table, patch); this.ctx.tableCells().forEach(c => { c.snap(); c.cfg.setParas(clearAttrs(c.paras(), keys)); c.draw(); }); this.ctx.changed(); }
+      else {                                          // الحقل كاملاً: يتغير أساس الحقل وتُزال تجاوزات هذه الخاصية من نصه
+        Object.assign(st.base[area], patch);
+        this.ctx.editorsOf(area).forEach(x => { x.snap(); x.cfg.setParas(clearAttrs(x.paras(), keys)); x.draw(); });
+        this.ctx.changed();
+      }
+      this.refresh();
+    }
+    toggle(k) {
+      const I = this.info(); if (!I) return;
+      if (k === 'b' && I.q.f && D.FONTS[I.q.f].alwaysBold) return;
+      this.apply({ [k]: I.q[k] !== true });
+    }
+    step(dir) {
+      const I = this.info(); if (!I) return;
+      const cur = I.q.s != null ? I.q.s : I.q.first.s;
+      const n = dir > 0 ? Math.floor(cur + 1e-6) + 1 : Math.ceil(cur - 1e-6) - 1;
+      this.apply({ s: Math.min(D.SIZE_MAX, Math.max(D.SIZE_MIN, n)) });
+    }
+  }
+
+  window.MemoEditor = {
+    Ed, Bar, AREA_LABEL, editors,
+    setBar(b) { bar = b; }, getActive: () => active,
+    _t: { replaceRange, applyPatch, mapRange, clearAttrs, query, readParas, render, offsetOf, posOf, flatLen, locate }
+  };
+})();

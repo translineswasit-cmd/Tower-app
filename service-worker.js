@@ -1,4 +1,6 @@
-const CACHE_NAME = 'tower-app-v335-C6r17-N22e';
+const CACHE_NAME = 'tower-app-v335-C6r18-N23b';
+// N23: خطوط المذكرة في كاش مستقل غير مرتبط برقم الإصدار (≈1.9MB): لا تُعاد تنزيلها مع كل إصدار، وتُخزَّن عند أول استخدام للمذكرة (دون إبطاء بدء التطبيق).
+const FONT_CACHE = 'tower-memo-fonts-v1';
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -9,6 +11,8 @@ const CRITICAL_ASSETS = [
   './work-orders.js',
   './backup.js',
   './memo.js',
+  './memo-doc.js',
+  './memo-editor.js',
   './period-summary.js',
   './daily-report.js',
   './inventory.js',
@@ -89,7 +93,7 @@ self.addEventListener('activate', (event) => {
       if (hasValidIndex) {
         const keys = await caches.keys();
         return Promise.all(
-          keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
+          keys.filter(key => key !== CACHE_NAME && key !== FONT_CACHE).map(key => caches.delete(key))
         );
       }
       console.log('New cache incomplete (offline during update?) — keeping old cache as fallback');
@@ -110,6 +114,16 @@ self.addEventListener('fetch', (event) => {
   // أي طلب غير GET (POST/PATCH/DELETE): لا يُعترض ولا يُخزَّن — التخزين المؤقت للقراءة فقط
   if (event.request.method !== 'GET') return;
 
+  // خطوط المذكرة ومكتبة docx المثبّتة للمذكرة: كاش مستقل، cache-first، تُخزَّن عند أول جلب ناجح
+  if (/\/(fonts\/[^/]+\.ttf|vendor\/docx-[^/]+\.js)$/.test(url)) {
+    event.respondWith(caches.open(FONT_CACHE).then(async (fc) => {
+      const hit = await fc.match(event.request); if (hit) return hit;
+      const net = await fetch(event.request);
+      if (net.ok) fc.put(event.request, net.clone());
+      return net;
+    }));
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {

@@ -112,6 +112,25 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .field label { font-size: 0.82rem; font-weight: 600; color: #4A5568; }
 .field input, .field select, .field textarea { padding: 9px 12px; border: 1.5px solid #E2E8F0; border-radius: 8px; font-family: inherit; font-size: 0.88rem; color: #1a202c; background: #FAFBFC; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: #2E4057; background: white; }
+/* N23: محرّر المذكرة الغني */
+.memo-fmtbar { position: sticky; top: 0; z-index: 20; background: #fff; border: 1.5px solid #2E4057; border-radius: 10px; padding: 6px 8px; margin: 0 0 10px; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+.memo-fmtbar .mfl { font-size: 0.74rem; color: #4A5568; margin-bottom: 4px; }
+.memo-fmtbar .mfr { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.memo-fmtbar .mfb { min-width: 38px; height: 36px; padding: 0 10px; border: 1.5px solid #CBD5E0; border-radius: 8px; background: #F7FAFC; font-family: inherit; font-size: 0.85rem; cursor: pointer; color: #1a202c; }
+.memo-fmtbar .mfb.on { background: #2E4057; color: #fff; border-color: #2E4057; }
+.memo-fmtbar .mfb:disabled { opacity: .45; }
+.memo-fmtbar .mf-b { font-weight: 900; } .memo-fmtbar .mf-i { font-style: italic; font-weight: 700; }
+.memo-fmtbar .mf-szv { min-width: 34px; text-align: center; font-weight: 700; font-size: 0.9rem; }
+.memo-fmtbar .mf-pop { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; } .memo-fmtbar .mf-pop[hidden] { display: none; }
+.memo-fmtbar .mf-pi { text-align: right; font-size: 1.05rem; } .memo-fmtbar.mf-idle .mfr { opacity: .55; }
+.memo-ed { position: relative; min-height: 44px; padding: 10px 12px; border: 1.5px solid #CBD5E0; border-radius: 10px; background: #fff; font-size: 16px; line-height: 1.9; direction: rtl; text-align: right; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-user-select: text; user-select: text; -webkit-text-size-adjust: 100%; outline: none; }
+.memo-ed:focus { border-color: #2E4057; box-shadow: 0 0 0 2px rgba(46,64,87,.15); }
+.memo-ed.is-empty::before { content: attr(data-ph); position: absolute; right: 12px; top: 10px; color: #A0AEC0; font-size: 0.9rem; pointer-events: none; font-family: inherit; }
+.memo-ed .mp { min-height: 1.4em; text-align: justify; }
+.memo-ed-line .mp { text-align: center; }
+.memo-ed-body { min-height: 220px; } .memo-ed-after { min-height: 90px; }
+.memo-cell { min-height: 34px; padding: 4px 6px; min-width: 70px; border: none; border-radius: 0; line-height: 1.5; text-align: center; } .memo-cell .mp { text-align: center; } .memo-cell.is-empty::before { display: none; }
+#memoTableEl td.mc-row { background: #FFF8E1; } #memoTableEl td.mc-col { background: #FFF8E1; } #memoTableEl td.mc-row.mc-col { background: #FFE9A8; }
 .tower-info-box { background: #EBF8FF; border: 1.5px solid #90CDF4; border-radius: 10px; padding: 10px 14px; margin-top: 8px; display: none; }
 .tower-info-box .type-value { font-size: 1.2rem; font-weight: 800; color: #1a365d; }
 .tower-info-box .type-desc { font-size: 0.75rem; color: #4A5568; }
@@ -1416,6 +1435,7 @@ tbody tr:hover { background: #F7FAFC; }
 
   <div id="memoNewView" style="display:none">
     <div class="page-title">📝 مذكرة جديدة</div>
+    <div id="memoFmtBar" class="memo-fmtbar"></div>
     <div class="form-card">
       <div class="grid-2">
         <div class="field"><label>العدد</label><input type="text" id="memo_number"></div>
@@ -1426,12 +1446,16 @@ tbody tr:hover { background: #F7FAFC; }
         <input type="text" id="memo_to" value="الى / السيـد المـديـر الـمحتـرم...">
       </div>
       <div class="field" style="margin-top:10px">
+        <label>من (الجهة المصدِرة — اختياري، يظهر تحت «إلى»)</label>
+        <input type="text" id="memo_from" maxlength="300" placeholder="مثال: قسم الخطوط / شعبة الصيانة">
+      </div>
+      <div class="field" style="margin-top:10px">
         <label>الموضوع</label>
-        <input type="text" id="memo_subject" placeholder="اكتب نص الموضوع فقط (يُضاف &quot;م/&quot; تلقائياً)">
+        <div class="memo-ed memo-ed-line" id="memo_subject_ed" data-ph="اكتب نص الموضوع فقط (يُضاف «م /» تلقائياً)"></div>
       </div>
       <div class="field" style="margin-top:10px">
         <label>المحتوى</label>
-        <textarea id="memo_body" rows="14" style="font-size:1rem;line-height:1.8" placeholder="اكتب متن المذكرة هنا فقط (بدون إلى أو الموضوع أو مع التقدير — تُضاف تلقائياً)"></textarea>
+        <div class="memo-ed memo-ed-body" id="memo_body_ed" data-ph="اكتب متن المذكرة هنا فقط (بدون إلى أو الموضوع أو مع التقدير — تُضاف تلقائياً)"></div>
       </div>
       <div id="memoTableSection" style="margin-top:14px">
         <button class="btn-sm btn-secondary" id="memoAddTableBtn" onclick="addMemoTable()">➕ إضافة جدول</button>
@@ -1440,9 +1464,20 @@ tbody tr:hover { background: #F7FAFC; }
           <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn-sm btn-secondary" onclick="addMemoTableRow()">➕ صف</button>
             <button class="btn-sm btn-secondary" onclick="addMemoTableCol()">➕ عمود</button>
+            <button class="btn-sm btn-del" id="memoDelRowBtn" onclick="deleteMemoTableRow()">➖ حذف الصف</button>
+            <button class="btn-sm btn-del" id="memoDelColBtn" onclick="deleteMemoTableCol()">➖ حذف العمود</button>
             <button class="btn-sm btn-del" onclick="removeMemoTable()">🗑️ حذف الجدول</button>
           </div>
+          <div id="memoCellHint" style="font-size:0.74rem;color:#4A5568;margin-top:4px">اضغط داخل خلية لتحديد الصف/العمود المراد حذفه (يظهر مظلَّلاً).</div>
         </div>
+      </div>
+      <div id="memoAfterWrap" class="field" style="display:none;margin-top:14px">
+        <label>نص ما بعد الجدول (اختياري — لا يترك فراغاً إن بقي فارغاً)</label>
+        <div class="memo-ed memo-ed-after" id="memo_after_ed" data-ph="اكتب هنا نصاً يظهر تحت الجدول"></div>
+      </div>
+      <div class="field" style="margin-top:14px">
+        <label>الخاتمة</label>
+        <div class="memo-ed memo-ed-line" id="memo_closing_ed" data-ph="مع التقدير …"></div>
       </div>
       <div id="memoAttachmentsSection" style="margin-top:14px">
         <button class="btn-sm btn-secondary" id="memoAddAttachmentsBtn" onclick="addMemoAttachments()">➕ إضافة مرفقات</button>
@@ -1462,6 +1497,7 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
     <div class="form-actions" style="margin-top:14px">
       <button class="btn btn-primary" onclick="saveMemo()">💾 حفظ بالأرشيف</button>
+      <button class="btn btn-secondary" onclick="previewMemo()">👁️ معاينة الصفحات</button>
       <button class="btn btn-secondary" onclick="exportMemoPDF()">📄 تصدير PDF</button>
       <button class="btn btn-secondary" onclick="shareMemoWord()">📤 إرسال (ملف Word)</button>
     </div>
@@ -1669,11 +1705,17 @@ function ensureMemoLoaded() {
   if (_memoLoaded) return Promise.resolve();
   if (_memoLoadPromise) return _memoLoadPromise;
   _memoLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = './memo.js';
-    script.onload = () => { _memoLoaded = true; resolve(); };
-    script.onerror = () => { _memoLoadPromise = null; reject(new Error('فشل تحميل ميزة المذكرة')); };
-    document.head.appendChild(script);
+    // N23: النموذج/المحرّك ثم المحرّر ثم الواجهة — بالترتيب (سكربتات كلاسيكية متتابعة)
+    const files = ['./memo-doc.js', './memo-editor.js', './memo.js'];
+    const next = (i) => {
+      if (i >= files.length) { _memoLoaded = true; resolve(); return; }
+      const script = document.createElement('script');
+      script.src = files[i];
+      script.onload = () => next(i + 1);
+      script.onerror = () => { _memoLoadPromise = null; reject(new Error('فشل تحميل ميزة المذكرة')); };
+      document.head.appendChild(script);
+    };
+    next(0);
   });
   return _memoLoadPromise;
 }
@@ -4873,7 +4915,8 @@ const DOCQ_KINDS = {
 };
 
 const DOCQ_MSG = { 400: 'بيانات غير صالحة (رفضها الخادم)', 403: 'ما عندك صلاحية لهذا الإجراء (رفضها الخادم)', 404: 'السجل غير موجود بالخادم', 409: 'تعارض مع بيانات الخادم', record_missing: 'السجل المراد تعديله لم يعد موجوداً بالخادم', unconfirmed_update: 'لم يؤكّد الخادم تطبيق القيم (لم يُرجع السجل المعدَّل)',
-  number_taken: 'رقم المذكرة مستخدم لمذكرة أخرى — غيّر الرقم أو اتركه تلقائياً (محتوى المذكرة محفوظ على الجهاز)', invalid_number: 'رقم المذكرة غير صالح (أرقام فقط، بلا أصفار بادئة)' };
+  number_taken: 'رقم المذكرة مستخدم لمذكرة أخرى — غيّر الرقم أو اتركه تلقائياً (محتوى المذكرة محفوظ على الجهاز)', invalid_number: 'رقم المذكرة غير صالح (أرقام فقط، بلا أصفار بادئة)',
+  invalid_layout: 'تنسيق المذكرة غير صالح عند الخادم (محتوى المذكرة محفوظ على الجهاز)', bad_column: 'الخادم لا يدعم حقلاً مرسلاً بعد (يلزم تطبيق SQL57 على الخادم أولاً) — المذكرة محفوظة على الجهاز' };
 
 let _docqRun = null, _docqAgain = false;      // تسلسل المزامنة: تشغيل واحد فقط؛ أي طلب أثناءه يُنتظر ثم يُعاد تمريره
 
@@ -5001,7 +5044,7 @@ async function docqSendMemo(e) {
   if (!out || out.stale) return { state: 'retry', code: 'session_changed' };
   if (out.net) return { state: 'retry', code: 'network' };
   if (out.code === 'not_found') return { state: 'rejected', code: 'record_missing' };
-  if (['number_taken', 'invalid_number', 'forbidden', 'bad_request', 'bad_column', 'invalid', 'constraint', 'conflict'].indexOf(out.code) >= 0) return { state: 'rejected', code: out.code };
+  if (['number_taken', 'invalid_number', 'forbidden', 'bad_request', 'bad_column', 'invalid', 'invalid_layout', 'constraint', 'conflict'].indexOf(out.code) >= 0) return { state: 'rejected', code: out.code };
   return { state: 'retry', code: out.code || 'failed' };
 }
 
