@@ -274,6 +274,7 @@ function backToLinesStatus() {
 }
 
 function backToTowerList() {
+  try { if (typeof towerHistHide === 'function') towerHistHide(); } catch (e) {}
   document.getElementById('towerDetailView').style.display = 'none';
   document.getElementById('lineTowerListView').style.display = '';
 }
@@ -326,9 +327,13 @@ function renderLineTowerList(lineName, held) {
 // صفحة تفاصيل برج واحد (مزيج الكشف + المعالجات)
 // ========================
 let _towerDetailCtx = null;   // v335-C6r9: { line, tower, live } of the last detail read (live = confirmed by the server in this open; false = held copy)
+// v335-C6r24 (P02): سجل البرج — وحدة تُحمَّل عند الضغط فقط؛ للقراءة فقط
+function openTowerHistory(lineName, towerNum) { return featRun(['thist'], () => towerHistOpen(lineName, towerNum), 'thist'); }
+
 async function openTowerDetail(lineName, towerNum) {
   const tok = featTok('lpg', true);
   pushLevel(backToTowerList);
+  try { if (typeof towerHistHide === 'function') towerHistHide(); } catch (e) {}
   document.getElementById('lineTowerListView').style.display = 'none';
   document.getElementById('towerDetailView').style.display = '';
   document.getElementById('towerDetailTitle').textContent = `🗼 ${lineName} — برج ${towerNum}`;
@@ -541,6 +546,7 @@ function renderTowerDetail(lineName, towerNum) {
     </div>
     <div style="font-size:0.85rem;color:#4A5568;margin-top:6px">نوع البرج: <strong>${_tdEsc(TOWER_TYPES[r.tower_type] || r.tower_type || 'غير معروف')}</strong> | الجهد: <strong>${vv != null ? _tdEsc(vv) + ' ك.ف' : 'غير معروف'}</strong></div>
   </div>`;
+  html += `<button class="btn btn-secondary" id="towerHistoryBtn" style="width:100%;margin-bottom:14px" onclick="openTowerHistory(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">📜 سجل البرج</button>`;   // v335-C6r24 (P02)
   const draws = [], geoGaps = [];
   model.circuits.forEach(c => {
     if (c.applicability === 'not_applicable') { html += '<div class="form-card" style="margin-bottom:14px;color:#718096;font-size:0.82rem">🔘 الدائرة الثانية: غير منطبقة على هذا البرج</div>'; return; }

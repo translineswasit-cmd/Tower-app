@@ -2461,6 +2461,7 @@ function csAuthLost(code) {
 let _reportEpoch = 0;   // v335-C6r8: يزيد عند مسح بيانات المستخدم؛ أي ردّ تقرير بدأ قبله يُهمَل
 function csPurgeUserData() {
   _reportEpoch++; try { if (typeof reportPurgeDerived === 'function') reportPurgeDerived(); } catch (e) {}   // v335-C6r8: كاشات التقارير المشتقة
+  try { if (typeof towerHistPurge === 'function') towerHistPurge(); } catch (e) {}   // v335-C6r24 (P02): أرشيف البرج يخص الحساب الذي قرأه
   try { if (typeof histPurge === 'function') histPurge(); } catch (e) {}   // v335-C6r21 (P01-B1): مخزن سجل المعالجات وفهرس الأرشيف يخصّان الحساب الذي قرأهما
   _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear(); csSnapPurgeAll();
   try { if (typeof depIndexReset === 'function') depIndexReset(); } catch (e) {}   // v335-C6r9: the departures index belongs to the account that read it
@@ -2489,7 +2490,7 @@ function csLocalWrite() { _csWriteGen++; _csInflight.clear(); }
 let _reportRowsGen = 0;
 function reportRowsBump() { try { _reportRowsGen++; if (typeof reportRowsDrop === 'function') reportRowsDrop(); } catch (e) {} }
 function csNoteWrites() {
-  reportRowsBump();
+  reportRowsBump(); try { if (typeof towerHistNote === 'function') towerHistNote(); } catch (e) {}
   csLocalWrite();
   _csTreated.clear();
   _csLineEnv.clear();
@@ -3786,7 +3787,7 @@ function getTotalPendingCount() {
 }
 
 function updatePendingBadge() {
-  reportRowsBump();   // v335-C6r23: أي تغيّر بالطوابير يُبطل صفوف عدّاد التقرير المخزّنة
+  reportRowsBump(); try { if (typeof towerHistNote === 'function') towerHistNote(); } catch (e) {}   // v335-C6r23: أي تغيّر بالطوابير يُبطل صفوف عدّاد التقرير المخزّنة
   const badge = document.getElementById('pendingSyncBadge');
   if (!badge) return;
   const count = getTotalPendingCount();
@@ -9084,10 +9085,10 @@ function drawArabicTextPNG(items, widthCss, opts) {
 // تُحمَّل عند الطلب فقط: inspection-editor.js (+tower-svg.js)، departures-list.js، treatment-editor.js (+tower-svg.js)، treatment-history.js،
 // treatment-log-export.js، departures-export.js، records-export.js. كل وحدة: Promise واحد مشترك، تنفيذ مرة واحدة، إعادة المحاولة بعد الفشل.
 const FEAT_MODULE_SRC = { svg: './tower-svg.js', insp: './inspection-editor.js', dep: './departures-list.js', treat: './treatment-editor.js',
-  hist: './treatment-history.js', lexp: './treatment-log-export.js', dexp: './departures-export.js', rexp: './records-export.js',
+  hist: './treatment-history.js', thist: './tower-history.js', lexp: './treatment-log-export.js', dexp: './departures-export.js', rexp: './records-export.js',
   lpg: './lines-pages.js', ladm: './lines-admin.js', lprt: './lines-print.js', acct: './accounts.js', emg: './emergency-departures.js', tg: './work-telegram.js' };
 
-const FEAT_MODULE_DEPS = { insp: ['svg'], treat: ['svg'], ladm: ['lpg'], lexp: ['hist'] };   // v335-C6r21 (P01-B1): التصدير يستخدم مُرقِّم السجل
+const FEAT_MODULE_DEPS = { insp: ['svg'], treat: ['svg'], ladm: ['lpg'], lexp: ['hist'], thist: ['hist'] };   // v335-C6r24 (P02): سجل البرج يستخدم مُرقِّم المعالجات   // v335-C6r21 (P01-B1): التصدير يستخدم مُرقِّم السجل
 
 const _featMod = {};
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v335-C6r23-P01C';
+const CACHE_NAME = 'tower-app-v335-C6r24-P02';
 // N23: خطوط المذكرة في كاش مستقل غير مرتبط برقم الإصدار (≈1.9MB): لا تُعاد تنزيلها مع كل إصدار، وتُخزَّن عند أول استخدام للمذكرة (دون إبطاء بدء التطبيق).
 const FONT_CACHE = 'tower-memo-fonts-v1';
 
@@ -36,6 +36,7 @@ const CRITICAL_ASSETS = [
   './departures-list.js',
   './treatment-editor.js',
   './treatment-history.js',
+  './tower-history.js',
   './treatment-log-export.js',
   './departures-export.js',
   './records-export.js',
