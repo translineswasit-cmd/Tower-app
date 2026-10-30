@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v335-C6r22-P01B2';
+const CACHE_NAME = 'tower-app-v335-C6r23-P01C';
 // N23: خطوط المذكرة في كاش مستقل غير مرتبط برقم الإصدار (≈1.9MB): لا تُعاد تنزيلها مع كل إصدار، وتُخزَّن عند أول استخدام للمذكرة (دون إبطاء بدء التطبيق).
 const FONT_CACHE = 'tower-memo-fonts-v1';
 

@@ -2479,13 +2479,17 @@ function csPurgeUserData() {
     records = []; filteredRecords = []; _recordsArchiveLoaded = false; try { localStorage.removeItem(DB_KEY); } catch (e2) {}
     previousInspectionForLoad = null; previousTreatmentsForLoad = [];
   } catch (e) {}
-  try { _hcReset(); } catch (e) {}   // P01-B2: المشتق المخزّن (صحة الخطوط) لا ينتقل لمستخدم آخر
+  try { _hcReset(); } catch (e) {} try { reportRowsBump(); } catch (e) {}   // P01-B2: المشتق المخزّن (صحة الخطوط) لا ينتقل لمستخدم آخر
 }
 
 // يُستدعى بعد أي مزامنة/تعديل كتابة: القراءات الحيّة السابقة لم تعد مرجعاً، تُعاد عند أول حاجة
 function csLocalWrite() { _csWriteGen++; _csInflight.clear(); }
 
+// v335-C6r23 (P01-C): جيل صفوف الكشف الخام المخزّنة لعدّاد التقرير؛ يزيد مع كل كتابة/مزامنة/تغيّر طابور (المفتاح يتضمنه فيصبح أي إدخال سابق غير قابل للوصول)
+let _reportRowsGen = 0;
+function reportRowsBump() { try { _reportRowsGen++; if (typeof reportRowsDrop === 'function') reportRowsDrop(); } catch (e) {} }
 function csNoteWrites() {
+  reportRowsBump();
   csLocalWrite();
   _csTreated.clear();
   _csLineEnv.clear();
@@ -3782,6 +3786,7 @@ function getTotalPendingCount() {
 }
 
 function updatePendingBadge() {
+  reportRowsBump();   // v335-C6r23: أي تغيّر بالطوابير يُبطل صفوف عدّاد التقرير المخزّنة
   const badge = document.getElementById('pendingSyncBadge');
   if (!badge) return;
   const count = getTotalPendingCount();

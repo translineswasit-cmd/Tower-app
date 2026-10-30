@@ -95,7 +95,7 @@ function reportAuxText(failed) {
 // ردّ ما زال صالحاً لهذا النطاق: الجلسة نفسها والمرشّحات لم تتغيّر
 function reportScopeCurrent(scope, listOnly) { return !!scope && _reportSessOk(scope.sess) && (listOnly ? reportListSig() === scope.listSig : reportScopeSig() === scope.sig); }
 // يُبطل كاش التقارير الثانوي (بعد حذف/تعديل) ويمنع أي طلب جارٍ من إعادة ملئه
-function reportInvalidateAux() { _reportAux = { treat: null, forms: null, raw: null }; Object.keys(_reportAuxTicket).forEach(k => { _reportAuxTicket[k]++; }); }
+function reportInvalidateAux() { try { reportRowsDrop(); } catch (e) {} _reportAux = { treat: null, forms: null, raw: null }; Object.keys(_reportAuxTicket).forEach(k => { _reportAuxTicket[k]++; }); }
 // v335-C6r7: الدخول = الهيكل + الخيارات + أسماء الخطوط فقط. المعالجات والاستمارات الحرارية والأرشيف الحراري والكشوفات لا تُقرأ هنا؛
 // تُجلب عند حاجة التقرير/الإجراء المحدد وبنطاقه (reportEnsureAux / fetchInspectionsForReport).
 async function openReportsPage() {
@@ -216,7 +216,47 @@ function reportErrorText(e) {
   if (m === 'report_current_unavailable') return '⚠️ تعذّر تحميل الحالة الحالية — لن يُنشأ تقرير غير مكتمل';
   return '⚠️ تعذّر التحقق من الكشوفات الملغاة — لن يُنشأ تقرير غير مُصفّى';
 }
-async function fetchInspectionsForReport(lines, from, to, force, out) {
+// ---- v335-C6r23 (P01-C): قراءة خفيفة لعدّاد النتيجة + قراءة خطوط متعددة بمساواة الخط + ذاكرة قصيرة العمر لصفوف الخادم الخام ----
+// العدّ لا يعتمد إلا على: id (الإلغاء/الأحدث)، line_name/tower_number/inspection_date (مفتاح اليوم والتكرار)، created_at (الأحدث). dayCompose وdedupeLatestPerTowerDate
+// وreportTowerPasses لا تقرأ غيرها لتحديد أي سجل يبقى. التصدير لا يستعمل هذا المسار أبداً (select=* كاملاً دائماً).
+const REPORT_COUNT_FIELDS = 'id,line_name,tower_number,inspection_date,created_at';
+const REPORT_ROWS_TTL = 20000;            // = حداثة علامات الإلغاء (_reportEnsureMarks)
+const REPORT_LINES_CONCURRENCY = 3;
+let _reportRowsCache = null;              // { key, at, rows } — صفوف الخادم الخام فقط (قبل dayCompose/الإلغاء؛ تُطبَّق العلامات الحالية دائماً عند كل استعمال)
+let _reportRowsInflight = new Map();      // key -> Promise (تجنّب تنزيل مكرر لنفس النطاق)
+function reportRowsDrop() { _reportRowsCache = null; _reportRowsInflight = new Map(); }
+// الذاكرة مسموحة فقط إن أمكن إثبات عدم وجود أعمال محلية معلّقة تغيّر ما سيراه الخادم؛ وإلا تُتجاوز (قراءة جديدة كل مرة)
+function _reportRowsCacheAllowed() {
+  try { return csLiveEnabled() && _hcOpsEmptyProven() && getTotalPendingCount() === 0; } catch (e) { return false; }
+}
+function _reportRowsKey(lines, from, to, sess) {
+  return JSON.stringify([lines ? lines.slice().sort() : null, from || '', to || '', sess.gen, sess.tok, sess.uid, sess.epoch, typeof _reportRowsGen === 'number' ? _reportRowsGen : -1]);
+}
+// ترتيب الخادم: created_at تنازلياً ثم id تصاعدياً (مفتاح الكسر الثانوي الذي يضيفه app_data_read)
+function _reportRowOrder(a, b) {
+  const ta = Date.parse(a.created_at), tb = Date.parse(b.created_at);
+  if (ta !== tb && !(isNaN(ta) && isNaN(tb))) return isNaN(ta) ? 1 : isNaN(tb) ? -1 : tb - ta;
+  const ca = String(a.created_at || ''), cb = String(b.created_at || '');
+  if (ca !== cb) return ca < cb ? 1 : -1;
+  const ia = String(a.id), ib = String(b.id);
+  return ia < ib ? -1 : ia > ib ? 1 : 0;
+}
+// خطوط متعددة: طلب مساواة لكل خط (حد التوازي 3). أي فشل ⇒ استثناء بلا نتيجة جزئية (ذرّي). الترتيب المدمج = ترتيب الاستعلام الواحد الأصلي.
+async function _reportFetchLinesEq(baseQuery, lines) {
+  const sep = baseQuery.includes('?') ? '&' : '?';
+  const results = new Array(lines.length); let next = 0, failed = null;
+  const worker = async () => {
+    while (!failed) {
+      const i = next++; if (i >= lines.length) return;
+      try { results[i] = await fetchAllPages(baseQuery + sep + 'line_name=eq.' + encodeURIComponent(lines[i])); }
+      catch (e) { if (!failed) failed = e; return; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(REPORT_LINES_CONCURRENCY, lines.length) }, worker));
+  if (failed) throw failed;
+  return [].concat.apply([], results).sort(_reportRowOrder);
+}
+async function fetchInspectionsForReport(lines, from, to, force, out, opts) {
   if (!(await _reportEnsureMarks(force))) throw new Error('report_marks_unavailable');
   let rows, basisNow = null;
   if (!from && !to && csLiveEnabled()) {
@@ -244,16 +284,33 @@ async function fetchInspectionsForReport(lines, from, to, force, out) {
   } else {
     _reportBasis = { kind: 'historical', stale: false, liveOff: !from && !to };
     basisNow = _reportBasis;
-    if (!from && !to && !lines) {
-      rows = await fetchAllPages('inspections?select=*&order=created_at.desc');
-    } else {
-      let query = 'inspections?select=*&order=created_at.desc';
+    const light = !!(opts && opts.light) && csLiveEnabled();   // العدّ فقط؛ التصدير لا يمرّر opts أبداً
+    const sel = light ? REPORT_COUNT_FIELDS : '*';
+    const readRows = async () => {
+      if (!from && !to && !lines) return fetchAllPages('inspections?select=' + sel + '&order=created_at.desc');
+      let query = 'inspections?select=' + sel + '&order=created_at.desc';
       if (from) query += `&inspection_date=gte.${from}`;
       if (to) query += `&inspection_date=lte.${to}`;
       if (lines && lines.length === 1) query += `&line_name=eq.${encodeURIComponent(lines[0])}`;
-      rows = await fetchAllPages(query);
-      if (lines && lines.length > 1) rows = rows.filter(r => lines.includes(r.line_name));
-    }
+      let got;
+      if (lines && lines.length > 1 && csLiveEnabled()) got = await _reportFetchLinesEq(query, lines);   // v335-C6r23: الخطوط المختارة فقط
+      else got = await fetchAllPages(query);
+      if (lines && lines.length > 1) got = got.filter(r => lines.includes(r.line_name));
+      return got;
+    };
+    if (light && _reportRowsCacheAllowed()) {
+      const sess = _reportSess(), gen0 = _reportRowsGen, key = _reportRowsKey(lines, from, to, sess);
+      const c = _reportRowsCache;
+      if (c && c.key === key && (Date.now() - c.at) <= REPORT_ROWS_TTL) rows = c.rows.slice();
+      else {
+        let pr = _reportRowsInflight.get(key);
+        if (!pr) { pr = readRows().finally(() => { if (_reportRowsInflight.get(key) === pr) _reportRowsInflight.delete(key); }); _reportRowsInflight.set(key, pr); }
+        const got = await pr;
+        rows = got.slice();
+        // يُخزَّن فقط إن بقيت الجلسة والجيل والنطاق كما بدأت القراءة ولم تظهر أعمال معلّقة أثناءها
+        if (_reportSessOk(sess) && gen0 === _reportRowsGen && key === _reportRowsKey(lines, from, to, _reportSess()) && _reportRowsCacheAllowed()) _reportRowsCache = { key, at: Date.now(), rows: got };
+      }
+    } else rows = await readRows();
   }
   if (basisNow && basisNow.kind === 'historical') rows = dayCompose(rows, id => csLiveEnabled() && opsIsVoided(id));   // v335-C6r14 (N20): التقرير التاريخي = كشف يومي واحد لكل (خط، برج، تاريخ)
   if (out && typeof out === 'object') out.basis = basisNow;   // v335-C6r8c: أساس هذه القراءة نفسها (لا المتغيّر العام المشترك)
@@ -381,7 +438,7 @@ async function getReportAvailableTowers(scope) {
   if (!aux.ok) showToast(reportAuxText(aux.failed), 'error');
   if (types.includes('inspection')) {
     let rows;
-    try { rows = await fetchInspectionsForReport(lines, from, to); }
+    try { rows = await fetchInspectionsForReport(lines, from, to, undefined, undefined, { light: true }); }
     catch (e) { showToast(String(e && e.message) === 'report_coverage_incomplete' ? reportErrorText(e) : '⚠️ تعذّر تحميل قائمة الأبراج (الحالة/الإلغاءات غير متاحة)', 'error'); rows = []; }
     rows.forEach(r => { if (r.tower_number != null) towers.add(String(r.tower_number)); });
   }
@@ -479,11 +536,11 @@ function dedupeLatestPerTowerDate(rows, dateField) {
   return [...map.values()];
 }
 
-async function getReportFilteredInspections(force, out) {
+async function getReportFilteredInspections(force, out, opts) {
   const lines = getReportSelectedLines(); // null = كل الخطوط
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
-  const rows = await fetchInspectionsForReport(lines, from, to, force, out);
+  const rows = await fetchInspectionsForReport(lines, from, to, force, out, opts);
   const base = rows.filter(r => reportTowerPasses(r.tower_number));
   // ملاحظة مهمة: لا نفلتر بالتصنيف هنا — كل برج مطابق للخط/التاريخ/نطاق الأبراج يظهر بالتقرير دائماً،
   // والتصنيف المختار يتحكم بس بشنو المعلومات تُعرض بكل بطاقة (سليم أو تفاصيل الضرر) — راجع buildReportInspectionCardCanvas
@@ -609,7 +666,22 @@ async function buildThermalNotesCardCanvas(lineName, towerNumber, notes) {
   return { dataUrl: canvas.toDataURL('image/jpeg', 0.5), w: CARD_W, h: totalH };
 }
 
-async function updateReportResultCount() {
+// v335-C6r23 (P01-C): تأخير قصير لتغييرات المرشّحات المتتالية؛ كل استدعاء يُبطل أي حساب جارٍ فوراً (تسلسل _reportCountSeq) فلا يكتب ردّ قديم فوق عدد أحدث.
+let _reportCountTimer = null, _reportCountWaiters = [];
+const REPORT_COUNT_DEBOUNCE_MS = 250;
+function updateReportResultCount() {
+  ++_reportCountSeq;
+  try { const el0 = document.getElementById('repResultCount'); if (el0) el0.textContent = '⏳ جاري الحساب...'; } catch (e) {}
+  if (_reportCountTimer) clearTimeout(_reportCountTimer);
+  return new Promise(res => {
+    _reportCountWaiters.push(res);
+    _reportCountTimer = setTimeout(() => {
+      _reportCountTimer = null; const w = _reportCountWaiters; _reportCountWaiters = [];
+      _updateReportResultCountNow().then(() => w.forEach(f => f()), () => w.forEach(f => f()));
+    }, REPORT_COUNT_DEBOUNCE_MS);
+  });
+}
+async function _updateReportResultCountNow() {
   // v335-C6r8: النطاق والجلسة مُلتقَطان عند البدء؛ ردّ قديم (نطاق آخر/طلب أحدث/جلسة منتهية) لا يكتب العدد ولا يُظهر فشله.
   const scope = reportCaptureScope(); const types = scope.types; const mySeq = ++_reportCountSeq;
   const mine = () => mySeq === _reportCountSeq && reportScopeCurrent(scope);
@@ -619,7 +691,7 @@ async function updateReportResultCount() {
   const aux = await reportEnsureAux(types, false, scope);
   if (aux.stale || !mine()) return;
   if (types.includes('inspection')) {
-    try { const n = (await getReportFilteredInspections()).length; if (!mine()) return; parts.push(`📋 كشف: ${n} — ${reportBasisText(false)}`); }
+    try { const n = (await getReportFilteredInspections(undefined, undefined, { light: true })).length; if (!mine()) return; parts.push(`📋 كشف: ${n} — ${reportBasisText(false)}`); }
     catch (e) { if (!mine()) return; parts.push(String(e && e.message) === 'report_coverage_incomplete' ? reportErrorText(e) : '⚠️ تعذّر تحميل الكشوفات (الحالة الحالية/الإلغاءات غير متاحة)'); }
   }
   if (types.includes('treatment')) parts.push(aux.failed.includes('treatment') ? '🔧 معالجة: ⚠️ تعذّر التحميل' : `🔧 معالجة: ${getReportFilteredTreatments(aux.rows.treat).length}`);
