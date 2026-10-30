@@ -202,6 +202,46 @@ let depLineTowersCurrentLine = null;
 
 let depLineTowersCategoryFilter = null; // null = عرض الكل | 'electrical'|'mechanical'|'fire'|'washing'
 
+// P01-B2: نمط N03 (لقطة محفوظة + تحقق قسري) لقائمة أبراج المغادرات. اللقطة = ما قُرئ سابقاً لهذا الخط في هذه الجلسة فقط (loadedLineCacheAt/latestRecordsIndex تُمسح عند الخروج/تبديل الحساب)
+// وتُرسم فوراً بوسم «محفوظة — قيد التحقق»؛ القراءة القسرية الواحدة (loadLineRecordsCache(line,true)) تجري دائماً وهي وحدها التي ترفع الوسم. لا طلبات إضافية في المسار العادي.
+let _depListSeq = 0, _depHeld = null, _depOpenLine = null;
+function _depHeldAt(lineName) {
+  if (!csLiveEnabled() || !CS_AUTH.token) return 0;
+  const at = loadedLineCacheAt[lineName];
+  if (!at) return 0;
+  return Object.keys(latestRecordsIndex[lineName] || {}).length ? at : 0;   // خط بلا سجل محمّل لا يُعرض كلقطة
+}
+function _depRender(lineName, held) {   // الرسم البديل يحفظ موضع التمرير (استبدال اللقطة بالمحقَّق لا يقفز بالصفحة)
+  const y = window.scrollY; renderDepLineTowers(lineName, held);
+  if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+}
+async function _depListVerify(lineName, tok, heldAt) {
+  const seq = ++_depListSeq;
+  let res = null, failed = false;
+  for (let a = 0; a < 2; a++) {        // ردّ «أقدم من قراءة طُبّقت» لا يُعدّ تحققاً: قراءة طازجة واحدة إضافية (حالة نادرة) ثم وسم صريح
+    try { res = await loadLineRecordsCache(lineName, true); } catch (e) { failed = true; break; }
+    if (res && res.ok && !res.superseded) break;
+  }
+  if (seq !== _depListSeq || !featEntryOk(tok) || _depOpenLine !== lineName) return;   // انتقل المستخدم/تبدّل اللسان/الجلسة/طُلب خط آخر: لا نرسم
+  const verified = !failed && res && res.ok && !res.superseded;
+  if (verified) { _depHeld = null; _depRender(lineName); return; }
+  if (!heldAt && !loadedLineCacheAt[lineName] && !latestRecordsIndex[lineName]) {
+    _depHeld = null;
+    document.getElementById('depLineTowersBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا الخط من الخادم — تحقق من الاتصال وحاول مرة أخرى<br><button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="retryDepLineTowers()">🔄 إعادة المحاولة</button></div>';
+    return;
+  }
+  try { showToast('⚠️ تعذّر تحديث الخط — المعروض من آخر ما حُمّل', 'error'); } catch (e) {}
+  _depHeld = { line: lineName, state: 'error', at: loadedLineCacheAt[lineName] || heldAt || 0, offline: !navigator.onLine, retry: 'retryDepLineTowers()' };
+  _depRender(lineName, _depHeld);
+}
+function retryDepLineTowers() {
+  const lineName = _depOpenLine; if (!lineName || !csLiveEnabled()) return;
+  const tok = featTok('dep', true), heldAt = _depHeldAt(lineName);
+  if (heldAt) { _depHeld = { line: lineName, state: 'pending', at: heldAt, retry: 'retryDepLineTowers()' }; renderDepLineTowers(lineName, _depHeld); }
+  else { _depHeld = null; document.getElementById('depLineTowersBody').innerHTML = '<div class="empty-state">⏳ جارٍ قراءة الخط…</div>'; }
+  return _depListVerify(lineName, tok, heldAt);
+}
+
 async function openDepLineTowers(lineName) {
   const tok = featTok('dep', true);
   pushLevel(backToDepLinesList);
@@ -209,17 +249,13 @@ async function openDepLineTowers(lineName) {
   document.getElementById('depLineTowersView').style.display = '';
   document.getElementById('depLineTowersTitle').textContent = '🗼 أبراج خط ' + lineName + ' — المغادرات';
   depLineTowersCategoryFilter = null; // نبدأ من غير فلتر عند فتح خط جديد
+  _depOpenLine = lineName; _depHeld = null;
   if (csLiveEnabled()) {
     // v335-C6r6: قراءة الخط المختار وحده من مخزن الحالة (طلب واحد)؛ لا loadTreatments ولا خطوط أخرى
-    document.getElementById('depLineTowersBody').innerHTML = '<div class="empty-state">⏳ جارٍ قراءة الخط…</div>';
-    let ok = true;
-    try { await loadLineRecordsCache(lineName, true); } catch (e) { ok = false; }
-    if (!featEntryOk(tok)) return;
-    if (!ok && !loadedLineCacheAt[lineName] && !latestRecordsIndex[lineName]) {
-      document.getElementById('depLineTowersBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا الخط من الخادم — تحقق من الاتصال وحاول مرة أخرى<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="openDepLineTowers(\'' + lineName.replace(/'/g, "\\'") + '\')">🔄 إعادة المحاولة</button></div>';
-      return;
-    }
-    if (!ok) { try { showToast('⚠️ تعذّر تحديث الخط — المعروض من آخر ما حُمّل', 'error'); } catch (e) {} }
+    const heldAt = _depHeldAt(lineName);
+    if (heldAt) { _depHeld = { line: lineName, state: 'pending', at: heldAt, retry: 'retryDepLineTowers()' }; renderDepLineTowers(lineName, _depHeld); }
+    else document.getElementById('depLineTowersBody').innerHTML = '<div class="empty-state">⏳ جارٍ قراءة الخط…</div>';
+    return _depListVerify(lineName, tok, heldAt);
   }
   renderDepLineTowers(lineName);
 }
@@ -236,17 +272,17 @@ async function loadAllDepartureLines() {
 // الضغط على بطاقة تصنيف يفلتر الأبراج تحتها لهذا النوع بس — ضغطها ثانية يلغي الفلتر ويرجّع عرض الكل
 function filterDepLineByCategory(cat) {
   depLineTowersCategoryFilter = (depLineTowersCategoryFilter === cat) ? null : cat;
-  renderDepLineTowers(depLineTowersCurrentLine);
+  renderDepLineTowers(depLineTowersCurrentLine, (_depHeld && _depHeld.line === depLineTowersCurrentLine) ? _depHeld : undefined);
 }
 
-function renderDepLineTowers(lineName) {
+function renderDepLineTowers(lineName, held) {
   depLineTowersCurrentLine = lineName;
   const body = document.getElementById('depLineTowersBody');
   const activeTowers = getActiveDepartureTowers(lineName);
 
   // v335-C6r7: لا «لا توجد مغادرات» مطلقة مع بقاء أبراج غير معروفة الحالة (غير مهيّأة/قيد الإصلاح): العبارة مقيَّدة بالأبراج المعروفة
   const _unk = csLiveEnabled() ? csUnknownCount(((_csLineCov[lineName] || {}).sum || {}).coverage) : 0;
-  if (!activeTowers.length) { body.innerHTML = csLineBanner(lineName) + (_unk ? '<div class="empty-state">لا توجد مغادرات نشطة بين الأبراج المعروفة — ⚠️ ' + _unk + ' برج غير معروف الحالة (لا يمكن القول إن الخط خالٍ)</div>' : '<div class="empty-state">✅ لا توجد مغادرات نشطة بهذا الخط</div>'); return; }
+  if (!activeTowers.length) { body.innerHTML = csLineBanner(lineName, held) + (_unk ? '<div class="empty-state">لا توجد مغادرات نشطة بين الأبراج المعروفة — ⚠️ ' + _unk + ' برج غير معروف الحالة (لا يمكن القول إن الخط خالٍ)</div>' : '<div class="empty-state">✅ لا توجد مغادرات نشطة بهذا الخط</div>'); return; }
 
   activeTowers.sort((a,b) => parseInt(a.r.tower_number) - parseInt(b.r.tower_number));
 
@@ -268,7 +304,7 @@ function renderDepLineTowers(lineName) {
     ? `${base};outline:3px solid #2D3748;cursor:pointer;transform:scale(1.02)`
     : `${base};cursor:pointer`;
 
-  let html = csLineBanner(lineName) + `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+  let html = csLineBanner(lineName, held) + `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
     <div onclick="filterDepLineByCategory('electrical')" style="${cardStyle('electrical', filter==='electrical', 'flex:1;min-width:140px;background:#EBF8FF;border:1.5px solid #90CDF4;border-radius:10px;padding:10px;text-align:center')}">
       <div style="font-size:0.75rem;color:#2C5282;font-weight:700">⚡ مغادرات كهربائية</div>
       <div style="font-size:1.3rem;font-weight:700;color:#2B6CB0">${elCount}</div>
@@ -311,6 +347,7 @@ function renderDepLineTowers(lineName) {
       <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${r.tower_number}</div>
       <div style="font-size:0.72rem;color:#718096;margin:2px 0">${TOWER_TYPES[r.tower_type]||r.tower_type||''}</div>
       <div style="font-size:0.78rem;font-weight:700;color:${meta.text}">🔴 ${deps.length} مغادرة</div>
+      ${held ? `<div data-held="1" style="font-size:0.68rem;color:#92400E;margin-top:2px">${held.state === 'pending' ? '📴 محفوظة — قيد التحقق' : '📴 آخر حالة محفوظة'}</div>` : ''}
       ${csUnresolvedBadge(lineName, r.tower_number)}
     </div>`;
   });

@@ -2479,6 +2479,7 @@ function csPurgeUserData() {
     records = []; filteredRecords = []; _recordsArchiveLoaded = false; try { localStorage.removeItem(DB_KEY); } catch (e2) {}
     previousInspectionForLoad = null; previousTreatmentsForLoad = [];
   } catch (e) {}
+  try { _hcReset(); } catch (e) {}   // P01-B2: المشتق المخزّن (صحة الخطوط) لا ينتقل لمستخدم آخر
 }
 
 // يُستدعى بعد أي مزامنة/تعديل كتابة: القراءات الحيّة السابقة لم تعد مرجعاً، تُعاد عند أول حاجة
@@ -3019,7 +3020,7 @@ function csLineBanner(line, held) {   // N03-A: held = { state:'pending'|'error'
   if (held && held.state) {
     const t = held.at ? ' (قراءة ' + _csEsc(new Date(held.at).toLocaleTimeString('ar')) + ')' : '';
     if (held.state === 'pending') h += `<div style="${st}background:#FEF3C7;color:#92400E">📴 بيانات محفوظة من قراءة سابقة${t} — جارٍ التحقق من الخادم… لا تُعدّ الحالة الحالية قبل اكتمال التحقق</div>`;
-    else h += `<div style="${st}background:#FEF3C7;color:#92400E">${held.offline ? '📴 دون اتصال' : '⚠️ تعذّر التحقق من الخادم'} — المعروض آخر حالة محفوظة${t}، قد لا يشمل تحديثات أحدث. افتح البرج لقراءة حالته الحيّة <button class="btn btn-secondary btn-sm" style="margin-right:8px" onclick="retryLineTowerList()">🔄 إعادة التحقق</button></div>`;
+    else h += `<div style="${st}background:#FEF3C7;color:#92400E">${held.offline ? '📴 دون اتصال' : '⚠️ تعذّر التحقق من الخادم'} — المعروض آخر حالة محفوظة${t}، قد لا يشمل تحديثات أحدث. افتح البرج لقراءة حالته الحيّة <button class="btn btn-secondary btn-sm" style="margin-right:8px" onclick="${held.retry || 'retryLineTowerList()'}">🔄 إعادة التحقق</button></div>`;
   } else if (le && le.asOf) h += `<div style="${st}background:#EDF2F7;color:#2D3748">⚡ حالة حيّة من السيرفر — ${_csEsc(new Date(le.asOf).toLocaleTimeString('ar'))}</div>`;
   else h += `<div style="${st}background:#FEF3C7;color:#92400E">📴 المعروض من آخر تحميل محفوظ بالجهاز — لم تُقرأ الحالة الحيّة الآن</div>`;
   if (csQueuesUnreadable()) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ قائمة المعلّقات على الجهاز غير قابلة للقراءة — قد لا تشمل الحالة المعروضة العمل المعلّق. لم يُحذف شيء.</div>`;
@@ -9640,7 +9641,63 @@ function calcCircuitWiresScore(r, circuit, isDouble) {
   return { score: pts, reason: null, inferred };
 }
 
+// ===== P01-B2: تخزين مشتق لنتيجة صحة الخط (قراءة فقط؛ لا يستبدل ولا يعدّل أي كاش مرجعي) =====
+// المبدأ: المفتاح = بصمة دقيقة لكل مدخلات الحساب في اللحظة نفسها (لا عدّاد إصدار يعتمد على تتبّع كل نقاط الكتابة):
+//   سجلات الخط (كل حقل يقرؤه الحساب) + مدخلات الخط (الجهد/إعداد الخط/أبراج الخط وchain_override/ازدواج الخط) +
+//   هندسة السلاسل من المحوّل (csGeometryOverride) + مدخلات «تمت معالجته» (قائمة المعالجات المعلّقة الخام + مفاتيح المعالجة الفعّالة من الخادم لكل سجل).
+// أي حالة لا يمكن إثبات اكتمال بصمتها ⇒ إعادة حساب مباشرة: الوضع غير الحي، العلم مطفأ، وجود عمليات معلّقة (opsPendingObserved/opsPendingTreatedKeys تقرآن fullRecordsCache)، فشل قراءة قائمة العمليات.
+// تُفرَّغ كلها عند تغيّر الجلسة/الحساب. النتيجة المخزّنة مجمّدة (قراءة فقط).
+const _HC_FIELDS = ['id', 'tower_type', 'tower_number', 'insulator_state', 'insulator_state_2', 'insulator_cycle', 'insulator_cycle_2', 'insulator_chain_types', 'insulator_chain_types_2',
+  'wires_r1', 'wires_s1', 'wires_t1', 'wires_r1_c2', 'wires_s1_c2', 'wires_t1_c2', 'sev_wires', 'wires_circuit', 'sev_ground', 'sev_iron', 'sev_foundation'];
+const _HC_WKEYS = ['wire_r1', 'wire_s1', 'wire_t1', 'wire_r1_c2', 'wire_s1_c2', 'wire_t1_c2'];
+let _hc = { gen: -1, uid: null, tok: null, lines: new Map(), opsRaw: undefined, opsEmpty: false, stats: { hit: 0, miss: 0, bypass: 0 } };
+function _hcEnc(v) { return v == null ? '\u0000' : (typeof v === 'string' ? 's' + v : 'j' + JSON.stringify(v)); }
+function _hcDeepFreeze(o) { if (o && typeof o === 'object' && !Object.isFrozen(o)) { Object.freeze(o); Object.keys(o).forEach(k => _hcDeepFreeze(o[k])); } return o; }
+function _hcOpsEmptyProven() {   // true فقط إذا قُرئت قائمة العمليات بنجاح وهي فارغة (مُخزَّنة بحسب النص الخام)
+  let raw; try { raw = localStorage.getItem(OPS_KEY); } catch (e) { return false; }
+  if (_hc.opsRaw !== raw) { const rd = opsRead(); _hc.opsRaw = raw; _hc.opsEmpty = !!(rd && rd.ok && rd.items.length === 0); }
+  return _hc.opsEmpty;
+}
+function _hcFingerprint(lineName, rec) {
+  const towers = getLineTowers(lineName), ov = getLineSettingsOverride(lineName);
+  let qraw = ''; try { qraw = localStorage.getItem(TREATMENT_QUEUE_KEY) || ''; } catch (e) { return null; }
+  const head = [lineName, LINE_VOLTAGE[lineName] || '', DOUBLE_CIRCUIT_LINES.includes(lineName) ? 1 : 0, ov ? _hcEnc(ov.circuit_count) + '|' + _hcEnc(ov.chain_mode) : '-', towers.length,
+    towers.map(t => (t && t.num) + ':' + _hcEnc(t && t.chain_override)).join(','), qraw.length + ':' + qraw].join('\u0001');
+  const parts = new Array(rec.length);
+  for (let i = 0; i < rec.length; i++) {
+    const r = rec[i]; let s = '';
+    for (let k = 0; k < _HC_FIELDS.length; k++) s += _hcEnc(r[_HC_FIELDS[k]]) + '\u0001';
+    s += _hcEnc(csGeometryOverride(lineName, r.tower_number)) + '\u0001';
+    const ck = csTreatedKeys(r.id);
+    for (let k = 0; k < _HC_WKEYS.length; k++) s += ck ? (ck.has(_HC_WKEYS[k]) ? '1' : '0') : 'n';
+    parts[i] = s;
+  }
+  return head + '\u0002' + parts.join('\u0002');
+}
+function _hcReset() { _hc = { gen: -1, uid: null, tok: null, lines: new Map(), opsRaw: undefined, opsEmpty: false, stats: _hc.stats }; }
+function _hcSync() {   // أي تغيّر في الجلسة/الحساب/الرمز يُفرّغ المخزّن قبل أي استعمال (حتى لو لم يكن للخط الحالي سجلات)
+  const uid = (typeof currentUser !== 'undefined' && currentUser) ? currentUser.id : null;
+  if (_hc.gen !== _csAuthGen || _hc.uid !== uid || _hc.tok !== CS_AUTH.token) _hc = { gen: _csAuthGen, uid, tok: CS_AUTH.token, lines: new Map(), opsRaw: undefined, opsEmpty: false, stats: _hc.stats };
+}
 function calcLineHealthWithTreatments(lineName) {
+  _hcSync();
+  const rec = getLatestRecordsPerTower(lineName);
+  if (!rec.length) return null;
+  let fp = null;
+  try {
+    if (csLiveEnabled() && _hcOpsEmptyProven()) {
+      fp = _hcFingerprint(lineName, rec);
+    }
+  } catch (e) { fp = null; }
+  if (fp === null) { _hc.stats.bypass++; return calcLineHealthWithTreatmentsDirect(lineName); }
+  const hit = _hc.lines.get(lineName);
+  if (hit && hit.fp === fp) { _hc.stats.hit++; return hit.health; }
+  _hc.stats.miss++;
+  const health = _hcDeepFreeze(calcLineHealthWithTreatmentsDirect(lineName));
+  _hc.lines.set(lineName, { fp, health });
+  return health;
+}
+function calcLineHealthWithTreatmentsDirect(lineName) {
   const rec = getLatestRecordsPerTower(lineName);
   if (!rec.length) return null;
   const towers = getLineTowers(lineName);

@@ -97,23 +97,46 @@ function calcLineHealth(lineName) {
   return { coverage, electricalScore: elScore, mechanicalScore: mScore };
 }
 
-function renderLinesStatus() {
-  const filter = document.getElementById('linesStatusFilter').value;
-  const body = document.getElementById('linesStatusBody');
-  const data = getLinesInfoData();
-  const filtered = data.filter(l => filter === 'all' || String(l.voltage) === filter);
+// P01-B2: رسم انتقائي لبطاقات حالة الخطوط. _ls.html = نص كل بطاقة كما رُسم آخر مرة؛ بصمة التخطيط تغطي الفلتر وترتيب الخطوط وتنبيه المعالجات وزر «قراءة الكل».
+let _ls = { html: null };
+function _lsLayoutSig(filter, filtered) {
+  const stale = (typeof treatmentsLoadFailed !== 'undefined' && treatmentsLoadFailed) ? 1 : 0;
+  return filter + '|' + stale + '|' + (csLiveEnabled() ? 1 : 0) + '|' + _csAuthGen + '|' + ((typeof currentUser !== 'undefined' && currentUser && currentUser.id) || '') + '|' + filtered.map(l => l.name + '#' + l.voltage).join('\u0001');
+}
+// يعيد true إذا حدّث البطاقات المتغيّرة فقط (نفس النتيجة النهائية لإعادة الرسم الكاملة)، وfalse إن لزمت إعادة رسم كاملة (تخطيط/فلتر/ترتيب/تنبيه مشترك تغيّر أو DOM غير متوقع).
+// كل بطاقة تُقارَن بنصها السابق، فلا تبقى بطاقة قديمة حتى لو تغيّرت بياناتها في الخلفية.
+function _lsPatchCards() {
+  const fe = document.getElementById('linesStatusFilter'), body = document.getElementById('linesStatusBody');
+  if (!fe || !body || !_ls.html || body.dataset.lsSig == null) return false;
+  const filter = fe.value, filtered = getLinesInfoData().filter(l => filter === 'all' || String(l.voltage) === filter);
+  if (body.dataset.lsSig !== _lsLayoutSig(filter, filtered) || _ls.html.length !== filtered.length) return false;
+  const nodes = Array.prototype.filter.call(body.children, e => e.hasAttribute && e.hasAttribute('data-ls-line'));
+  if (nodes.length !== filtered.length) return false;
+  const next = filtered.map(l => _lsCardHtml(l)), repl = [];
+  for (let i = 0; i < next.length; i++) {
+    if (next[i] === _ls.html[i]) continue;
+    const t = document.createElement('template'); t.innerHTML = next[i];
+    const el = t.content.firstElementChild; if (!el || t.content.childElementCount !== 1) return false;
+    repl.push([nodes[i], el, i]);
+  }
+  repl.forEach(([old, el, i]) => { old.replaceWith(el); _ls.html[i] = next[i]; });
+  return true;
+}
+
+// P01-B2: بطاقة خط واحد — نفس شيفرة حلقة renderLinesStatus السابقة حرفياً (أُخرجت لدالة ليُعاد رسم بطاقة واحدة)؛ أضيف فقط data-ls-line.
+function _lsAttr(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+function _lsCardHtml(l) {
   let html = '';
-  filtered.forEach(l => {
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
     const _n400 = l.name+' 400 ك.ف', _n132 = l.name+' 132 ك.ف';
     const lineName = (LINES_DATA[_n400]||lineTowersCache[_n400]) ? _n400 : ((LINES_DATA[_n132]||lineTowersCache[_n132]) ? _n132 : null);
     if (lineName && csLiveEnabled() && !loadedLineCacheAt[lineName]) {      // لم يُقرأ بعد: ليس «لم يتم الكشف» ولا «سليم»
-      html += '<div class="form-card" style="margin-bottom:12px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">' +
+      html += '<div class="form-card" data-ls-line="' + _lsAttr(lineName) + '" style="margin-bottom:12px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">' +
         '<div style="font-weight:700;font-size:14px;color:#1a5276">' + l.name + '</div>' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:' + vc + ';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">' + l.voltage + ' ك.ف</span>' +
         '<span style="background:#EDF2F7;color:#4A5568;padding:3px 10px;border-radius:20px;font-size:11px">لم تُقرأ حالته بعد</span>' +
         '<button class="btn btn-secondary btn-sm" onclick="loadLineStatusOne(\'' + lineName.replace(/'/g,"\\'") + '\')">قراءة الحالة</button></div></div></div>';
-      return;
+      return html;
     }
     const health = lineName ? calcLineHealthWithTreatments(lineName) : null;
     let badge, elBar, mBar, washBar;
@@ -144,19 +167,30 @@ function renderLinesStatus() {
     const _cv = lineName ? ((_csLineEnv.get(lineName) || {}).coverage) : null;   // v335-C6r6: تغطية مخزن الحالة — لا يُدّعى اكتمال تقرير ناقص
     if (_cv && _cv.complete === false) badge += ' <span style="background:#C53030;color:#fff;padding:3px 10px;border-radius:20px;font-size:11px">⚠️ تغطية غير مكتملة: ' + _cv.uninitialised + ' برج غير مهيّأ</span>';
     const clickAttr = lineName ? ` onclick="openLineTowerDetails('${lineName.replace(/'/g,"\\'")}')" style="cursor:pointer"` : '';
-    html += '<div class="form-card" style="margin-bottom:12px;padding:14px">' +
+    html += '<div class="form-card" data-ls-line="' + _lsAttr(lineName) + '" style="margin-bottom:12px;padding:14px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:6px">' +
       '<div' + clickAttr + ' style="font-weight:700;font-size:14px;color:#1a5276;' + (lineName?'text-decoration:underline;':'') + '">' + l.name + (lineName?' 🔍':'') + '</div>' +
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="background:' + vc + ';color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700">' + l.voltage + ' ك.ف</span>' + badge + '</div></div>' +
       elBar +
       '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">الحالة الميكانيكية</div>' + mBar + '</div>' +
       '<div><div style="font-size:12px;color:#555;margin-bottom:4px">💧 نظافة العوازل</div>' + washBar + '</div></div>';
-  });
+  return html;
+}
+
+function renderLinesStatus() {
+  const filter = document.getElementById('linesStatusFilter').value;
+  const body = document.getElementById('linesStatusBody');
+  const data = getLinesInfoData();
+  const filtered = data.filter(l => filter === 'all' || String(l.voltage) === filter);
+  let html = '';
+  const cardHtml = filtered.map(l => _lsCardHtml(l));
+  html = cardHtml.join('');
   // v333: المعالجات المحفوظة قد تكون قديمة بعد فشل التحديث — تنبيه صريح (العلم treatmentsLoadFailed الموجود)
   const staleNote = (typeof treatmentsLoadFailed !== 'undefined' && treatmentsLoadFailed)
     ? '<div style="color:#92400E;background:#FEF3C7;border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px">⚠️ تعذّر تحديث سجل المعالجات — احتساب الأسلاك يعتمد على نسخة محفوظة قد تكون قديمة.</div>' : '';
   const allBtn = csLiveEnabled() ? '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-secondary btn-sm" id="linesStatusAllBtn" onclick="loadAllLinesStatus()">📊 قراءة حالة كل الخطوط</button><span style="font-size:0.74rem;color:#718096">اقرأ خطاً واحداً من بطاقته، أو كل الخطوط بطلب صريح.</span></div>' : '';
   body.innerHTML = staleNote + allBtn + (html || '<div class="empty-state">لا توجد بيانات</div>');
+  _ls.html = cardHtml; body.dataset.lsSig = _lsLayoutSig(filter, filtered);
 }
 
 // قراءة خط واحد من مخزن الحالة ثم إعادة رسم الصفحة (طلب واحد)
@@ -164,7 +198,7 @@ async function loadLineStatusOne(lineName) {
   const tok = featTok('lpg', true);
   try { await loadLineRecordsCache(lineName, true); } catch (e) { try { showToast('⚠️ تعذّرت قراءة حالة الخط من الخادم', 'error'); } catch (e2) {} return; }
   if (!featEntryOk(tok)) return;
-  renderLinesStatus();
+  if (!_lsPatchCards()) renderLinesStatus();   // P01-B2: بطاقات متغيّرة فقط عند ثبات التخطيط؛ وإلا إعادة رسم كاملة
 }
 // قراءة صريحة لكل الخطوط (تقرير شامل بالحالة الحالية)
 async function loadAllLinesStatus() {
