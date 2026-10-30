@@ -1009,7 +1009,7 @@ function getHubGroups(type) {
     // v335-C6r11 (N03): هذا المسار صار للوضع المحلي (انقطاع) فقط؛ الوضع المتصل يُحمَّل بطبقات (hubVisualOpen)
     (records||[]).forEach(r => { if (r.line_name && r.inspection_date && !hubVoided(r.id)) ensure(r.line_name, r.inspection_date).items.push(r); });
   } else if (type === 'treat') {
-    (treatmentsCache||[]).forEach(t => { if (t.line_name && t.treatment_date) ensure(t.line_name, t.treatment_date).items.push(t); });
+    // v335-C6r21 (P01-B1): لا مجموعات من جدول كامل — أرشيف المعالجات يُبنى عند الطلب (hubTreat*): خط ← فهرس تواريخ خفيف ← تفاصيل اليوم
   } else if (type === 'thermal') {
     (thermalRecords||[]).forEach(r => { if (r.line_name && r.inspection_date) ensure(r.line_name, r.inspection_date).raw.push(r); });
     (reportThermalFormsCache||[]).forEach(f => { if (f.line_name && f.inspection_date) ensure(f.line_name, f.inspection_date).forms.push(f); });
@@ -1207,7 +1207,7 @@ async function openHubBrowse(type) {
   pushLevel(_hubLvHome);
   showToast('⏳ جاري التحميل...');
   if (type === 'visual') return hubVisualOpen();   // v335-C6r11 (N03): فهرس خفيف فوراً بدل تحميل كل السجلات
-  if (type === 'treat') await loadTreatments().catch(()=>{});
+  if (type === 'treat') return hubTreatOpen();   // v335-C6r21 (P01-B1): لا loadTreatments؛ الخطوط من LINES_DATA والتواريخ عند اختيار الخط
   if (type === 'thermal') await Promise.all([loadThermalArchive().catch(()=>{}), loadReportThermalForms().catch(()=>{})]);
   renderHubLines();
   showHubView('hubLinesView');
@@ -1215,6 +1215,7 @@ async function openHubBrowse(type) {
 
 function renderHubLines() {
   const perLine = new Map();
+  if (hubBrowseType === 'treat') return hubTreatRenderLines();
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') _hubV.lines.forEach(l => { if (l.dates > 0) perLine.set(l.line_name, l.dates); });
   else [...getHubGroups(hubBrowseType).values()].forEach(g => { perLine.set(g.line_name, (perLine.get(g.line_name)||0) + 1); });
   const lines = [...perLine.keys()].sort((a,b) => a.localeCompare(b, 'ar'));
@@ -1228,12 +1229,14 @@ function openHubDates(line) {
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') return hubVisualOpenLine(line);
   hubSelectedLine = line;
   pushLevel(_hubLvLines);
+  if (hubBrowseType === 'treat') { showHubView('hubDatesView'); return hubTreatLoadDates(line); }
   renderHubDates();
   showHubView('hubDatesView');
 }
 
 function renderHubDates() {
   let groups;
+  if (hubBrowseType === 'treat') return hubTreatRenderDates();
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') {
     const per = new Map();   // v335-C6r14 (N20): عدد الأبراج = أبراج مميّزة لكل تاريخ (لا صفوفاً)
     _hubV.dates.forEach(r => { if (r.inspection_date && !hubVoided(r.id)) { if (!per.has(r.inspection_date)) per.set(r.inspection_date, new Set()); per.get(r.inspection_date).add(String(r.tower_number)); } });
@@ -1257,6 +1260,7 @@ function openHubDetail(date) {
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') return hubVisualOpenDate(date);
   hubSelectedDate = date;
   pushLevel(_hubLvDates);
+  if (hubBrowseType === 'treat') { showHubView('hubDetailView'); return hubTreatLoadDay(hubSelectedLine, date); }
   renderHubDetail();
   showHubView('hubDetailView');
 }
@@ -1266,8 +1270,125 @@ function getCurrentHubGroup() {
     if (_hubV.line !== hubSelectedLine || _hubV.date !== hubSelectedDate) return undefined;
     return { line_name: hubSelectedLine, date: hubSelectedDate, items: dayCompose(_hubV.towers, hubVoided), raw: [], forms: [] };   // v335-C6r14 (N20): بطاقة واحدة لكل برج في التاريخ
   }
+  if (hubBrowseType === 'treat') {
+    const d = _hubTreat && _hubTreat.day;
+    if (!d || d.line !== hubSelectedLine || d.date !== hubSelectedDate) return undefined;
+    return { line_name: d.line, date: d.date, items: d.rows.filter(t => !hubVoided(t.id)), raw: [], forms: [] };
+  }
   const map = getHubGroups(hubBrowseType);
   return map.get(hubSelectedLine + '||' + hubSelectedDate);
+}
+
+// ========================
+// v335-C6r21 (P01-B1): أرشيف المعالجات عند الطلب. لا يوجد RPC تجميع للمعالجات، لذا: الخطوط من LINES_DATA (بلا عدّاد)،
+// تواريخ الخط من فهرس خفيف (id,treatment_date,created_at لهذا الخط وحده، ≤1000 صف/طلب، بسقف) ثم تفاصيل اليوم على دفعات من 100.
+// كل ردّ يُفحص بـ(تسلسل الطلب + _hubSeq + الجلسة + نوع الأرشيف)؛ لا تنزيل للجدول كاملاً ولا لخطوط لم تُفتح.
+// ========================
+const HUB_TREAT_INDEX_CAP = 20000;
+let _hubTreat = null, _hubTreatReq = 0;
+function hubTreatReset() { _hubTreatReq++; _hubTreat = null; }
+function hubTreatDayRows() { return (_hubTreat && _hubTreat.day) ? _hubTreat.day.rows : []; }
+function _hubTreatGuard() { const req = ++_hubTreatReq, s = _reportSess(), hs = _hubSeq; return { req, ok: () => req === _hubTreatReq && hs === _hubSeq && _reportSessOk(s) && hubBrowseType === 'treat' && !!_hubTreat }; }
+function _hubTreatErrHtml(e, retryFn) {
+  const off = (typeof histNetErr === 'function' && histNetErr(e));
+  return `<div class="empty-state" style="${off ? 'background:#EBF4FF;color:#2C5282' : 'background:#FEF3C7;color:#92400E'};border-radius:8px;padding:12px;grid-column:1/-1" role="${off ? 'status' : 'alert'}">${off ? '📴 لا يوجد اتصال — يلزم الاتصال لتصفح أرشيف المعالجات' : '⚠️ تعذّر تحميل البيانات (خطأ بالخادم أو الاتصال). هذا لا يعني عدم وجود معالجات.'}<div style="margin-top:10px"><button class="btn-sm btn-primary" onclick="${retryFn}">🔄 إعادة المحاولة</button></div></div>`;
+}
+
+async function hubTreatOpen() {
+  try { await featLoadModule('hist'); } catch (e) { showToast('❌ تعذر تحميل هذا الجزء، تأكد من الاتصال وحاول مرة ثانية', 'error'); return; }
+  _hubTreatReq++;
+  _hubTreat = { sess: _reportSess(), slim: null, line: null, partial: false, day: null };
+  hubTreatRenderLines();
+  showHubView('hubLinesView');
+}
+
+function hubTreatRenderLines() {
+  const lines = Object.keys(LINES_DATA || {}).sort((a, b) => a.localeCompare(b, 'ar'));
+  const list = document.getElementById('hubLinesList');
+  list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${HUB_TYPE_LABELS.treat} — اختر الخط</div>` +
+    lines.map(line => `<div class="card" onclick="openHubDates('${line.replace(/'/g, "\\'")}')"><span class="icon">⚡</span><span class="label">${escapeHtml(line)}</span><span class="sublabel">عرض تواريخ المعالجات</span></div>`).join('');
+}
+
+async function hubTreatLoadDates(line) {
+  const g = _hubTreatGuard(), H = _hubTreat; if (!H) return;
+  H.line = line; H.slim = null; H.day = null; H.partial = false;
+  const list = document.getElementById('hubDatesList');
+  list.innerHTML = '<div class="empty-state" style="grid-column:1/-1" role="status">⏳ جاري تحميل تواريخ المعالجات...</div>';
+  try {
+    if (navigator.onLine === false) { const e = new Error('offline'); e.offline = true; throw e; }
+    let rows;
+    try {
+      rows = await histFetchAll({ line }, { select: 'id,line_name,treatment_date,created_at', batch: HIST_SLIM_BATCH, alive: g.ok, max: HUB_TREAT_INDEX_CAP });
+    } catch (e) {
+      if (e && e.capped) { rows = histMarkRows(e.rows); H.partial = true; } else throw e;
+    }
+    if (!g.ok()) return;
+    H.slim = rows;
+    hubTreatRenderDates();
+  } catch (e) {
+    if (!g.ok() || (e && (e.aborted || e.stale))) return;
+    console.warn('[tower-app] تعذّر تحميل تواريخ المعالجات', e);
+    list.innerHTML = _hubTreatErrHtml(e, 'hubTreatRetry()');
+  }
+}
+
+function hubTreatRenderDates() {
+  const H = _hubTreat, list = document.getElementById('hubDatesList');
+  if (!H || !H.slim) return;
+  const per = new Map();
+  H.slim.forEach(t => { if (t.treatment_date && !hubVoided(t.id)) per.set(t.treatment_date, (per.get(t.treatment_date) || 0) + 1); });
+  const groups = [...per.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  if (!groups.length) { list.innerHTML = '<div class="empty-state" style="grid-column:1/-1">لا توجد تواريخ</div>'; return; }
+  list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${escapeHtml(hubSelectedLine)} — اختر التاريخ</div>` +
+    (H.partial ? `<div class="empty-state" style="grid-column:1/-1;color:#92400E;background:#FEF3C7;border-radius:8px;padding:10px" role="alert">⚠️ عُرضت أحدث ${HUB_TREAT_INDEX_CAP} معالجة لهذا الخط فقط — التواريخ الأقدم غير ظاهرة هنا (استخدم سجل المعالجات بفلتر التاريخ).</div>` : '') +
+    groups.map(([date, count]) => `<div class="card" onclick="openHubDetail('${date.replace(/'/g, "\\'")}')"><span class="icon">📅</span><span class="label">${date}</span><span class="sublabel">${count} معالجة</span></div>`).join('');
+}
+
+async function hubTreatLoadDay(line, date) {
+  const g = _hubTreatGuard(), H = _hubTreat; if (!H) return;
+  H.day = null;
+  const summary = document.getElementById('hubDetailSummary'), list = document.getElementById('hubDetailList');
+  summary.innerHTML = '<p role="status">⏳ جاري تحميل معالجات هذا التاريخ...</p>'; list.innerHTML = '';
+  try {
+    if (navigator.onLine === false) { const e = new Error('offline'); e.offline = true; throw e; }
+    const rows = await histFetchAll({ line, from: date, to: date }, { alive: g.ok, onProgress: n => { if (g.ok()) summary.innerHTML = `<p role="status">⏳ جاري التحميل... ${n}</p>`; } });
+    if (!g.ok()) return;
+    H.day = { line, date, rows };
+    renderHubDetail();
+  } catch (e) {
+    if (!g.ok() || (e && (e.aborted || e.stale))) return;
+    console.warn('[tower-app] تعذّر تحميل معالجات التاريخ', e);
+    summary.innerHTML = _hubTreatErrHtml(e, 'hubTreatRetry()'); list.innerHTML = '';
+  }
+}
+
+// بعد المزامنة: إن كان الأرشيف مفتوحاً يُعاد جلب المستوى الظاهر فقط (فهرس الخط الحالي أو يومه)؛ وإلا يُمسح ما حُمّل
+function hubTreatInvalidate() {
+  const H = _hubTreat; if (!H) return;
+  if (hubBrowseType !== 'treat') { hubTreatReset(); return; }
+  const dv = document.getElementById('hubDetailView'), dt = document.getElementById('hubDatesView');
+  if (dv && dv.style.display !== 'none' && hubSelectedDate) { hubTreatLoadDay(hubSelectedLine, hubSelectedDate); return; }
+  if (dt && dt.style.display !== 'none' && hubSelectedLine) { hubTreatLoadDates(hubSelectedLine); return; }
+  H.slim = null; H.day = null;
+}
+function hubTreatRetry() {
+  if (hubBrowseType !== 'treat' || !_hubTreat) return;
+  const dv = document.getElementById('hubDetailView');
+  if (dv && dv.style.display !== 'none' && hubSelectedDate) return hubTreatLoadDay(hubSelectedLine, hubSelectedDate);
+  if (hubSelectedLine) return hubTreatLoadDates(hubSelectedLine);
+}
+function hubTreatRefreshView() {
+  if (hubBrowseType !== 'treat' || !_hubTreat || !_hubTreat.day) return;
+  const dv = document.getElementById('hubDetailView');
+  if (dv && dv.style.display !== 'none') renderHubDetail();
+}
+function hubTreatApplyMarks() {
+  const H = _hubTreat; if (!H) return;
+  if (H.day) H.day.rows = histMarkRows(H.day.rows);
+  if (H.slim) H.slim = histMarkRows(H.slim);
+  hubTreatRefreshView();
+  const dl = document.getElementById('hubDatesView');
+  if (hubBrowseType === 'treat' && H.slim && dl && dl.style.display !== 'none') hubTreatRenderDates();
 }
 
 function renderHubDetail() {

@@ -799,22 +799,31 @@ tbody tr:hover { background: #F7FAFC; }
 
   <!-- سجل المعالجات -->
   <div id="depLogView" style="display:none">
-    <div class="dep-filters" style="margin-bottom:12px">
-      <select id="depLogFilterLine" onchange="renderDepLog()">
-        <option value="">-- كل الخطوط --</option>
-      </select>
+    <div class="dep-filters" style="margin-bottom:12px" role="search" aria-label="فلاتر سجل المعالجات">
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="depLogFilterLine" style="font-size:0.8rem;color:#4a5568;white-space:nowrap">⚡ الخط</label>
+        <select id="depLogFilterLine">
+          <option value="">-- كل الخطوط --</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label for="depLogFilterTower" style="font-size:0.8rem;color:#4a5568;white-space:nowrap">🗼 البرج</label>
+        <input type="text" id="depLogFilterTower" inputmode="numeric" autocomplete="off" placeholder="رقم البرج" style="width:96px;padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+      </div>
       <div style="display:flex;align-items:center;gap:6px">
         <label for="depLogFilterFrom" style="font-size:0.8rem;color:#4a5568;white-space:nowrap">📅 من</label>
-        <input type="date" id="depLogFilterFrom" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+        <input type="date" id="depLogFilterFrom" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <label for="depLogFilterTo" style="font-size:0.8rem;color:#4a5568;white-space:nowrap">📅 إلى</label>
-        <input type="date" id="depLogFilterTo" onchange="renderDepLog()" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
+        <input type="date" id="depLogFilterTo" style="padding:9px 12px;border:1.5px solid #E2E8F0;border-radius:8px;font-family:inherit;font-size:0.85rem">
       </div>
+      <button class="btn-sm btn-primary" id="depLogShowBtn" onclick="histShowResults()">🔎 عرض النتائج</button>
       <button class="btn-sm btn-primary" onclick="openDepLogExportModal()" style="background:#922b21">📤 تصدير</button>
       <button class="btn-sm btn-del" id="depLogBulkDeleteBtn" onclick="bulkDeleteTreatments()" style="display:none">🗑️ حذف الكل المطابق للفلتر</button>
     </div>
-    <div id="depLogBody"><div class="empty-state">⏳ جاري التحميل...</div></div>
+    <div id="depLogStatus" role="status" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)"></div>
+    <div id="depLogBody" aria-busy="false"><div class="empty-state">🔎 اختر الفلاتر ثم اضغط «عرض النتائج» — لا تُحمَّل المعالجات إلا بعد ذلك</div></div>
   </div>
 
   <!-- المغادرات الطارئة -->
@@ -2452,6 +2461,7 @@ function csAuthLost(code) {
 let _reportEpoch = 0;   // v335-C6r8: يزيد عند مسح بيانات المستخدم؛ أي ردّ تقرير بدأ قبله يُهمَل
 function csPurgeUserData() {
   _reportEpoch++; try { if (typeof reportPurgeDerived === 'function') reportPurgeDerived(); } catch (e) {}   // v335-C6r8: كاشات التقارير المشتقة
+  try { if (typeof histPurge === 'function') histPurge(); } catch (e) {}   // v335-C6r21 (P01-B1): مخزن سجل المعالجات وفهرس الأرشيف يخصّان الحساب الذي قرأهما
   _csCards.clear(); _csCardLines.clear(); _csCardRequests.clear(); csSnapPurgeAll();
   try { if (typeof depIndexReset === 'function') depIndexReset(); } catch (e) {}   // v335-C6r9: the departures index belongs to the account that read it
   try { if (typeof depxPurge === 'function') depxPurge(); } catch (e) {}   // v335-C6r10: ملف PDF الجاهز وعملية التصدير الجارية تخصّ الحساب الذي أنشأها
@@ -2465,7 +2475,7 @@ function csPurgeUserData() {
   // نسخ السجلات المقروءة بهذه الجلسة بالذاكرة: لا تنتقل لمستخدم آخر. الطوابير المحلية المعلّقة لا تُمسّ إطلاقاً.
   try {
     fullRecordsCache = []; fullRecordsCacheLoadedAt = null; rebuildLatestRecordsIndex();
-    loadedLineCacheAt = {}; loadedLineDetailAt = {}; _csLineCov = {}; fullRecordsDetailLoadedAt = null; treatmentsCache = [];
+    loadedLineCacheAt = {}; loadedLineDetailAt = {}; _csLineCov = {}; fullRecordsDetailLoadedAt = null; treatmentsCache = []; treatmentsCacheLoaded = false;
     records = []; filteredRecords = []; _recordsArchiveLoaded = false; try { localStorage.removeItem(DB_KEY); } catch (e2) {}
     previousInspectionForLoad = null; previousTreatmentsForLoad = [];
   } catch (e) {}
@@ -5999,7 +6009,10 @@ async function opsVoidMany(kindLabel, rows, reason) {
 function opsLinkedTreatments(rows) {
   const ids = new Set((rows || []).filter(r => r && r.id).map(r => String(r.id)));
   if (!ids.size) return [];
-  return (treatmentsCache || []).filter(t => t && t.inspection_id != null && ids.has(String(t.inspection_id)));
+  const seen = new Set(), out = [];   // v335-C6r21 (P01-B1): الكاش الكامل (إن حُمّل) + ما حُمّل من مخزن السجل/يوم الأرشيف — لا قراءة إضافية؛ القائمة جزئية دائماً
+  const pool = (treatmentsCache || []).concat(typeof histKnownRows === 'function' ? histKnownRows() : []);
+  pool.forEach(t => { if (t && t.inspection_id != null && ids.has(String(t.inspection_id)) && !seen.has(String(t.id))) { seen.add(String(t.id)); out.push(t); } });
+  return out;
 }
 function opsLinkedNote(rows) {
   // الاكتمال لا يمكن إثباته من الجهاز (الكاش قد يكون جزئياً، وروابط السيرفر قد لا تظهر محلياً) فالقائمة المعروضة تُوسَم دائماً «جزئية» وتُرفق دائماً بتحذير.
@@ -6059,7 +6072,7 @@ async function opsSaveTreatmentEdit(t, edit) {
     const why = opsBlockReason(e.line, e.tower, e.kind); if (why) { showToast(why, 'error'); return false; }
     const r = opsEnqueue(e); if (!r.ok) { showToast('❌ لم يُحفظ التعديل (' + r.reason + ')', 'error'); return false; }
   }
-  if (Object.keys(meta).length) { const i = treatmentsCache.findIndex(x => x.id === t.id); if (i > -1) Object.assign(treatmentsCache[i], meta); }
+  if (Object.keys(meta).length) { const i = treatmentsCache.findIndex(x => x.id === t.id); if (i > -1) Object.assign(treatmentsCache[i], meta); try { if (typeof histPatchRow === 'function') histPatchRow(t.id, meta); } catch (e) {} }   // v335-C6r21 (P01-B1): الصف المعدَّل قد يكون في مخزن السجل/الأرشيف
   opsSyncSoon();
   return true;
 }
@@ -6282,6 +6295,7 @@ async function opsLoadMarks() {
     } catch (e) {}
     try { records = (records || []).filter(x => !_opsMarks.voidedIds.has(String(x.id))); } catch (e) {}
   }
+  try { if (typeof histApplyMarks === 'function') histApplyMarks(); } catch (e) {}   // v335-C6r21 (P01-B1): تصفية المعروض بالعلامات الجديدة دون إعادة جلب
 }
 
 function opsIsVoided(id) { return _opsMarks.voidedIds.has(String(id)); }
@@ -8885,6 +8899,8 @@ function _towerOrderUnresolved(list) {
 
 let treatmentsCache = [];
 
+let treatmentsCacheLoaded = false;   // v335-C6r21 (P01-B1): true فقط إذا قرأ مستهلك قديم الجدول كاملاً (السجل/الأرشيف لم يعودا يفعلان)
+
 let treatmentsLoadFailed = false; // آخر جلب فشل: الكاش (إن وُجد) قديم/غير مكتمل، وليس دليلاً على عدم وجود معالجات
 
 let treatInsulatorState = { R: [], S: [], T: [] };
@@ -8907,11 +8923,19 @@ let currentTreatRecord = null;
 
 let otherDepTreatState = {};
 
+// v335-C6r21 (P01-B1): بعد المزامنة تُبطَل صفحات السجل/الأرشيف (صفحة أولى واحدة إن كانت الشاشة ظاهرة) بدل إعادة قراءة الجدول كاملاً.
+// الكاش الكامل القديم يُحدَّث فقط لمن حمّله فعلاً (مستهلكون قدماء) أو في الوضع غير الحيّ (دلالات قديمة محفوظة).
+async function treatmentsAfterSync() {
+  try { if (typeof histInvalidate === 'function') histInvalidate(); } catch (e) {}
+  if (treatmentsCacheLoaded || !csLiveEnabled()) await loadTreatments();
+}
+
 async function loadTreatments() {
   try {
     treatmentsCache = await fetchAllPages('treatments?select=*&order=created_at.desc');
     try { await opsLoadMarks(); } catch (e) {}   // v335-C4
     treatmentsLoadFailed = false; // نجاح (حتى بقائمة فارغة): الكاش يعكس الخادم
+    treatmentsCacheLoaded = true;
   } catch {
     treatmentsLoadFailed = true; // نحتفظ بالكاش السابق ولا نفرّغه — لكن لا ندّعي أنه حديث
   }
@@ -9057,7 +9081,7 @@ const FEAT_MODULE_SRC = { svg: './tower-svg.js', insp: './inspection-editor.js',
   hist: './treatment-history.js', lexp: './treatment-log-export.js', dexp: './departures-export.js', rexp: './records-export.js',
   lpg: './lines-pages.js', ladm: './lines-admin.js', lprt: './lines-print.js', acct: './accounts.js', emg: './emergency-departures.js', tg: './work-telegram.js' };
 
-const FEAT_MODULE_DEPS = { insp: ['svg'], treat: ['svg'], ladm: ['lpg'] };
+const FEAT_MODULE_DEPS = { insp: ['svg'], treat: ['svg'], ladm: ['lpg'], lexp: ['hist'] };   // v335-C6r21 (P01-B1): التصدير يستخدم مُرقِّم السجل
 
 const _featMod = {};
 
@@ -9386,7 +9410,7 @@ async function syncInspectionPatchQueue() {
   if (confirmedTreatments > 0) {
     if (removeFailed > 0) showToast('⚠️ أُرسلت معالجات إلى السيرفر لكن تعذّر تحديث قائمة المعلّقات — سيُعاد الإرسال بأمان دون تكرار', 'error');
     else showToast(`✅ تم إرسال ${confirmedTreatments} معالجة إلى السيرفر`);
-    try { await loadTreatments(); } catch (e) { console.error(e); }
+    try { await treatmentsAfterSync(); } catch (e) { console.error(e); }
     try { if (depUI) depUI.renderLines(); } catch (e) { console.error(e); }
   }
 }
@@ -9449,46 +9473,21 @@ async function syncTreatmentQueue() {
   updatePendingBadge();
   if (removeFailed > 0) showToast('⚠️ أُرسلت معالجات لكن تعذّر تحديث قائمة المعلّقات — سيُعاد الإرسال بأمان دون تكرار', 'error');
   else if (synced > 0) showToast(`✅ تم إرسال ${synced} معالجة محفوظة أوف لاين`);
-  if (synced > 0) await loadTreatments();
+  if (synced > 0) { try { await treatmentsAfterSync(); } catch (e) { console.error(e); } }
 }
 
-let currentDepLogRows = [];
-
-async function bulkDeleteTreatments() {
-  if (!(currentUser.role === 'admin')) {
-    showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error');
-    return;
-  }
-  const n = currentDepLogRows.length;
-  if (!n) { showToast('⚠️ لا توجد معالجات مطابقة للفلتر الحالي', 'error'); return; }
-  if (!confirm(`🗑️ تأكيد إلغاء ${n} معالجة مطابقة للفلتر الحالي؟ لا يُحذف الأصل؛ يُسجَّل إلغاء بسبب. تُستعاد حالة البرج فقط حيث تكون المعالجة آخر كاتب؛ وإلا يُرفض الإلغاء مع بيان العمليات الأحدث.`)) return;
-  const done = await opsDeleteTreatments(currentDepLogRows.slice());   // v335-C4
-  showToast(done === n ? `📦 سُجّل إلغاء ${done} من ${n} معالجة وسيُرسل` : `⚠️ سُجّل إلغاء ${done} من ${n} معالجة فقط`, done === n ? undefined : 'error');
-}
+function bulkDeleteTreatments() { return featRun(['hist'], () => histBulkDelete(), 'hbulk'); }   // v335-C6r21 (P01-B1): كل المطابق (على دفعات) لا المعروض فقط
 
 async function deleteTreatmentRecord(id) {
   if (!(currentUser.role === 'admin')) {
     showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error');
     return;
   }
-  const t = treatmentsCache.find(x => x.id === id);
+  const t = (typeof histFindRow === 'function' && histFindRow(id)) || treatmentsCache.find(x => x.id === id);   // v335-C6r21 (P01-B1)
   if (!t) { showToast('⚠️ تعذر إيجاد هذي المعالجة', 'error'); return; }
   if (!confirm('🗑️ إلغاء هذه المعالجة؟ لا يُحذف الأصل؛ يُسجَّل إلغاء بسبب، وتُستعاد حالة البرج فقط إن كانت المعالجة آخر كاتب لها.')) return;
   const n = await opsDeleteTreatments([t]);   // v335-C4
   if (n) showToast('📦 سُجّل إلغاء المعالجة وسيُرسل');
-}
-
-// يرجع سجلات سجل المعالجات بعد تطبيق فلتر الصفحة (خط + تاريخ المعالجة من/إلى)
-function getDepLogFiltered() {
-  const line = document.getElementById('depLogFilterLine')?.value || '';
-  const from = document.getElementById('depLogFilterFrom')?.value || '';
-  const to = document.getElementById('depLogFilterTo')?.value || '';
-  return sortTreatmentsByDateDesc(treatmentsCache.filter(t => {
-    const mLine = !line || t.line_name === line;
-    const mFrom = !from || (t.treatment_date||'') >= from;
-    const mTo = !to || (t.treatment_date||'') <= to;
-    return mLine && mFrom && mTo;
-  }));
 }
 
 // ===== حساب قيمة السلسلة الواحدة من العوازل =====

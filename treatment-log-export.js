@@ -1,4 +1,4 @@
-/* treatment-log-export.js — v335-C5r8
+/* treatment-log-export.js — v335-C6r21 (P01-B1)
    تصدير سجل المعالجات (PDF/Excel): نافذة الاختيار والفلاتر والتصدير.
    يُحمَّل ويُنفَّذ مرة واحدة فقط عند الطلب الفعلي؛ لا يعمل عند بدء التطبيق. سكربت كلاسيكي يشارك الربط العام مع index.html. */
 (function mount_depLogExportModalBg() {
@@ -30,10 +30,12 @@
       </div>
       <div id="depLogExportTowersWrap" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px 8px;max-height:160px;overflow-y:auto;margin-top:6px;padding:8px;border:1.5px solid #E2E8F0;border-radius:8px"></div>
     </div>
-    <p id="depLogExportResultCount" style="margin-top:12px;color:#718096;font-size:0.82rem"></p>
+    <p id="depLogExportResultCount" style="margin-top:12px;color:#718096;font-size:0.82rem">يُجلب كل المعالجات المطابقة (وليس المعروضة فقط) على دفعات عند الضغط على PDF أو Excel.</p>
+    <p id="depLogExportProgress" role="status" aria-live="polite" style="margin-top:8px;color:#2C5282;font-size:0.82rem;display:none"></p>
     <div class="form-actions" style="margin-top:18px;flex-direction:column;gap:10px">
       <button class="btn btn-primary" style="width:100%;background:#922b21" onclick="exportDepLogPDF()">📄 PDF</button>
       <button class="btn btn-primary" style="width:100%" onclick="exportDepLogExcel()">📊 Excel</button>
+      <button class="btn btn-secondary" id="depLogExportCancelBtn" onclick="cancelDepLogExport()" style="width:100%;display:none">⛔ إلغاء التصدير</button>
       <button class="btn btn-secondary" onclick="closeDepLogExportModal()" style="width:100%">إغلاق</button>
     </div>
   </div>
@@ -46,54 +48,42 @@
 // ========================
 // EXPORT MODAL — سجل المعالجات (PDF / Excel عبر قائمة المشاركة الأصلية)
 // ========================
+let _lexpRun = null;
+
 function openDepLogExportModalImpl() {
   const sel = document.getElementById('depLogExportFilterLine');
-  const uniqueLines = [...new Set(treatmentsCache.map(t => t.line_name).filter(Boolean))].sort();
-  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
-    uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
+  const names = Object.keys(LINES_DATA || {}).sort((a, b) => a.localeCompare(b, 'ar'));   // v335-C6r21 (P01-B1): من LINES_DATA لا من جدول المعالجات
+  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' + names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
   // ينسخ فلتر الصفحة الحالي كقيمة مبدئية بنافذة التصدير
   sel.value = document.getElementById('depLogFilterLine')?.value || '';
   document.getElementById('depLogExportFilterFrom').value = document.getElementById('depLogFilterFrom')?.value || '';
   document.getElementById('depLogExportFilterTo').value = document.getElementById('depLogFilterTo')?.value || '';
-  updateDepLogExportTowerList();
+  updateDepLogExportTowerList(_digitsAscii(document.getElementById('depLogFilterTower')?.value || ''));
+  depLogExportUi(false, '');
   document.getElementById('depLogExportModalBg').classList.add('show');
 }
 
 function closeDepLogExportModal() {
+  if (_lexpRun) _lexpRun.cancelled = true;   // إغلاق النافذة أثناء الجلب = إلغاء؛ لا يُكتب أي ملف
   document.getElementById('depLogExportModalBg').classList.remove('show');
 }
 
-// يرجّع السجلات المطابقة لفلتر الخط + التاريخ فقط (بدون فلتر الأبراج) — تُستخدم لبناء قائمة الأبراج المتاحة للاختيار
-function getDepLogExportFilteredByLineDate() {
-  const line = document.getElementById('depLogExportFilterLine').value;
-  const from = document.getElementById('depLogExportFilterFrom').value;
-  const to = document.getElementById('depLogExportFilterTo').value;
-  return treatmentsCache.filter(t => {
-    const mLine = !line || t.line_name === line;
-    const mFrom = !from || (t.treatment_date||'') >= from;
-    const mTo = !to || (t.treatment_date||'') <= to;
-    return mLine && mFrom && mTo;
-  });
-}
+function cancelDepLogExport() { if (_lexpRun) { _lexpRun.cancelled = true; depLogExportUi(true, '⛔ جاري الإلغاء...'); } }
 
-// يبني قائمة الأبراج (checkboxes) المتاحة ضمن فلتر الخط/التاريخ الحالي — كلها محددة افتراضياً
-function updateDepLogExportTowerList() {
+// قائمة أبراج الخط المختار (من بيانات الخطوط المحلية، بلا قراءة شبكة) — كلها محددة افتراضياً؛ preselect = برج فلتر الصفحة
+function updateDepLogExportTowerList(preselect) {
   const wrap = document.getElementById('depLogExportTowersWrap');
-  const rows = getDepLogExportFilteredByLineDate();
-  const uniqueTowers = [...new Set(rows.map(t => t.tower_number).filter(v => v !== undefined && v !== null && v !== ''))]
-    .sort((a,b) => (parseInt(a)||0) - (parseInt(b)||0) || String(a).localeCompare(String(b)));
-  if (!uniqueTowers.length) {
-    wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد أبراج مطابقة</div>';
-    updateDepLogExportResultCount();
-    return;
-  }
-  wrap.innerHTML = uniqueTowers.map(tn => `
+  const line = document.getElementById('depLogExportFilterLine').value;
+  if (!line) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">اختر خطاً لتحديد أبراج بعينها — بدون خط تُصدَّر كل المعالجات المطابقة للتاريخ</div>'; return; }
+  const nums = [...new Set((getLineTowers(line) || []).map(tw => String(tw.num)).filter(v => v !== '' && v !== 'undefined' && v !== 'null'))];
+  if (preselect && nums.indexOf(String(preselect)) < 0) nums.push(String(preselect));
+  nums.sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0) || String(a).localeCompare(String(b)));
+  if (!nums.length) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد قائمة أبراج لهذا الخط — تُصدَّر كل أبراجه المطابقة</div>'; return; }
+  wrap.innerHTML = nums.map(tn => `
     <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
-      <input type="checkbox" class="depLogExportTowerChk" value="${tn}" checked>
-      <span>برج ${tn}</span>
+      <input type="checkbox" class="depLogExportTowerChk" value="${escapeHtml(tn)}" ${(!preselect || String(preselect) === tn) ? 'checked' : ''}>
+      <span>برج ${escapeHtml(tn)}</span>
     </label>`).join('');
-  wrap.querySelectorAll('.depLogExportTowerChk').forEach(cb => cb.addEventListener('change', updateDepLogExportResultCount));
-  updateDepLogExportResultCount();
 }
 
 function toggleAllDepLogExportTowers() {
@@ -101,31 +91,74 @@ function toggleAllDepLogExportTowers() {
   if (!boxes.length) return;
   const allChecked = Array.from(boxes).every(b => b.checked);
   boxes.forEach(b => b.checked = !allChecked);
-  updateDepLogExportResultCount();
 }
 
-function getDepLogExportSelectedTowers() {
-  return new Set(Array.from(document.querySelectorAll('.depLogExportTowerChk:checked')).map(b => b.value));
+// فلاتر النافذة الحالية: towers = null (كل الأبراج) أو مصفوفة محددة
+function getDepLogExportFilters() {
+  const boxes = Array.from(document.querySelectorAll('.depLogExportTowerChk'));
+  const chosen = boxes.filter(b => b.checked).map(b => b.value);
+  return {
+    line: document.getElementById('depLogExportFilterLine').value,
+    from: document.getElementById('depLogExportFilterFrom').value,
+    to: document.getElementById('depLogExportFilterTo').value,
+    towers: (boxes.length && chosen.length < boxes.length) ? chosen : null,
+    noTower: !!(boxes.length && !chosen.length)
+  };
+}
+function depLogExportSig() { const f = getDepLogExportFilters(); return JSON.stringify([f.line, f.from, f.to, f.towers, f.noTower]); }
+
+function depLogExportUi(busy, msg) {
+  const pr = document.getElementById('depLogExportProgress'), cb = document.getElementById('depLogExportCancelBtn');
+  if (pr) { pr.style.display = msg ? '' : 'none'; pr.textContent = msg || ''; }
+  if (cb) cb.style.display = busy ? '' : 'none';
+  ['depLogExportFilterLine', 'depLogExportFilterFrom', 'depLogExportFilterTo'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = !!busy; });
+  document.querySelectorAll('.depLogExportTowerChk').forEach(b => { b.disabled = !!busy; });
+  document.querySelectorAll('#depLogExportModalBg .form-actions .btn-primary').forEach(b => { b.disabled = !!busy; });
 }
 
-// يرجّع السجلات النهائية المطابقة (خط + تاريخ + الأبراج المحددة) — هذي المستخدمة فعلياً بالتصدير
-function getDepLogExportFiltered() {
-  const rows = getDepLogExportFilteredByLineDate();
-  const selectedTowers = getDepLogExportSelectedTowers();
-  if (!selectedTowers.size) return [];
-  return sortTreatmentsByLineTowerThenDate(rows.filter(t => selectedTowers.has(String(t.tower_number))));
+function depLogExportBegin() {
+  if (_lexpRun) { showToast('⏳ تصدير جارٍ بالفعل'); return null; }
+  const f = getDepLogExportFilters();
+  if (f.noTower) { showToast('⚠️ لم تحدد أي برج', 'error'); return null; }
+  if (f.from && f.to && f.from > f.to) { showToast('⚠️ تاريخ البداية بعد تاريخ النهاية', 'error'); return null; }
+  if (navigator.onLine === false) { showToast('📴 يلزم الاتصال لجلب كل المعالجات المطابقة للتصدير', 'error'); return null; }
+  const run = { f, sess: _histSess(), sig: depLogExportSig(), cancelled: false };
+  run.alive = () => _lexpRun === run && !run.cancelled && _histSessOk(run.sess) && depLogExportSig() === run.sig;
+  _lexpRun = run;
+  depLogExportUi(true, '⏳ جاري جلب المعالجات المطابقة...');
+  return run;
+}
+function depLogExportEnd(run, msg) { if (_lexpRun === run) _lexpRun = null; depLogExportUi(false, msg || ''); }
+
+// يجلب كل المطابق على دفعات محدودة؛ أي انقطاع/تغيّر جلسة/فلتر/إلغاء = استثناء aborted أو خطأ (لا نتيجة جزئية)
+async function depLogExportCollect(run) {
+  const f = run.f;
+  const prog = n => { if (run.alive()) depLogExportUi(true, '⏳ جاري جلب المعالجات المطابقة: ' + n); };
+  let rows = [];
+  if (f.towers && f.towers.length <= 10) {
+    for (const tn of f.towers) {
+      const base = rows.length;
+      const part = await histFetchAll({ line: f.line, tower: tn, from: f.from, to: f.to }, { alive: run.alive, onProgress: n => prog(base + n) });
+      rows = rows.concat(part);
+    }
+  } else {
+    rows = await histFetchAll({ line: f.line, from: f.from, to: f.to }, { alive: run.alive, onProgress: prog });
+    if (f.towers) { const set = new Set(f.towers); rows = rows.filter(t => set.has(String(t.tower_number))); }
+  }
+  const seen = new Set();
+  rows = rows.filter(t => { const k = String(t.id); if (seen.has(k)) return false; seen.add(k); return true; });
+  return sortTreatmentsByLineTowerThenDate(rows);
 }
 
-function updateDepLogExportResultCount() {
-  const n = getDepLogExportFiltered().length;
-  document.getElementById('depLogExportResultCount').textContent = `📋 عدد المعالجات المطابقة: ${n}`;
+function depLogExportFail(err, what) {
+  if (err && (err.aborted || err.stale)) { showToast('⛔ أُلغي التصدير (تغيّر الفلتر/الجلسة أو أُلغي) — لم يُنشأ أي ملف'); return; }
+  console.error(err);
+  showToast('❌ تعذر تجهيز ' + what + ' — البيانات غير مكتملة فلم يُنشأ أي ملف', 'error');
 }
 
 (() => {   // v335-C5r8: الوحدة تُحمَّل بعد DOMContentLoaded؛ تُربط المستمعات فوراً بعد تركيب النافذة
-  ['depLogExportFilterLine','depLogExportFilterFrom','depLogExportFilterTo'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('change', updateDepLogExportTowerList);
-  });
+  const ln = document.getElementById('depLogExportFilterLine');
+  if (ln) ln.addEventListener('change', () => updateDepLogExportTowerList(''));
 })();
 
 // عنوان PDF عربي عبر مسار الرسم العربي الموجود (doc.text لا يدعم العربية)؛ يُرسم بمحاذاة اليمين، والتاريخ باليسار
@@ -142,11 +175,11 @@ function pdfDrawArabicTitle(doc, pageW, marginX, title) {
 }
 
 async function exportDepLogPDF() {
-  const rows = getDepLogExportFiltered();
-  if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
-  showToast('⏳ جاري تحضير PDF...');
-
+  const run = depLogExportBegin(); if (!run) return;
   try {
+    const rows = await depLogExportCollect(run);
+    if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); depLogExportEnd(run); return; }
+    depLogExportUi(true, '🖼️ جاري تجهيز PDF لـ ' + rows.length + ' معالجة...');
     await ensureJsPDFLoaded(); // Lazy load: يضمن اكتمال تحميل jsPDF قبل الاستخدام
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
@@ -162,6 +195,8 @@ async function exportDepLogPDF() {
     const maxPartH = Math.floor((pageH - marginTop - marginBottom - 8) / (drawW / 760));
     for (let i = 0; i < rows.length; i++) {
       const t = rows[i];
+      if (!run.alive()) { const e = new Error('aborted'); e.aborted = true; throw e; }
+      if (i % 10 === 0) depLogExportUi(true, '🖼️ جاري تجهيز PDF: ' + i + ' / ' + rows.length);
       const card = await buildTreatLogRecordCanvas(t, { seq: i + 1, maxPartH }); // ترقيم التصدير فقط: رقم واحد لكل أجزاء العملية
       for (const part of (card.parts || [card])) { // كل الأجزاء تُرسم (لا الاكتفاء بالأول)
         const drawH = part.h * (drawW / part.w);
@@ -174,19 +209,23 @@ async function exportDepLogPDF() {
 
     const blob = doc.output('blob');
     const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.pdf';
+    if (!run.alive()) { const e = new Error('aborted'); e.aborted = true; throw e; }   // لا كتابة بعد تغيّر جلسة/فلتر
     await shareOrDownloadFile(blob, filename, 'application/pdf');
     showToast('✅ تم تجهيز PDF (' + rows.length + ' معالجة)');
+    depLogExportEnd(run);
     closeDepLogExportModal();
   } catch (err) {
-    console.error(err);
-    showToast('❌ تعذر تجهيز PDF', 'error');
+    depLogExportFail(err, 'PDF');
+    depLogExportEnd(run);
   }
 }
 
 async function exportDepLogExcel() {
-  const rows = getDepLogExportFiltered();
-  if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); return; }
+  const run = depLogExportBegin(); if (!run) return;
   try {
+    const rows = await depLogExportCollect(run);
+    if (!rows.length) { showToast('لا توجد معالجات مطابقة للتصدير', 'error'); depLogExportEnd(run); return; }
+    depLogExportUi(true, '📊 جاري تجهيز Excel لـ ' + rows.length + ' معالجة...');
     await ensureExcelJSLoaded(); // Lazy load: يضمن اكتمال تحميل ExcelJS قبل الاستخدام
     const wb = new ExcelJS.Workbook();
     // صفحة من اليمين لليسار + تثبيت صف الترويسة. لا نحدد ارتفاع صفوف (التفاف النص يترك الارتفاع للبرنامج فلا يُخفى محتوى)
@@ -223,11 +262,14 @@ async function exportDepLogExcel() {
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const filename = 'سجل_المعالجات_' + new Date().toISOString().split('T')[0] + '.xlsx';
+    if (!run.alive()) { const e = new Error('aborted'); e.aborted = true; throw e; }   // لا كتابة بعد تغيّر جلسة/فلتر
     await shareOrDownloadFile(blob, filename, blob.type);
     showToast('✅ تم تجهيز Excel (' + rows.length + ' معالجة)');
+    depLogExportEnd(run);
     closeDepLogExportModal();
   } catch (err) {
-    showToast('❌ تعذر تجهيز Excel', 'error');
+    depLogExportFail(err, 'Excel');
+    depLogExportEnd(run);
   }
 }
 
