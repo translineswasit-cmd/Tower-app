@@ -45,7 +45,12 @@ function goToTreatThisTowerImpl(lineName, towerNum) {
       lineSel.appendChild(opt);
     }
     lineSel.value = lineName;
-    Promise.resolve(onTreatLineChange()).then(() => {   // v335-C6r7: اختيار الخط يقرأ ملخّصه أولاً؛ بعده يُختار البرج
+    // P01-A: قراءة حالة البرج الموثوقة تبدأ بالتوازي مع ملخّص الخط (كانت تنتظره). تُطلَق قبل الملخّص عمداً: تذكرة أقدم فلا يُهمَل ردّ الملخّص بحجة «حداثة البرج».
+    // لا تُعرض البطاقة قبل أن يُنهي onTreatTowerChange نفس الحراسات (تسلسل الاختيار، الجلسة، جيل الكتابة، إصدار الحالة).
+    let pre = null; try { pre = _treatPrefetchStart(lineName, towerNum); } catch (e) { pre = null; }
+    const lineP = Promise.resolve(onTreatLineChange());
+    _treatPre = pre;
+    lineP.then(() => {   // v335-C6r7: اختيار الخط يقرأ ملخّصه أولاً؛ بعده يُختار البرج
       if (document.getElementById('treatLine').value !== lineName) return;
       const towerSel = document.getElementById('treatTower');
       if (![...towerSel.options].some(o => o.value === towerNum)) {
@@ -57,6 +62,33 @@ function goToTreatThisTowerImpl(lineName, towerNum) {
       onTreatTowerChange();
     });
   }, 50);
+}
+
+// P01-A: قراءة برج مسبقة (مرة واحدة) لمسار «عالج هذا البرج». لا تُستعمل إلا بعد مطابقة الخط والبرج والجلسة وجيل الكتابة والتسلسل المحلي وإصدار الحالة المطبَّقة.
+let _treatPre = null;
+function _treatPrefetchStart(line, tower) {
+  if (!navigator.onLine || !csLiveEnabled() || !currentUser || !CS_AUTH.token) return null;
+  if (treatmentBlockReason(line, tower, null)) return null;   // الحارس المبكر نفسه: لا قراءة لبرج ممنوع
+  const x = { line, tower: String(tower), gen: _csAuthGen, wgen: _csWriteGen, lseq: _localSeq, token: CS_AUTH.token, uid: currentUser.id, p: null };
+  x.p = _fetchFullTowerRecord(line, tower);
+  x.p.catch(() => {});   // لا رفض غير معالج؛ الاستهلاك يعالجه ويرجع للقراءة الطازجة
+  return x;
+}
+function _treatTakePrefetch(line, tower) {
+  const x = _treatPre; _treatPre = null;
+  if (!x || x.line !== line || x.tower !== String(tower)) return null;
+  if (x.gen !== _csAuthGen || x.token !== CS_AUTH.token || !currentUser || String(currentUser.id) !== String(x.uid)) return null;
+  return x;
+}
+// يُرجع وعداً بنتيجة _fetchFullTowerRecord: المسبقة إن بقيت صالحة بعد ردّ الملخّص، وإلا قراءة طازجة (سلوك ما قبل P01-A)
+function _treatPreResult(x, line, tower) {
+  return (async () => {
+    let r = null; try { r = await x.p; } catch (e) { r = null; }
+    const ti = csTowerInfo(line, tower);
+    const ok = r && r.ok && r.cs && r.cs.source === 'server' && r.cs.env && ti && ti.version === (r.cs.env.version || null) &&
+      x.gen === _csAuthGen && x.token === CS_AUTH.token && x.wgen === _csWriteGen && x.lseq === _localSeq;
+    return ok ? r : _fetchFullTowerRecord(line, tower);
+  })();
 }
 
 function populateTreatLines() {
@@ -83,6 +115,7 @@ function populateTreatLines() {
 }
 
 function onTreatLineChange() {
+  _treatPre = null;
   // تغيير الخط يُبطل أي اختيار برج جارٍ جلبه: يُصفَّر السجل وتُخفى البطاقة قبل أي خروج، وتسلسل الاختيار يتقدّم فيُرفض الطلب القديم عند عودته
   _treatSelectSeq++;
   currentTreatRecord = null;
@@ -143,7 +176,8 @@ async function onTreatTowerChange() {
   if (early) { showToast(early, 'error'); return; }
   // نجيب السجل الكامل لهذا البرج بالذات (طلب صغير وفوري) — شاشة المعالجة تحتاج تفاصيل غير متوفرة
   // بالتحميل المختصر لشبكة الأبراج (دورة المعالجة، مادة سلاسل الدائرة الثانية، الملاحظات)
-  const r = navigator.onLine ? (await loadFullTowerRecord(lineName, towerNum)) || getLatestRecordForTower(lineName, towerNum) : getLatestRecordForTower(lineName, towerNum);
+  const _px = navigator.onLine ? _treatTakePrefetch(lineName, towerNum) : null;
+  const r = navigator.onLine ? (await loadFullTowerRecord(lineName, towerNum, _px ? _treatPreResult(_px, lineName, towerNum) : null)) || getLatestRecordForTower(lineName, towerNum) : getLatestRecordForTower(lineName, towerNum);
   // لا نقبل السجل إلا لو بقي الاختيار نفسه: التسلسل لم يتقدّم والخط والبرج الحاليان يطابقان ما بدأ به الطلب
   if (mySeq !== _treatSelectSeq || document.getElementById('treatLine').value !== lineName || document.getElementById('treatTower').value !== towerNum) return;
   { const _ti = csLiveEnabled() ? csTowerInfo(lineName, towerNum) : null;   // v335-C6r7: برج غير مهيّأ في المخزن: صريح، ولا تُبنى معالجة من صف قديم محفوظ

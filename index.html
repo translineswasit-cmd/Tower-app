@@ -3328,7 +3328,7 @@ function enterApp() {
   applyRolePermissions();
   // v335-C6: لا جلب للأرشيف عند الدخول؛ السجلات التاريخية تُحمَّل فقط من شاشات الأرشيف/التقارير الصريحة
   if (navigator.onLine) { loadLinesInfoFromDB(); }   // v335-C5: القراءة تحتاج جلسة، فتُعاد بعد الدخول
-  try { featSchedulePreload('insp'); } catch (e) {}   // N03-C: تحميل مسبق للكود فقط وقت الخمول
+  try { featSchedulePreload(['insp', 'treat']); } catch (e) {}   // N03-C / P01-A: تحميل مسبق للكود فقط وقت الخمول (insp ثم treat بالتتابع)
   if (navigator.onLine) loadLineTowersCache(); // كاش أبراج الخطوط المعدَّلة (يفشل بصمت أوف لاين، القيم المدمجة بالكود تبقى تشتغل كاحتياط)
 }
 
@@ -4606,8 +4606,8 @@ async function _fetchFullTowerRecord(lineName, towerNumber) {
 
 // يجلب السجل الكامل (كل الحقول، بما فيها الدائرة الثانية والملاحظات) لبرج واحد بس — طلب صغير وفوري دائماً
 // (سجل واحد فقط)، يُستخدم عند فتح برج محدد فعلياً. يرجع null عند الفشل أو عدم وجود كشف.
-async function loadFullTowerRecord(lineName, towerNumber) {
-  const r = await _fetchFullTowerRecord(lineName, towerNumber);
+async function loadFullTowerRecord(lineName, towerNumber, pre) {
+  const r = await (pre || _fetchFullTowerRecord(lineName, towerNumber));   // P01-A: pre = نتيجة قراءة مسبقة مُتحقَّق منها من مسار المعالجة (وعد _fetchFullTowerRecord نفسه)
   if (!r.ok || !r.record) return null;
   if (r.cs && r.cs.source === 'cache') return null; // v335: لقطة مخزّنة بالجهاز ليست قراءة حيّة: لا تُدمج فوق ما بالذاكرة
   return _mergeFullTowerRecord(r.record, r.startSeq);
@@ -9123,7 +9123,7 @@ function featRun(mods, fn, kind, bump) {
 // N03-C: تحميل مسبق لـ«كود» وحدة (insp) فقط في وقت خمول بعد اكتمال المحتوى الأولي — عبر نفس featLoadModule (نفس الوعد/المخزن، فلا تكرار في الطلب أو التهيئة).
 // لا يقرأ أي حالة برج ولا يغيّر المعالجات؛ التعبئة المرجعية تبقى بقراءة حيّة عند الفتح. لا يعمل: بلا اتصال، حفظ البيانات/2G، مزامنة جارية أو معلّقات على الجهاز، طلبات حالة جارية، تبويب خلفي.
 // الفشل صامت (لا رسالة) والفتح الفعلي يعيد المحاولة. بلا requestIdleCallback (Safari): مؤقّت بعد اكتمال التحميل.
-const _featPre = { armed: false, tries: 0 };
+const _featPre = { armed: false, tries: 0, rest: [] };
 function _featPreState() {
   try {
     if (typeof currentUser === 'undefined' || !currentUser || !CS_AUTH.token) return 'wait';
@@ -9134,16 +9134,21 @@ function _featPreState() {
     return 'go';
   } catch (e) { return 'wait'; }
 }
-function featSchedulePreload(name) {
-  if (_featPre.armed || featReady([name])) return;
-  _featPre.armed = true; _featPre.tries = 0;
+function featSchedulePreload(names) {
+  const list = (Array.isArray(names) ? names : [names]).filter(n => FEAT_MODULE_SRC[n] && !featReady([n]));
+  if (_featPre.armed || !list.length) return;
+  _featPre.armed = true; _featPre.tries = 0; _featPre.rest = list.slice();
   const run = () => {
-    if (featReady([name])) { _featPre.armed = false; return; }
+    while (_featPre.rest.length && featReady([_featPre.rest[0]])) _featPre.rest.shift();
+    const name = _featPre.rest[0];
+    if (!name) { _featPre.armed = false; return; }
     const st = _featPreState();
-    if (st === 'never') { _featPre.armed = false; return; }
-    if (st === 'wait') { if (++_featPre.tries > 8) { _featPre.armed = false; return; } return arm(5000); }
-    _featPre.armed = false;
-    featLoadModule(name).catch(() => {});
+    if (st === 'never') { _featPre.armed = false; _featPre.rest = []; return; }
+    if (st === 'wait') { if (++_featPre.tries > 8) { _featPre.armed = false; _featPre.rest = []; return; } return arm(5000); }
+    _featPre.rest.shift();
+    // P01-A: وحدة واحدة في كل مرة؛ التالية بعد انتهاء السابقة + مهلة، وبإعادة فحص الحالة (لا تنافس بينها ولا مع قراءة/مزامنة)
+    const after = () => { if (_featPre.rest.length) { _featPre.tries = 0; arm(2500); } else _featPre.armed = false; };
+    featLoadModule(name).then(after, after);
   };
   const idle = () => { if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 8000 }); else run(); };
   const arm = (ms) => setTimeout(() => { if (document.readyState === 'complete') idle(); else window.addEventListener('load', () => setTimeout(idle, 500), { once: true }); }, ms);
