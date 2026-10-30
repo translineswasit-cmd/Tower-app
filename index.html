@@ -101,6 +101,20 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .towers-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(88px,1fr)); gap:10px; margin-bottom:18px; }
 .tower-box { border:2px solid; border-radius:12px; padding:8px 6px; text-align:center; cursor:pointer; transition:transform .12s; min-height:84px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
 .tower-box:hover { transform:translateY(-2px); }
+/* N03-B: ألوان البلاطة بأصناف بدل style مضمَّن لكل بلاطة (نفس القيم حرفياً من TOWER_LEVEL_META) ورموز الفئات بأصناف بدل ~10 أنماط مضمّنة لكل بلاطة */
+.tl-none { background:#e2e8f0; border-color:#cbd5e0; color:#4a5568; }
+.tl-green { background:#9AE6B4; border-color:#68D391; color:#22543D; }
+.tl-teal { background:#B2F5EA; border-color:#4FD1C5; color:#234E52; }
+.tl-yellow { background:#FDE9A0; border-color:#F0C75E; color:#7C5E10; }
+.tl-orange { background:#F8C193; border-color:#ED9A52; color:#7B341E; }
+.tl-red { background:#FCA5A5; border-color:#F56565; color:#742A2A; }
+.tl-err { background:#FED7D7; border-color:#FC8181; color:#742A2A; }
+.ci { display:flex; gap:5px; align-items:center; justify-content:center; font-size:0.75rem; line-height:1; flex-wrap:wrap; }
+.ci-i { position:relative; display:inline-flex; }
+.ci-o { position:absolute; top:-4px; right:-4px; font-size:0.5rem; line-height:1; background:white; border-radius:50%; }
+.ci-x { color:#C53030; }
+.ci-v { color:#276749; }
+.ci-g { display:inline-block; width:0.62em; height:0.62em; border-radius:50%; background:#A0AEC0; vertical-align:middle; }
 .tower-box-num { font-size:1.1rem; font-weight:800; line-height:1.1; }
 .tower-box-type { font-size:0.62rem; font-weight:600; opacity:0.9; }
 .tower-box-date { font-size:0.6rem; opacity:0.95; margin-top:2px; }
@@ -2987,12 +3001,16 @@ function csCoverageText(c) {
   const un = (c && c.uninitialised) || 0, cp = (c && c.card_pending) || 0;
   return (un ? un + ' برج غير مهيّأ في مخزن الحالة (تهيئة المدير مطلوبة)' : '') + (un && cp ? '، ' : '') + (cp ? cp + ' برج ملخّصه قيد الإصلاح' : '');
 }
-function csLineBanner(line) {
+function csLineBanner(line, held) {   // N03-A: held = { state:'pending'|'error', at, offline } — لقطة محفوظة لا تُعرض كحالة حيّة
   if (!csFlagOn() || !CS_AUTH.token) return '';
   let h = '';
   const le = _csLineEnv.get(line);
   const st = 'font-size:0.74rem;border-radius:8px;padding:6px 10px;margin-bottom:8px;line-height:1.7;';
-  if (le && le.asOf) h += `<div style="${st}background:#EDF2F7;color:#2D3748">⚡ حالة حيّة من السيرفر — ${_csEsc(new Date(le.asOf).toLocaleTimeString('ar'))}</div>`;
+  if (held && held.state) {
+    const t = held.at ? ' (قراءة ' + _csEsc(new Date(held.at).toLocaleTimeString('ar')) + ')' : '';
+    if (held.state === 'pending') h += `<div style="${st}background:#FEF3C7;color:#92400E">📴 بيانات محفوظة من قراءة سابقة${t} — جارٍ التحقق من الخادم… لا تُعدّ الحالة الحالية قبل اكتمال التحقق</div>`;
+    else h += `<div style="${st}background:#FEF3C7;color:#92400E">${held.offline ? '📴 دون اتصال' : '⚠️ تعذّر التحقق من الخادم'} — المعروض آخر حالة محفوظة${t}، قد لا يشمل تحديثات أحدث. افتح البرج لقراءة حالته الحيّة <button class="btn btn-secondary btn-sm" style="margin-right:8px" onclick="retryLineTowerList()">🔄 إعادة التحقق</button></div>`;
+  } else if (le && le.asOf) h += `<div style="${st}background:#EDF2F7;color:#2D3748">⚡ حالة حيّة من السيرفر — ${_csEsc(new Date(le.asOf).toLocaleTimeString('ar'))}</div>`;
   else h += `<div style="${st}background:#FEF3C7;color:#92400E">📴 المعروض من آخر تحميل محفوظ بالجهاز — لم تُقرأ الحالة الحيّة الآن</div>`;
   if (csQueuesUnreadable()) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ قائمة المعلّقات على الجهاز غير قابلة للقراءة — قد لا تشمل الحالة المعروضة العمل المعلّق. لم يُحذف شيء.</div>`;
   if (le && le.coverage && le.coverage.complete === false) h += `<div style="${st}background:#FFF5F5;color:#822727">⚠️ تغطية غير مكتملة: ${_csEsc(csCoverageText(le.coverage))} من ${le.coverage.requested} برج — هذه الأبراج حالتها غير معروفة (ليست سليمة ولا غير مكشوفة)؛ المعروض يخصّ الأبراج المعروفة فقط — ${currentUser && currentUser.role === 'admin' ? 'نفّذ «ترحيل الأبراج القديمة» من لوحة الإدارة' : 'اطلب من المدير تنفيذ الترحيل'}</div>`;
@@ -3310,6 +3328,7 @@ function enterApp() {
   applyRolePermissions();
   // v335-C6: لا جلب للأرشيف عند الدخول؛ السجلات التاريخية تُحمَّل فقط من شاشات الأرشيف/التقارير الصريحة
   if (navigator.onLine) { loadLinesInfoFromDB(); }   // v335-C5: القراءة تحتاج جلسة، فتُعاد بعد الدخول
+  try { featSchedulePreload('insp'); } catch (e) {}   // N03-C: تحميل مسبق للكود فقط وقت الخمول
   if (navigator.onLine) loadLineTowersCache(); // كاش أبراج الخطوط المعدَّلة (يفشل بصمت أوف لاين، القيم المدمجة بالكود تبقى تشتغل كاحتياط)
 }
 
@@ -3943,32 +3962,26 @@ function getDepartureCategoryIcons(rec) {
 // الرموز: ⚡ كهربائية / 🔧 حديد / ⚪ قواعد / 🔥 حرائق / 💧 غسل
 function buildCategoryIconsHTML(rec) {
   if (!rec) return ''; // برج لم يُكشف بعد — لا شيء
-  const grayCircle = `<span style="display:inline-block;width:0.62em;height:0.62em;border-radius:50%;background:#A0AEC0;vertical-align:middle"></span>`;
-  // دالة تبني رمزاً مع overlay حسب الحالة
+  // N03-B: نفس الرموز والمواضع والألوان تماماً، لكن بأصناف CSS (.ci*) بدل أنماط مضمّنة مكررة لكل رمز
+  const grayCircle = '<span class="ci-g"></span>';
   function icon(symbol, sev, isWashing) {
     let overlay = '';
-    if (isWashing) {
-      // الغسل: فارغ=لم يُكشف❌، clean=✅، غيره=مغادرة
-      if (!sev || sev === '') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#C53030">✕</span>`;
-      else if (sev === 'clean') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#276749">✓</span>`;
-    } else {
-      if (!sev || sev === '') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#C53030">✕</span>`;
-      else if (sev === 'ok') overlay = `<span style="position:absolute;top:-4px;right:-4px;font-size:0.5rem;line-height:1;background:white;border-radius:50%;color:#276749">✓</span>`;
-    }
-    return `<span style="position:relative;display:inline-flex">${symbol}${overlay}</span>`;
+    if (!sev || sev === '') overlay = '<span class="ci-o ci-x">✕</span>';
+    else if (isWashing ? sev === 'clean' : sev === 'ok') overlay = '<span class="ci-o ci-v">✓</span>';
+    return '<span class="ci-i">' + symbol + overlay + '</span>';
   }
   // للكهربائي نأخذ أسوأ قيمة بين العوازل والأسلاك والأرضي
   const elSev = [rec.sev_insulator, rec.sev_wires, rec.sev_ground]
     .find(s => s && s !== '' && s !== 'ok') ||
     ([rec.sev_insulator, rec.sev_wires, rec.sev_ground].every(s => s === 'ok') ? 'ok' : '');
   const washBadge = rec.insulator_washing && rec.insulator_washing !== '' ? rec.insulator_washing : '';
-  let html = `<div style="display:flex;gap:5px;align-items:center;justify-content:center;font-size:0.75rem;line-height:1;flex-wrap:wrap">`;
-  html += icon(`<span>⚡</span>`, elSev);
-  html += icon(`<span>🔧</span>`, rec.sev_iron || '');
-  html += icon(`<span>${grayCircle}</span>`, rec.sev_foundation || '');
-  html += icon(`<span>🔥</span>`, rec.sev_fire || '');
-  if (washBadge !== '') html += icon(`<span>💧</span>`, washBadge, true);
-  html += `</div>`;
+  let html = '<div class="ci">';
+  html += icon('<span>⚡</span>', elSev);
+  html += icon('<span>🔧</span>', rec.sev_iron || '');
+  html += icon('<span>' + grayCircle + '</span>', rec.sev_foundation || '');
+  html += icon('<span>🔥</span>', rec.sev_fire || '');
+  if (washBadge !== '') html += icon('<span>💧</span>', washBadge, true);
+  html += '</div>';
   return html;
 }
 
@@ -4095,6 +4108,7 @@ function renderTowersGridFromCache(lineName) {
   const titleEl = document.getElementById('towersGridTitle');
   if (!lineName) { section.style.display = 'none'; renderActiveLinesTabs(); return; }
   currentGridLine = lineName;
+  grid.dataset.line = lineName;   // N03-B: النقر مفوَّض (بدل onclick لكل بلاطة) ويقرأ الخط من هنا
   section.style.display = '';
   titleEl.textContent = '🗼 أبراج خط: ' + lineName;
   try {
@@ -4133,7 +4147,7 @@ function renderTowersGridFromCache(lineName) {
         if (rec && unverified) staleLine = cardLine.error ? (cardLine.offline ? '📴 دون اتصال — آخر حالة محفوظة' : '⚠️ آخر حالة محفوظة — تعذّر التحديث') : '📴 مخزّنة بالجهاز — جارٍ التحقق';
         if (card && card.status === 'needs_review') staleLine = '⚠️ الحالة تحتاج مراجعة';
         const catIconsHTML = buildCategoryIconsHTML(rec);
-        return `<div class="tower-box" style="background:${meta.bg};border-color:${meta.border};color:${meta.text}" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
+        return `<div class="tower-box tl-${TOWER_LEVEL_META[level] ? level : 'none'}" data-t="${t.num}">
           <div class="tower-box-num">${t.num}</div>
           ${catIconsHTML}
           <div class="tower-box-type">${t.type||''}</div>
@@ -4144,7 +4158,7 @@ function renderTowersGridFromCache(lineName) {
         </div>`;
       } catch (towerErr) {
         console.warn('[tower-app] فشل رسم برج', t.num, 'بخط', lineName, towerErr);
-        return `<div class="tower-box" style="background:#FED7D7;border-color:#FC8181;color:#742A2A" onclick="openTowerModal('${String(lineName).replace(/'/g,"\\'")}','${t.num}')">
+        return `<div class="tower-box tl-err" data-t="${t.num}">
           <div class="tower-box-num">${t.num}</div>
           <div class="tower-box-type">⚠️ خطأ بعرض هذا البرج</div>
         </div>`;
@@ -4598,6 +4612,14 @@ async function loadFullTowerRecord(lineName, towerNumber) {
   if (r.cs && r.cs.source === 'cache') return null; // v335: لقطة مخزّنة بالجهاز ليست قراءة حيّة: لا تُدمج فوق ما بالذاكرة
   return _mergeFullTowerRecord(r.record, r.startSeq);
 }
+
+// N03-B: مستمع نقر واحد للشبكة بدل onclick نصّي مكرر في كل بلاطة (يحمل اسم الخط كاملاً مرتين لكل بلاطة)
+document.addEventListener('click', function (e) {
+  const box = e.target && e.target.closest ? e.target.closest('#towersGrid .tower-box') : null;
+  if (!box || box.dataset.t == null) return;
+  const line = document.getElementById('towersGrid').dataset.line;
+  if (line) openTowerModal(line, box.dataset.t);
+});
 
 async function renderTowersGrid(lineName) {
   if (!lineName) { renderTowersGridFromCache(lineName); return; }
@@ -9096,6 +9118,36 @@ function featRun(mods, fn, kind, bump) {
     () => (featEntryOk(tok) ? fn(tok, true) : undefined),
     (err) => { console.warn('[tower-app] feature module load failed', err); showToast('❌ تعذر تحميل هذا الجزء، تأكد من الاتصال وحاول مرة ثانية', 'error'); }
   );
+}
+
+// N03-C: تحميل مسبق لـ«كود» وحدة (insp) فقط في وقت خمول بعد اكتمال المحتوى الأولي — عبر نفس featLoadModule (نفس الوعد/المخزن، فلا تكرار في الطلب أو التهيئة).
+// لا يقرأ أي حالة برج ولا يغيّر المعالجات؛ التعبئة المرجعية تبقى بقراءة حيّة عند الفتح. لا يعمل: بلا اتصال، حفظ البيانات/2G، مزامنة جارية أو معلّقات على الجهاز، طلبات حالة جارية، تبويب خلفي.
+// الفشل صامت (لا رسالة) والفتح الفعلي يعيد المحاولة. بلا requestIdleCallback (Safari): مؤقّت بعد اكتمال التحميل.
+const _featPre = { armed: false, tries: 0 };
+function _featPreState() {
+  try {
+    if (typeof currentUser === 'undefined' || !currentUser || !CS_AUTH.token) return 'wait';
+    const c = navigator.connection; if (c && (c.saveData || /(^|-)2g$/.test(String(c.effectiveType || '')))) return 'never';
+    if (!navigator.onLine || (document.visibilityState && document.visibilityState !== 'visible')) return 'wait';
+    if (syncInProgress || _csInflight.size || _csCardRequests.size) return 'wait';
+    if (getTotalPendingCount() > 0) return 'wait';
+    return 'go';
+  } catch (e) { return 'wait'; }
+}
+function featSchedulePreload(name) {
+  if (_featPre.armed || featReady([name])) return;
+  _featPre.armed = true; _featPre.tries = 0;
+  const run = () => {
+    if (featReady([name])) { _featPre.armed = false; return; }
+    const st = _featPreState();
+    if (st === 'never') { _featPre.armed = false; return; }
+    if (st === 'wait') { if (++_featPre.tries > 8) { _featPre.armed = false; return; } return arm(5000); }
+    _featPre.armed = false;
+    featLoadModule(name).catch(() => {});
+  };
+  const idle = () => { if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 8000 }); else run(); };
+  const arm = (ms) => setTimeout(() => { if (document.readyState === 'complete') idle(); else window.addEventListener('load', () => setTimeout(idle, 500), { once: true }); }, ms);
+  arm(3500);
 }
 
 // نقاط الدخول (الأسماء العامة كما كانت): تحمّل وحدتها ثم تنفّذ النسخة الفعلية <name>Impl

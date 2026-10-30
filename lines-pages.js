@@ -180,6 +180,16 @@ async function loadAllLinesStatus() {
 // ========================
 let currentDrilldownLine = null;
 
+// N03-A: قائمة أبراج الخط. لقطة محفوظة صالحة (قراءة ناجحة سابقة لهذا الخط في هذه الجلسة؛ تُمسح كلها عند الخروج/تبديل الحساب) تُرسم فوراً بوسم صريح «محفوظة — قيد التحقق»،
+// ثم تبقى القراءة القسرية للخادم إلزامية وهي وحدها التي ترفع الوسم. فشل القراءة/انقطاع الاتصال = وسم «آخر حالة محفوظة» لا «حالة حيّة». لا قراءة قسرية أقل ولا نافذة حداثة جديدة.
+// تفاصيل البرج ونموذج الكشف لا تتأثران: كلاهما يقرأ حالة البرج الحيّة بنفسه.
+let _lineListSeq = 0;
+function _lineHeldAt(lineName) {
+  if (!csLiveEnabled() || !CS_AUTH.token) return 0;
+  const at = loadedLineCacheAt[lineName];
+  if (!at) return 0;
+  return Object.keys(latestRecordsIndex[lineName] || {}).length ? at : 0;   // خط بلا أي سجل محمّل لا يُعرض كلقطة (لا «لم يُكشف» من بيانات غير موجودة)
+}
 async function openLineTowerDetails(lineName) {
   const tok = featTok('lpg', true);
   pushLevel(backToLinesStatus);
@@ -187,12 +197,41 @@ async function openLineTowerDetails(lineName) {
   document.getElementById('linesStatusView').style.display = 'none';
   document.getElementById('lineTowerListView').style.display = '';
   document.getElementById('lineTowerListTitle').textContent = '🗼 أبراج خط ' + lineName;
-  document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   if (csLiveEnabled()) {   // v335-C6r6: الخط المختار وحده (طلب واحد) — لا loadTreatments ولا بقية الخطوط
-    try { await loadLineRecordsCache(lineName, true); } catch (e) { if (!featEntryOk(tok)) return; if (!loadedLineCacheAt[lineName]) { document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا الخط من الخادم — تحقق من الاتصال وحاول مرة أخرى</div>'; return; } }
-  } else await Promise.all([loadTreatments(), loadFullRecordsCache()]);
+    const heldAt = _lineHeldAt(lineName);
+    if (heldAt) renderLineTowerList(lineName, { state: 'pending', at: heldAt });
+    else document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+    return _lineListVerify(lineName, tok, heldAt);
+  }
+  document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  await Promise.all([loadTreatments(), loadFullRecordsCache()]);
   if (!featEntryOk(tok)) return;
   renderLineTowerList(lineName);
+}
+async function _lineListVerify(lineName, tok, heldAt) {
+  const seq = ++_lineListSeq;
+  let res = null, failed = false;
+  for (let a = 0; a < 2; a++) {        // ردّ «أقدم من قراءة طُبّقت» لا يُعدّ تحققاً: قراءة طازجة واحدة إضافية ثم وسم صريح
+    try { res = await loadLineRecordsCache(lineName, true); } catch (e) { failed = true; break; }
+    if (res && res.ok && !res.superseded) break;
+  }
+  // الاستعمال: نفس الصفحة والجلسة (featDataOk) وهذا آخر طلب تحقق وما زال هذا الخط معروضاً. فتح تفاصيل برج لا يُبطله (القائمة المخفية تبقى صحيحة الوسم)
+  if (seq !== _lineListSeq || !featDataOk(tok) || currentDrilldownLine !== lineName) return;
+  const verified = !failed && res && res.ok && !res.superseded;
+  if (verified) { _lineListRender(lineName); return; }
+  if (!heldAt && !loadedLineCacheAt[lineName]) { document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا الخط من الخادم — تحقق من الاتصال وحاول مرة أخرى<br><button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="retryLineTowerList()">🔄 إعادة المحاولة</button></div>'; return; }
+  _lineListRender(lineName, { state: 'error', at: loadedLineCacheAt[lineName] || heldAt, offline: !navigator.onLine });
+}
+function _lineListRender(lineName, held) {   // الرسم البديل يحفظ موضع التمرير (استبدال اللقطة بالمحقَّق لا يقفز بالصفحة)
+  const y = window.scrollY; renderLineTowerList(lineName, held);
+  if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+}
+function retryLineTowerList() {
+  const lineName = currentDrilldownLine; if (!lineName || !csLiveEnabled()) return;
+  const tok = featTok('lpg', true), heldAt = _lineHeldAt(lineName);
+  if (heldAt) renderLineTowerList(lineName, { state: 'pending', at: heldAt });
+  else document.getElementById('lineTowerListBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  return _lineListVerify(lineName, tok, heldAt);
 }
 
 function backToLinesStatus() {
@@ -205,7 +244,7 @@ function backToTowerList() {
   document.getElementById('lineTowerListView').style.display = '';
 }
 
-function renderLineTowerList(lineName) {
+function renderLineTowerList(lineName, held) {
   const body = document.getElementById('lineTowerListBody');
   const towers = getLineTowers(lineName);
   const latestRecs = getLatestRecordsPerTower(lineName);
@@ -213,7 +252,7 @@ function renderLineTowerList(lineName) {
 
   if (!towers.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات أبراج لهذا الخط</div>'; return; }
 
-  let html = (typeof csLineBanner === 'function' ? csLineBanner(lineName) : '') + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
+  let html = (typeof csLineBanner === 'function' ? csLineBanner(lineName, held) : '') + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
   towers.forEach(t => {
     const r = recByTower[t.num];
     let statusBadge, borderColor, completeLine = '';
@@ -241,6 +280,7 @@ function renderLineTowerList(lineName) {
       <div style="font-weight:700;color:#1a2e4a;font-size:0.9rem">برج ${t.num}</div>
       <div style="font-size:0.72rem;color:#718096;margin:2px 0">${t.type||''}</div>
       <div style="font-size:0.78rem;font-weight:700">${statusBadge}</div>
+      ${held ? `<div class="tower-box-complete" data-held="1" style="font-size:0.68rem;color:#92400E;margin-top:2px">${held.state === 'pending' ? '📴 محفوظة — قيد التحقق' : '📴 آخر حالة محفوظة'}</div>` : ''}
       ${completeLine ? `<div class="tower-box-complete" style="font-size:0.7rem;color:#975A16;margin-top:2px">${completeLine}</div>` : ''}
     </div>`;
   });
