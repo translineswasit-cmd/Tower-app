@@ -28,20 +28,63 @@
 // ========================
 let staffStatsCache = null;
 
+// v335-C6r27 (P03B1): نفس الاستعلامات والترتيب (الخادم يضيف id كفاصل ثابت) لكن بترقيم متزامن محدود.
+// • جدولة تكيّفية: الصفحة 0 للمجموعات الست + أسماء المستخدمين تنطلق معاً (7 طلبات كما في الأساس، بلا انتظار). لا توسيع إلا لمجموعة ثبت أنها كبيرة:
+//   المجموعة الممتلئة (1000) تتابع بصفحة واحدة في الجولتين الأولين (مطابق للمتسلسل: لا صفحات تخمينية لمجموعات < 3000 صف)،
+//   ثم تتوسع نافذتها 2 ثم 4 ثم 8 (SS_WMAX). النتيجة = الصفحات بترتيب الإزاحة حتى أول صفحة ناقصة (نفس قاعدة fetchAllPages). صفحات بعد النهاية تُهمل.
+// • حد عام مشترك SS_CONC=8 طلب صفحة في الجو (بوابة FIFO واحدة بين المجموعات والتحميلات = عدالة بلا تجويع). لا عدّ مسبق (app_data_read لا يعيد عدداً).
+// • لا لقطة متسقة: الإزاحة تتأثر بإدراج/حذف أثناء الجلب كما كان؛ لا ادّعاء عكس ذلك.
+// • تحميل أحدث (أو خروج/تبديل حساب/مغادرة الصفحة) يوقف إصدار صفحات جديدة ويُسقط كتابة النتيجة القديمة.
+const SS_PAGE = 1000, SS_CONC = 8, SS_WMAX = 8, SS_LEAD = 2;
+let _ssSeq = 0;
+function ssGate(max) {
+  let active = 0; const wait = [];
+  const next = () => { while (active < max && wait.length) { active++; const w = wait.shift(); w(); } };
+  return fn => new Promise((res, rej) => { wait.push(() => { Promise.resolve().then(fn).then(res, rej).finally(() => { active--; next(); }); }); next(); });
+}
+const _ssGate = ssGate(SS_CONC);   // بوابة واحدة مشتركة بين كل التحميلات: لا يتجاوز مجموع طلبات الصفحات الجارية 8 حتى مع إعادة الفتح السريع
+async function ssFetchAll(baseQuery, gate, alive) {
+  const sep = baseQuery.includes('?') ? '&' : '?';
+  const page = async off => {
+    if (!alive()) { const e = new Error('superseded'); e.stale = true; throw e; }
+    return gate(async () => {
+      if (!alive()) { const e = new Error('superseded'); e.stale = true; throw e; }
+      const res = await sbFetch(`${baseQuery}${sep}limit=${SS_PAGE}&offset=${off}`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const chunk = await res.json();
+      if (!Array.isArray(chunk)) throw new Error('استجابة غير متوقعة');
+      return chunk;
+    });
+  };
+  let all = [], off = 0;
+  const first = await page(0); all = first; off = SS_PAGE;
+  if (first.length < SS_PAGE) return all;
+  for (let r = 0; ; r++) {
+    const w = r < SS_LEAD ? 1 : Math.min(2 ** (r - SS_LEAD + 1), SS_WMAX);   // نافذة 1، 2، 4، 4… : تُقلّل الصفحات الزائدة بعد النهاية (≤ w-1) لمجموعات متوسطة الحجم
+    const batch = await Promise.all(Array.from({ length: w }, (_, i) => page(off + i * SS_PAGE)));
+    for (const chunk of batch) { all = all.concat(chunk); if (chunk.length < SS_PAGE) return all; }
+    off += w * SS_PAGE;
+  }
+}
+
 async function loadStaffStatsImpl(tok) {
   const wrap = document.getElementById('staffStatsList');
   wrap.innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
+  let failed = false;
+  const seq = ++_ssSeq, alive = () => seq === _ssSeq && !failed && stDataOk(tok), gate = _ssGate;
   try {
-    const [users, insp, therm, lineTherm, treat, emg, tg] = await Promise.all([
-      csUsersNames(),
-      fetchAllPages('inspections?select=created_by_name,created_at'),
-      fetchAllPages('thermal_inspections?select=created_by_name,created_at'),
-      fetchAllPages('line_entry_thermal?select=created_by_name,created_at'),
-      fetchAllPages('treatments?select=treated_by,treatment_date'),
-      fetchAllPages('emergency_departures?select=created_by,treated_by,treatment_date,created_at'),
-      fetchAllPages('work_telegrams?select=created_by,created_at')
-    ]);
-    if (!stDataOk(tok)) return;      // المستخدم غادر الصفحة أو تغيّرت الجلسة أثناء الجلب: لا نرسم بيانات شخص آخر
+    const all = fn => ssFetchAll(fn, gate, alive);
+    const parts = await Promise.all([
+      gate(() => csUsersNames()),
+      all('inspections?select=created_by_name,created_at'),
+      all('thermal_inspections?select=created_by_name,created_at'),
+      all('line_entry_thermal?select=created_by_name,created_at'),
+      all('treatments?select=treated_by,treatment_date'),
+      all('emergency_departures?select=created_by,treated_by,treatment_date,created_at'),
+      all('work_telegrams?select=created_by,created_at')
+    ].map(p => { p.catch(() => {}); return p; }));
+    const [users, insp, therm, lineTherm, treat, emg, tg] = parts;
+    if (!alive()) return;      // المستخدم غادر الصفحة أو تغيّرت الجلسة أو بدأ تحميل أحدث أثناء الجلب: لا نكتب نتيجة قديمة
 
     const stats = {}; // name -> { inspections, thermal, lineThermal, treatments, emergencyReported, emergencyResolved, telegrams, lastActivity }
     function ensure(name) {
@@ -71,7 +114,9 @@ async function loadStaffStatsImpl(tok) {
     staffStatsCache = { stats, users };
     renderStaffStats();
   } catch (e) {
+    failed = true;   // يوقف إصدار صفحات جديدة من بقية المجموعات
     if (e && e.stale) return;
+    if (seq !== _ssSeq) return;   // فشل تحميل قديم لا يمسح شاشة تحميل أحدث
     wrap.innerHTML = '<div class="empty-state">❌ تعذر تحميل الإحصائيات</div>';
   }
 }
