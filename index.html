@@ -2268,7 +2268,18 @@ function csTowerCompleteness(card, detail, rec) {
 }
 // v335-C6r9d: ONE concise completeness wording shared by the tower cards and the line status list (never changes the severity colour)
 function csCompletenessText(rdy) {
-  return rdy === 'complete' ? '✅ مكتمل' : rdy === 'incomplete' ? '⚠️ غير مكتمل' : rdy === 'partial' ? '⚠️ أقسام أخرى غير مسجّلة' : '⚠️ اكتمال غير مؤكد';
+  return rdy === 'complete' ? '✅ الكشف مكتمل' : rdy === 'incomplete' ? '⚠️ غير مكتمل' : rdy === 'partial' ? '⚠️ أقسام أخرى غير مسجّلة' : '⚠️ اكتمال غير مؤكد';
+}
+
+// v335-C6r31 (N24-B2): "الكشف مكتمل" means ONLY that every applicable inspected section is recorded (readiness). It does NOT mean the engineering data (chain material, geometry, circuits, cycles) is verified.
+// Engineering data is flagged here ONLY from what is already held (no request): the card readiness' prefill_ready === false, or the held tower info (prefillReady / materialsStatus from a detail read).
+// A legacy-convention material is invisible to a card-only read (the server readiness does not carry it) - see the SQL proposal; nothing is invented when the information is not held.
+function csEngineeringNote(readiness, info) {
+  let unv = false;
+  if (readiness && readiness.prefill_ready === false) unv = true;
+  if (info && info.prefillReady === false) unv = true;
+  if (info && typeof info.materialsStatus === 'string' && info.materialsStatus !== 'complete') unv = true;
+  return unv ? '🔧 بيانات هندسية غير مؤكدة' : '';
 }
 function csCardAccept(line, tower, env, ticket) {
   const key = csKey(line, tower), old = _csCards.get(key);
@@ -4246,7 +4257,8 @@ function renderTowersGridFromCache(lineName) {
           card && card.status === 'uninitialized' ? (card.failed ? 'فشلت تهيئة هذا البرج — راجع المدير' : 'الحالة لم تُهيّأ بعد') :
           card && card.status === 'card_pending' ? 'البطاقة قيد التجهيز (يلزم إجراء المدير)' :
           cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
-        const completeLine = rec ? csCompletenessText(rdy) : '';
+        let completeLine = rec ? csCompletenessText(rdy) : '';
+        if (rec && rdy === 'complete') { const _en = csEngineeringNote(card && card.readiness, csTowerInfo(lineName, t.num)); if (_en) completeLine += ' · ' + _en; }   // N24-B2
         // v335-C6r6: a card that was not verified by the server in this open is never presented as fresh
         const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && (card ? card.status !== 'no_source' : !!rec);
         let staleLine = '';
@@ -9754,7 +9766,7 @@ function calcCircuitWiresScore(r, circuit, isDouble) {
 //   هندسة السلاسل من المحوّل (csGeometryOverride) + مدخلات «تمت معالجته» (قائمة المعالجات المعلّقة الخام + مفاتيح المعالجة الفعّالة من الخادم لكل سجل).
 // أي حالة لا يمكن إثبات اكتمال بصمتها ⇒ إعادة حساب مباشرة: الوضع غير الحي، العلم مطفأ، وجود عمليات معلّقة (opsPendingObserved/opsPendingTreatedKeys تقرآن fullRecordsCache)، فشل قراءة قائمة العمليات.
 // تُفرَّغ كلها عند تغيّر الجلسة/الحساب. النتيجة المخزّنة مجمّدة (قراءة فقط).
-const _HC_FIELDS = ['id', 'tower_type', 'tower_number', 'insulator_state', 'insulator_state_2', 'insulator_cycle', 'insulator_cycle_2', 'insulator_chain_types', 'insulator_chain_types_2',
+const _HC_FIELDS = ['ground_1', 'ground_2', 'iron_intersections', 'tower_foundations', 'id', 'tower_type', 'tower_number', 'insulator_state', 'insulator_state_2', 'insulator_cycle', 'insulator_cycle_2', 'insulator_chain_types', 'insulator_chain_types_2',
   'wires_r1', 'wires_s1', 'wires_t1', 'wires_r1_c2', 'wires_s1_c2', 'wires_t1_c2', 'sev_wires', 'wires_circuit', 'sev_ground', 'sev_iron', 'sev_foundation'];
 const _HC_WKEYS = ['wire_r1', 'wire_s1', 'wire_t1', 'wire_r1_c2', 'wire_s1_c2', 'wire_t1_c2'];
 let _hc = { gen: -1, uid: null, tok: null, lines: new Map(), opsRaw: undefined, opsEmpty: false, stats: { hit: 0, miss: 0, bypass: 0 } };
@@ -9775,6 +9787,7 @@ function _hcFingerprint(lineName, rec) {
     const r = rec[i]; let s = '';
     for (let k = 0; k < _HC_FIELDS.length; k++) s += _hcEnc(r[_HC_FIELDS[k]]) + '\u0001';
     s += _hcEnc(csGeometryOverride(lineName, r.tower_number)) + '\u0001';
+    s += _lhRdKey(lineName, r.tower_number, r) + '\u0001';   // N24-B2: readiness inputs of the line health (circuit-2 applicability, unknown iron/foundation, other-unknown count)
     const ck = csTreatedKeys(r.id);
     for (let k = 0; k < _HC_WKEYS.length; k++) s += ck ? (ck.has(_HC_WKEYS[k]) ? '1' : '0') : 'n';
     parts[i] = s;
@@ -9804,13 +9817,41 @@ function calcLineHealthWithTreatments(lineName) {
   _hc.lines.set(lineName, { fp, health });
   return health;
 }
+// N24-B2a: readiness of one tower as already held, BOUND to the verified state it belongs to (read-only, no request). It is used only when ALL hold:
+//  - live store on; the line's card read is VERIFIED now (not loading / error / offline / cached snapshot)
+//  - the card is a live one (not a cached snapshot, not failed) with a positive finite revision
+//  - the card's record is THIS row (same inspection id) and the row has no local change in this session
+// Otherwise null => the row's own evidence is used and circuit 2 is never declared "not applicable" from stale data.
+function _lhReadiness(lineName, num, r) {
+  try {
+    if (!csLiveEnabled()) return null;
+    const cl = _csCardLines.get(lineName);
+    if (!cl || cl.verified !== true || cl.loading || cl.error || cl.offline || cl.cached) return null;
+    const c = _csCards.get(csKey(lineName, num));
+    if (!c || c.cached || c.failed || typeof c.rev !== 'number' || !Number.isFinite(c.rev) || c.rev <= 0) return null;
+    if (!c.readiness || !Array.isArray(c.readiness.core_unknown)) return null;
+    if (!r || r.id == null || !c.record || c.record.id == null || String(c.record.id) !== String(r.id)) return null;
+    if (_localTouched.has('id:' + String(r.id))) return null;
+    return c.readiness;
+  } catch (e) { return null; }
+}
+function _lhRdKey(lineName, num, r) { const rd = _lhReadiness(lineName, num, r); return rd ? (rd.c2 || '-') + '|' + rd.core_unknown.join(',') + '|' + rd.other_unknown : 'n'; }
+const _LH_SEV = ['ok', 'simple', 'moderate', 'below_critical', 'critical'];
+// N24-B2a: a section is numerically scorable ONLY with valid scoring evidence: an exact valid severity (the scorers compare exactly and score anything else as FULL marks),
+// or a recorded treatment. Server readiness can only EXCLUDE (unknown section) - it never establishes health by itself, and a defect text without a valid severity is unscorable.
+function _lhKnown(r, rd, key, sevField, otherSection, treatKeys) {
+  if (rd && !otherSection && rd.core_unknown.indexOf(key) >= 0) return false;
+  const v = r[sevField];
+  if (typeof v === 'string' && (_LH_SEV.indexOf(v) >= 0 || (otherSection && v === 'سليم'))) return true;
+  return r.id != null && (typeof isTreatedInDB === 'function') && (treatKeys || []).some(k => isTreatedInDB(r.id, k));
+}
 function calcLineHealthWithTreatmentsDirect(lineName) {
   const rec = getLatestRecordsPerTower(lineName);
   if (!rec.length) return null;
   const towers = getLineTowers(lineName);
   const coverage = towers.length > 0 ? rec.length / towers.length : 0;
-  const acc = [1, 2].map(n => ({ n, sum: 0, done: 0, incomplete: 0, inspected: 0, inferred: 0, reasons: {} }));
-  let totalMScore = 0;
+  const acc = [1, 2].map(n => ({ n, sum: 0, done: 0, incomplete: 0, inspected: 0, inferred: 0, notApplicable: 0, reasons: {} }));
+  let totalMScore = 0, mDone = 0, mIncomplete = 0;
 
   rec.forEach(r => {
     const mode = getInsulatorMode(
@@ -9824,8 +9865,12 @@ function calcLineHealthWithTreatmentsDirect(lineName) {
       : (mode === 'chain2_10' || mode === 'chain2_12' || mode === 'v') ? 2
       : 4; // chain4_12 أو straight4
     const chainVal = Math.round(20 / chainsPerPhase); // 20، 10، أو 5
-    const isDouble = isDoubleCircuitLine(lineName, r.insulator_state_2);
+    const rd = _lhReadiness(lineName, r.tower_number, r);   // N24-B2a: readiness already held AND bound to this verified row (no request)
+    const c2NA = !!(rd && rd.c2 === 'not_applicable');   // explicitly NOT applicable: not a missing circuit, not counted in the circuit-2 score
+    const isDouble = isDoubleCircuitLine(lineName, r.insulator_state_2) && !c2NA;
+    const groundKnown = _lhKnown(r, rd, 'ground', 'sev_ground', true, ['ground_1', 'ground_2']);   // N24-B2: an unrecorded ground is unknown, never a full 10/10
     const groundVal = wireGroundScore(r.sev_ground, 10); // الأرضي مشترك بين الدائرتين
+    if (c2NA && isDoubleCircuitLine(lineName, r.insulator_state_2)) acc[1].notApplicable++;
 
     (isDouble ? [1, 2] : [1]).forEach(n => {
       const a = acc[n - 1];
@@ -9833,9 +9878,9 @@ function calcLineHealthWithTreatmentsDirect(lineName) {
       const ins = calcCircuitInsulatorScore(r, n, chainsPerPhase, chainVal);
       const w = calcCircuitWiresScore(r, n, isDouble);
       if (w.inferred) a.inferred++;
-      if (ins === null || w.score === null) {
+      if (ins === null || w.score === null || !groundKnown) {
         a.incomplete++;
-        const why = ins === null ? 'insulators_missing' : w.reason;
+        const why = ins === null ? 'insulators_missing' : (w.score === null ? w.reason : 'ground_unrecorded');
         a.reasons[why] = (a.reasons[why] || 0) + 1;
         return;
       }
@@ -9844,21 +9889,23 @@ function calcLineHealthWithTreatmentsDirect(lineName) {
     });
 
     // ===== الحالة الميكانيكية للبرج (من 100) — مشتركة، دون تغيير =====
-    const ironScore = mechSevScore(r.sev_iron, 50);
-    const foundScore = mechSevScore(r.sev_foundation, 50);
-    totalMScore += Math.min(100, ironScore + foundScore);
+    // N24-B2: an unrecorded iron / foundation section is unknown - it is NOT scored 50/50; the tower is counted as incomplete for the mechanical score
+    const ironKnown = _lhKnown(r, rd, 'iron', 'sev_iron', false, ['iron']);
+    const foundKnown = _lhKnown(r, rd, 'foundation', 'sev_foundation', false, ['foundation']);
+    if (ironKnown && foundKnown) { totalMScore += Math.min(100, mechSevScore(r.sev_iron, 50) + mechSevScore(r.sev_foundation, 50)); mDone++; }
+    else mIncomplete++;
   });
 
-  const isDoubleLine = isDoubleCircuitLine(lineName) || acc[1].inspected > 0;
+  const isDoubleLine = isDoubleCircuitLine(lineName) || acc[1].inspected > 0 || acc[1].notApplicable > 0;
   const fin = a => ({
     circuit: a.n,
     score: a.done > 0 ? Math.min(100, Math.max(0, Math.round(a.sum / a.done))) : null, // null = لا يوجد تقييم مكتمل (لا 0 ولا 100)
-    complete: a.done, incomplete: a.incomplete, inspected: a.inspected, inferred: a.inferred, reasons: a.reasons
+    complete: a.done, incomplete: a.incomplete, inspected: a.inspected, inferred: a.inferred, notApplicable: a.notApplicable, reasons: a.reasons
   });
   const circuits = isDoubleLine ? [fin(acc[0]), fin(acc[1])] : [fin(acc[0])];
-  const mechanicalScore = Math.min(100, Math.max(0, Math.round(totalMScore / rec.length)));
+  const mechanicalScore = mDone > 0 ? Math.min(100, Math.max(0, Math.round(totalMScore / mDone))) : null;   // null = no complete mechanical assessment (neither 0 nor 100)
   // للخط المزدوج لا توجد نسبة كهربائية مدمجة (electricalScore = null): الاستهلاك الصحيح عبر circuits
-  return { coverage, electricalScore: isDoubleLine ? null : circuits[0].score, mechanicalScore, isDouble: isDoubleLine, circuits };
+  return { coverage, towersTotal: towers.length, electricalScore: isDoubleLine ? null : circuits[0].score, mechanicalScore, mechanical: { complete: mDone, incomplete: mIncomplete, inspected: rec.length }, isDouble: isDoubleLine, circuits };
 }
 // ========================
 // EMERGENCY DEPARTURES

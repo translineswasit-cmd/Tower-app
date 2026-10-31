@@ -65,13 +65,23 @@ function makeBar(pct, color, lbl) {
   return '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;background:#ecf0f1;border-radius:10px;height:18px;overflow:hidden"><div style="width:' + pct + '%;background:' + color + ';height:100%;border-radius:10px"></div></div><div style="min-width:90px;text-align:right;font-weight:700;color:' + color + ';font-size:13px">' + pct + '% — ' + lbl + '</div></div>';
 }
 
+// N24-B2a: every percentage computed from a SUBSET of towers states its denominator and the excluded count - always, including 100% / zero-excluded results.
+// used = towers that entered the percentage; assessed = towers with an inspection record; total = towers of the line (null = unknown); what = the excluded reason.
+function _lsDenom(used, assessed, total, what) {
+  const ex = Math.max(0, assessed - used);
+  let t = 'محسوبة من ' + used + ' برج من أصل ' + assessed + ' برج مكشوف — المستبعد: ' + ex + ' برج' + (ex > 0 && what ? ' (' + what + ')' : '');
+  if (total != null && total > assessed) t += ' — لم يُكشف ' + (total - assessed) + ' برج من ' + total + ' في الخط';
+  return t;
+}
 // v333: كتلة الحالة الكهربائية لدائرة واحدة. c = عنصر من health.circuits. النتيجة null تُعرض «لا يوجد تقييم مكتمل» (لا 0 ولا 100).
-function renderElectricalCircuitBlock(label, c, getColor, getLbl) {
+function renderElectricalCircuitBlock(label, c, getColor, getLbl, total) {
+  // N24-B2: a circuit that is explicitly NOT applicable on every tower is shown as such - never as a missing / zero assessment
+  if (c.inspected === 0 && c.notApplicable > 0) return '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">' + label + '</div><div style="font-size:12px;color:#7f8c8d;font-weight:700">غير منطبقة — لا دائرة ثانية على أبراج هذا الخط (' + c.notApplicable + ' برج)</div></div>';
   const bar = (c.score == null)
     ? '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;background:#ecf0f1;border-radius:10px;height:18px"></div><div style="min-width:90px;text-align:right;font-weight:700;color:#7f8c8d;font-size:13px">لا يوجد تقييم مكتمل</div></div>'
     : makeBar(c.score, getColor(c.score), getLbl(c.score));
-  let note = 'النسبة محسوبة من ' + c.complete + ' أبراج مكتملة من أصل ' + c.inspected + ' برج مكشوف';
-  if (c.incomplete > 0) note += ' — ' + c.incomplete + ' برج غير مكتمل التقييم';
+  let note = _lsDenom(c.complete, c.inspected, total, c.incomplete > 0 ? 'غير مكتمل التقييم' : '');
+  if (c.notApplicable > 0) note += ' — ' + c.notApplicable + ' برج دائرته الثانية غير منطبقة (لا تُحتسب ناقصة)';
   if (c.inferred > 0) note += ' — ' + c.inferred + ' برج نُسبت درجة أسلاكه إلى هذه الدائرة بالاستدلال من الوصف';
   return '<div style="margin-bottom:8px"><div style="font-size:12px;color:#555;margin-bottom:4px">' + label + '</div>' + bar +
     '<div style="font-size:11px;color:#7f8c8d;margin-top:3px">' + note + '</div></div>';
@@ -153,16 +163,24 @@ function _lsCardHtml(l) {
       const cov = Math.round(health.coverage*100);
       badge = cov>=95 ? '<span style="background:#1e8449;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف بالكامل</span>' : '<span style="background:#2980b9;color:white;padding:3px 10px;border-radius:20px;font-size:11px">مكشوف (' + cov + '%)</span>';
       elBar = health.isDouble
-        ? renderElectricalCircuitBlock('الحالة الكهربائية — الدائرة الأولى', health.circuits[0], getColor, getLbl) +
+        ? renderElectricalCircuitBlock('الحالة الكهربائية — الدائرة الأولى', health.circuits[0], getColor, getLbl, health.towersTotal) +
           renderElectricalCircuitBlock('الحالة الكهربائية — الدائرة الثانية', health.circuits[1], getColor, getLbl)
-        : renderElectricalCircuitBlock('الحالة الكهربائية', health.circuits[0], getColor, getLbl);
-      mBar = makeBar(health.mechanicalScore, getColor(health.mechanicalScore), getLbl(health.mechanicalScore));
+        : renderElectricalCircuitBlock('الحالة الكهربائية', health.circuits[0], getColor, getLbl, health.towersTotal);
+      // N24-B2: mechanical score only from towers whose iron AND foundation are recorded; unrecorded ones are named, never scored as healthy
+      const _mc = health.mechanical || { complete: 0, incomplete: 0, inspected: 0 };
+      mBar = (health.mechanicalScore == null
+          ? '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;background:#ecf0f1;border-radius:10px;height:18px"></div><div style="min-width:90px;text-align:right;font-weight:700;color:#7f8c8d;font-size:13px">لا يوجد تقييم مكتمل</div></div>'
+          : makeBar(health.mechanicalScore, getColor(health.mechanicalScore), getLbl(health.mechanicalScore))) +
+        '<div style="font-size:11px;color:#7f8c8d;margin-top:3px">' + _lsDenom(_mc.complete, _mc.inspected, health.towersTotal, 'حديده/قواعده غير مسجّلة بشدّة صالحة') + '</div>';
       // حساب مؤشر النظافة: نسبة الأبراج النظيفة
       const recs = lineName ? getLatestRecordsPerTower(lineName) : [];
       const withWash = recs.filter(r => r.insulator_washing && r.insulator_washing !== '');
       const cleanCount = withWash.filter(r => r.insulator_washing === 'clean').length;
-      const washPct = withWash.length > 0 ? Math.round(cleanCount / withWash.length * 100) : 100;
-      washBar = makeBar(washPct, getWashColor(washPct), getWashLbl(washPct));
+      // N24-B2: no recorded washing state at all is unknown ("لا توجد بيانات"), never 100% clean; partial coverage is stated
+      const washPct = withWash.length > 0 ? Math.round(cleanCount / withWash.length * 100) : null;
+      washBar = washPct == null
+        ? '<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;background:#ecf0f1;border-radius:10px;height:18px"></div><div style="min-width:90px;text-align:right;font-weight:700;color:#7f8c8d;font-size:13px">لا توجد بيانات نظافة</div></div>'
+        : makeBar(washPct, getWashColor(washPct), getWashLbl(washPct)) + '<div style="font-size:11px;color:#7f8c8d;margin-top:3px">' + _lsDenom(withWash.length, recs.length, health.towersTotal, 'نظافتها غير مسجّلة') + '</div>';
     }
     const _cv = lineName ? ((_csLineEnv.get(lineName) || {}).coverage) : null;   // v335-C6r6: تغطية مخزن الحالة — لا يُدّعى اكتمال تقرير ناقص
     if (_cv && _cv.complete === false) badge += ' <span style="background:#C53030;color:#fff;padding:3px 10px;border-radius:20px;font-size:11px">⚠️ تغطية غير مكتملة: ' + _cv.uninitialised + ' برج غير مهيّأ</span>';
@@ -327,7 +345,7 @@ function renderLineTowerList(lineName, held) {
       if (_cinfo.unmatchedOpen) completeLine = '🔴 ضرر مفتوح بلا درجة مطابقة';
       else if (_lvl === 'review' && _cinfo.why === 'noevidence') completeLine = '⚠️ لا دليل على السلامة — راجع التفاصيل';
       else if (_lvl === 'review' && _cinfo.why === 'simple') completeLine = '📝 درجة مسجّلة: بسيطة — الحالة غير مؤكدة';
-      if (csLiveEnabled() && !_cinfo.unmatchedOpen && !(_lvl === 'review' && (_cinfo.why === 'noevidence' || _cinfo.why === 'simple'))) completeLine = csCompletenessText(_rdy);
+      if (csLiveEnabled() && !_cinfo.unmatchedOpen && !(_lvl === 'review' && (_cinfo.why === 'noevidence' || _cinfo.why === 'simple'))) { completeLine = csCompletenessText(_rdy); if (_rdy === 'complete') { const _en = csEngineeringNote(_inf && _inf.readiness, _inf); if (_en) completeLine += ' · ' + _en; } }   // N24-B2
       if (!deps.length) statusBadge = (csLiveEnabled() && (_rdy !== 'complete' || _lvl === 'review')) ? '⚪ لا مغادرات معروفة' : '✅ سليم';
       else if (allTreated) statusBadge = (csLiveEnabled() && (_rdy !== 'complete' || _lvl === 'review')) ? '✅ المعروف معالج' : '✅ معالج';
       else statusBadge = '🔴 مغادرات';
