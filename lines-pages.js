@@ -227,7 +227,7 @@ function _lineHeldAt(lineName) {
 async function openLineTowerDetails(lineName) {
   const tok = featTok('lpg', true);
   pushLevel(backToLinesStatus);
-  currentDrilldownLine = lineName;
+  currentDrilldownLine = lineName; _tlScroll = null;
   document.getElementById('linesStatusView').style.display = 'none';
   document.getElementById('lineTowerListView').style.display = '';
   document.getElementById('lineTowerListTitle').textContent = '🗼 أبراج خط ' + lineName;
@@ -257,8 +257,9 @@ async function _lineListVerify(lineName, tok, heldAt) {
   _lineListRender(lineName, { state: 'error', at: loadedLineCacheAt[lineName] || heldAt, offline: !navigator.onLine });
 }
 function _lineListRender(lineName, held) {   // الرسم البديل يحفظ موضع التمرير (استبدال اللقطة بالمحقَّق لا يقفز بالصفحة)
+  const lv = document.getElementById('lineTowerListView'), vis = lv && lv.style.display !== 'none';
   const y = window.scrollY; renderLineTowerList(lineName, held);
-  if (Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
+  if (vis && Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);   // v335-C6r26: لا نمرّر الصفحة إن كانت القائمة مخفية (التفاصيل/السجل ظاهران)
 }
 function retryLineTowerList() {
   const lineName = currentDrilldownLine; if (!lineName || !csLiveEnabled()) return;
@@ -269,6 +270,7 @@ function retryLineTowerList() {
 }
 
 function backToLinesStatus() {
+  _tlScroll = null;
   document.getElementById('lineTowerListView').style.display = 'none';
   document.getElementById('linesStatusView').style.display = '';
 }
@@ -277,6 +279,21 @@ function backToTowerList() {
   try { if (typeof towerHistHide === 'function') towerHistHide(); } catch (e) {}
   document.getElementById('towerDetailView').style.display = 'none';
   document.getElementById('lineTowerListView').style.display = '';
+  _tlScrollRestore();
+}
+// v335-C6r26 (P02-F2): موضع تمرير قائمة الأبراج يُحفظ عند فتح تفاصيل برج منها ويُستعاد عند العودة (سجل البرج يمرّ عبر التفاصيل فيعود للقائمة بنفس الموضع). مفتاحه الخط + وسم الجلسة؛ لا يُستعاد لخط آخر ولا بعد الخروج.
+let _tlScroll = null;
+function _tlScrollSave(lineName) {
+  try {
+    const lv = document.getElementById('lineTowerListView');
+    if (lv && lv.style.display !== 'none' && currentDrilldownLine === lineName) _tlScroll = { line: lineName, y: Math.round(window.scrollY), sess: featSessionTag() };
+  } catch (e) {}
+}
+function _tlScrollRestore() {
+  const sv = _tlScroll; if (!sv || sv.line !== currentDrilldownLine || sv.sess !== featSessionTag()) return;
+  const ok = () => { const lv = document.getElementById('lineTowerListView'); return _tlScroll === sv && lv && lv.style.display !== 'none' && currentDrilldownLine === sv.line; };
+  const apply = () => { if (ok() && Math.abs(window.scrollY - sv.y) > 2) window.scrollTo(0, sv.y); };
+  apply(); requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); }); setTimeout(apply, 150); setTimeout(apply, 500);   // بعد اكتمال التخطيط؛ iOS قد يصفّر التمرير بعد إظهار العنصر
 }
 
 function renderLineTowerList(lineName, held) {
@@ -336,6 +353,7 @@ function openTowerHistory(lineName, towerNum) {
 
 async function openTowerDetail(lineName, towerNum) {
   const tok = featTok('lpg', true);
+  _tlScrollSave(lineName);
   pushLevel(backToTowerList);
   try { if (typeof towerHistHide === 'function') towerHistHide(); } catch (e) {}
   document.getElementById('lineTowerListView').style.display = 'none';
