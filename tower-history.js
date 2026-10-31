@@ -413,4 +413,6 @@ function towerHistNote() {
 }
 document.addEventListener('toggle', ev => { const d = ev.target; if (d && d.tagName === 'DETAILS' && d.dataset && d.dataset.th && _thStore) { const k = 'i' + d.dataset.th; if (d.open) _thStore.open.add(k); else _thStore.open.delete(k); } }, true);
 
+// v335-C6r25 (P02-F1): صفحة index.html قديمة (بلا خطّاف towerHistPurge) تُحمِّل هذه الوحدة من الكاش الجديد: نلفّ csPurgeUserData مرة واحدة ليبقى مسح الأرشيف عند الخروج/تبديل الحساب
+try { if (typeof csPurgeUserData === 'function' && !/towerHistPurge/.test(Function.prototype.toString.call(csPurgeUserData))) { const _thPrevPurge = csPurgeUserData; window.csPurgeUserData = function () { try { towerHistPurge(); } catch (e) {} return _thPrevPurge.apply(this, arguments); }; } } catch (e) {}
 (window.__featModules = window.__featModules || {}).thist = true;

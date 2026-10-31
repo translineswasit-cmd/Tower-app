@@ -328,7 +328,11 @@ function renderLineTowerList(lineName, held) {
 // ========================
 let _towerDetailCtx = null;   // v335-C6r9: { line, tower, live } of the last detail read (live = confirmed by the server in this open; false = held copy)
 // v335-C6r24 (P02): سجل البرج — وحدة تُحمَّل عند الضغط فقط؛ للقراءة فقط
-function openTowerHistory(lineName, towerNum) { return featRun(['thist'], () => towerHistOpen(lineName, towerNum), 'thist'); }
+function openTowerHistory(lineName, towerNum) {
+  // v335-C6r25 (P02-F1): هذه الوحدة قد تُحمَّل من الكاش الجديد داخل صفحة مفتوحة من index.html قديم (skipWaiting + claim) فتغيب 'thist' عن خريطة الوحدات؛ نسجّلها هنا (تعديل في الذاكرة فقط) بدل الفشل
+  try { if (typeof FEAT_MODULE_SRC === 'object' && !FEAT_MODULE_SRC.thist) { FEAT_MODULE_SRC.thist = './tower-history.js'; FEAT_MODULE_DEPS.thist = ['hist']; } } catch (e) {}
+  return featRun(['thist'], () => towerHistOpen(lineName, towerNum), 'thist');
+}
 
 async function openTowerDetail(lineName, towerNum) {
   const tok = featTok('lpg', true);
