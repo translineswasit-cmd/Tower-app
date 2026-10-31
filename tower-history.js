@@ -278,7 +278,7 @@ function thCurrentStateLine(st) {
   try {
     const ent = _csMem.get(csKey(st.line, st.tower)), env = ent && ent.env;
     if (!env || env.basis !== 'operations' || !Array.isArray(env.components) || !env.row || typeof towerDetailModel !== 'function') return '⚠️ تعذّر التحقق من الحالة الحالية — راجع «تفاصيل البرج»';
-    const m = towerDetailModel(env, {}), t = { open: 'توجد بنود قيد المعالجة', treated: 'كل الملاحظات المسجّلة معالجة', clear: 'لا ملاحظات مسجّلة (كل الأقسام المنطبقة معلومة)', unknown: 'توجد بيانات غير مسجّلة — لا يمكن الجزم' }[m.footer] || 'غير محسومة';
+    const m = towerDetailModel(env, {}), t = { open: 'توجد بنود قيد المعالجة', treated: 'لا ضرر مفتوح حالياً — توجد معالجات/استبدالات مسجّلة سابقاً', clear: 'لا ملاحظات مسجّلة (كل الأقسام المنطبقة معلومة)', unknown: 'توجد بيانات غير مسجّلة — لا يمكن الجزم' }[m.footer] || 'غير محسومة';
     return 'الحالة الحالية (من تفاصيل البرج): ' + t + (env.status === 'needs_review' ? ' — تحتاج مراجعة' : '');
   } catch (e) { return '⚠️ تعذّر التحقق من الحالة الحالية — راجع «تفاصيل البرج»'; }
 }

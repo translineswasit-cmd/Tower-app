@@ -516,7 +516,11 @@ function towerDetailModel(env, opts) {
       else if (c.ds !== 'known' || !c.v || !_tdBoolArr(c.v.damaged)) phases[ph] = { state: 'unknown', ap: c.ap, flags: c.fl || [], invalid: c.ds === 'known' };   // known-but-malformed damage arrays are NOT drawn and NOT read as healthy
       else {
         const cy = c.v.cycle, okCy = Array.isArray(cy) && cy.length === c.v.damaged.length && cy.every(x => Number.isInteger(x) && x >= 0);
-        phases[ph] = { state: 'known', ap: c.ap, cond: c.cond, damaged: c.v.damaged, cycle: okCy ? cy : null, cycleState: okCy ? 'ok' : (cy == null ? 'missing' : 'invalid') };   // a missing / malformed cycle never becomes zero or "treated"
+        const dm = c.v.damaged, openN = dm.filter(Boolean).length, badCnt = c.v.damaged_count !== undefined && c.v.damaged_count !== null && c.v.damaged_count !== openN;   // N24-B3B: the authoritative damaged[] gives the CURRENT open count; a disagreeing damaged_count is not shown as a number
+        phases[ph] = { state: 'known', ap: c.ap, cond: c.cond, damaged: dm, cycle: okCy ? cy : null, cycleState: okCy ? 'ok' : (cy == null ? 'missing' : 'invalid'),
+          openCount: badCnt ? null : openN, total: dm.length,
+          recurrent: okCy ? dm.filter((d, i) => d && cy[i] > 0).length : null,       // damaged now AND a recorded replacement cycle at the same position (when it happened is NOT known)
+          priorOk: okCy ? dm.filter((d, i) => !d && cy[i] > 0).length : null };      // sound now with a recorded replacement cycle (NOT proven to belong to any damage episode)   // a missing / malformed cycle never becomes zero or "treated"
       }
     });
     const aps = ['R', 'S', 'T'].map(ph => phases[ph].state === 'not_applicable' ? 'not_applicable' : (phases[ph].ap === 'applicable' ? 'applicable' : 'unknown'));
@@ -527,7 +531,7 @@ function towerDetailModel(env, opts) {
     const materialsState = ms === 'complete' ? 'known' : ms === 'legacy_interpretable' ? 'legacy' : 'unknown';
     return { n, applicability, phases, materialsState, materialsUnknown: materialsState !== 'known' };
   });
-  const sections = [], unknown = [], gaps = []; let open = 0, treated = 0;   // unknown = applicable sections without a known value; gaps = provenance of what IS known (cycles, materials) - kept separate from observed damage
+  const sections = [], unknown = [], gaps = []; let open = 0, treated = 0, priorIns = 0, textTreated = 0;   // unknown = applicable sections without a known value; gaps = provenance of what IS known (cycles, materials) - kept separate from observed damage
   circuits.forEach(c => {
     if (c.applicability === 'unknown') { unknown.push('انطباق الدائرة ' + c.n); return; }
     if (c.applicability !== 'applicable') return;
@@ -537,7 +541,7 @@ function towerDetailModel(env, opts) {
     if (noCy.length) gaps.push('دورات المعالجة غير معروفة/غير صالحة — الدائرة ' + c.n + ' (' + noCy.join('، ') + ')');
     if (c.materialsState === 'unknown') gaps.push('مادة سلاسل الدائرة ' + c.n + ' غير معروفة');
     else if (c.materialsState === 'legacy') gaps.push('مادة سلاسل الدائرة ' + c.n + ' غير مؤكدة (عرف قديم لا رصد فعلي)');
-    ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; if (x.state === 'known') { if (x.cond === 'defect') open++; else if (x.cond === 'treated') treated++; } });
+    ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; if (x.state === 'known') { if (x.cond === 'defect') open++; else if (x.cond === 'treated') { treated++; priorIns++; } } });
   });
   const c2on = circuits[1].applicability === 'applicable';
   TD_SECTIONS.forEach(([k, label, field, notesField]) => {
@@ -555,14 +559,29 @@ function towerDetailModel(env, opts) {
     else if (k === 'washing') display = TD_WASH[display] || display;
     else if (display && notes) display = display + ' — ' + notes;
     else if (!display) display = notes;
-    sections.push({ k, label, state, display: display || '' });
-    if (state === 'open') open++; else treated++;
+    const pend = (c.cond === 'defect' && state === 'treated') ? 'treated' : (c.cond === 'treated' && state === 'open') ? 'observed' : null;   // N24-B3B: a queued local operation changed this line - labelled, never presented as confirmed
+    sections.push({ k, label, state, pend, display: display || '' });
+    if (state === 'open') open++; else { treated++; textTreated++; }
   });
-  return { circuits, sections, unknown, gaps, open, treated, footer: open > 0 ? 'open' : (unknown.length || gaps.length) ? 'unknown' : treated > 0 ? 'treated' : 'clear' };   // 'clear' only when every applicable section AND its cycles/materials are known
+  return { circuits, sections, unknown, gaps, open, treated, priorIns, textTreated, footer: open > 0 ? 'open' : (unknown.length || gaps.length) ? 'unknown' : treated > 0 ? 'treated' : 'clear' };   // 'clear' only when every applicable section AND its cycles/materials are known
 }
 
 function _tdBoolArr(a) { return Array.isArray(a) && a.length > 0 && a.every(x => typeof x === 'boolean'); }
 function _tdEsc(v) { return (typeof _csEsc === 'function') ? _csEsc(v) : String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+
+// N24-B3B: exact CURRENT open counts per phase from the authoritative damaged[]; recorded replacement cycles are history of the POSITION only - never of the current damage.
+function _tdPhaseLines(c) {
+  return ['R', 'S', 'T'].map(ph => {
+    const x = c.phases[ph], st = 'font-size:0.82rem;padding:2px 0;';
+    if (x.state !== 'known') return '<div style="' + st + 'color:#7B341E">الفيز ' + ph + ': غير مسجّل</div>';
+    let t = 'الفيز ' + ph + ': ' + (x.openCount == null ? '<span style="color:#7B341E">عدد المتضرر غير متّسق مع المصفوفة — لا يُعرض رقم</span>' : '<strong>' + x.openCount + '</strong> موضع متضرر مفتوح حالياً من ' + x.total);
+    if (x.cycle) {
+      if (x.recurrent > 0) t += ' — <span style="color:#9B2C2C">' + x.recurrent + ' منها متضرر مجدداً في موضع استُبدل سابقاً (دورة مسجّلة، دون تحديد وقت حدوثه)</span>';
+      if (x.priorOk > 0) t += ' — ' + x.priorOk + ' موضع سليم الآن وله دورة استبدال مسجّلة سابقاً (لا يُعرف ضمن أي ضرر)';
+    } else t += ' — <span style="color:#7B341E">الدورات غير معروفة: لا يمكن تمييز الاستبدال السابق أو تكرار الضرر</span>';
+    return '<div style="' + st + '">' + t + '</div>';
+  }).join('');
+}
 
 function renderTowerDetail(lineName, towerNum) {
   const body = document.getElementById('towerDetailBody');
@@ -583,9 +602,9 @@ function renderTowerDetail(lineName, towerNum) {
   const [stA, stB] = lineEndpoints(lineName);
   let pendingN = 0; try { const rd = opsRead(); if (rd.ok) pendingN = rd.items.filter(e => e.line === lineName && String(e.tower) === String(towerNum)).length; } catch (e) {}
   let html = '';
-  if (!(ctx && ctx.live)) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #ED8936;font-size:0.8rem;color:#7B341E">📴 آخر حالة محفوظة على الجهاز — لم تُؤكَّد من الخادم في هذا الفتح</div>';
+  if (!(ctx && ctx.live)) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #ED8936;font-size:0.8rem;color:#7B341E">📴 آخر حالة محفوظة على الجهاز — لم تُؤكَّد من الخادم في هذا الفتح (الأعداد والمواضع أدناه من هذه النسخة المحفوظة)</div>';
   if (env.status === 'needs_review') html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #E53E3E;font-size:0.8rem;color:#822727">⚠️ حالة هذا البرج تحتاج مراجعة' + ((env.unresolved_reasons || []).length ? ': ' + _tdEsc(env.unresolved_reasons.join('، ')) : '') + '</div>';
-  if (pendingN) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #F6C23E;font-size:0.8rem;color:#7C4A03">⏳ ' + pendingN + ' عملية معلّقة لهذا البرج لم تُؤكَّد بعد — العرض أدناه هو المؤكَّد على الخادم</div>';
+  if (pendingN) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #F6C23E;font-size:0.8rem;color:#7C4A03">⏳ ' + pendingN + ' عملية معلّقة لهذا البرج لم تُؤكَّد بعد — <strong>لا تنعكس</strong> على مواضع العوازل وأعدادها أدناه (المؤكَّد على الخادم فقط)، وقد تختلف بطاقة البرج لأنها تُظهر المعلّق. البنود النصية المتأثرة بعملية معلّقة موسومة ⏳.</div>';
   html += `<div class="form-card" style="margin-bottom:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <div style="font-weight:700;color:#1a2e4a">📋 آخر كشف</div>
@@ -610,14 +629,15 @@ function renderTowerDetail(lineName, towerNum) {
     if (!mode) geoGaps.push('هندسة سلاسل الدائرة ' + c.n + (lenBad ? ' لا تطابق أطوال المصفوفات المحفوظة' : ' غير محسومة'));
     html += `<div class="form-card" style="margin-bottom:14px"><h3>🔘 العوازل — الدائرة ${c.n}</h3>`;
     if (mode) {
-      html += `<div class="insulator-legend" style="margin-bottom:10px"><div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div><div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div><div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">تمت معالجته</span></div></div>`;
+      html += `<div class="insulator-legend" style="margin-bottom:10px"><div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div><div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div><div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">استبدال مسجّل سابقاً (سليم الآن)</span></div></div>`;
       html += `<div id="${cid}" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>`;
       const st = {}, cy = {}, ti = {}, unk = [];
       ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; if (x.state === 'known') { st[ph] = x.damaged; cy[ph] = x.cycle || []; ti[ph] = x.cycle ? x.damaged.map((d, i) => (!d && (x.cycle[i] || 0) > 0) ? i : -1).filter(i => i >= 0) : []; } else { st[ph] = []; cy[ph] = []; ti[ph] = []; unk.push(ph); } });
       draws.push(() => renderTowerDetailInsulators(st, ti, mode, stA, stB, cid, cy, unk));
+      html += '<div style="margin-top:8px">' + _tdPhaseLines(c) + '</div>';
     } else {
       html += '<div style="font-size:0.8rem;color:#7B341E;margin-bottom:6px">هندسة السلاسل غير محسومة — تُعرض الأعداد دون رسم</div>';
-      ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; html += '<div style="font-size:0.85rem;padding:3px 0">الفيز ' + ph + ': ' + (x.state === 'known' ? (x.damaged.filter(Boolean).length + ' متضرر من ' + x.damaged.length) : '<span style="color:#7B341E">غير مسجّل</span>') + '</div>'; });
+      html += _tdPhaseLines(c);
     }
     if (modeNote) html += '<div style="font-size:0.74rem;color:#7B341E;margin-top:6px">' + modeNote + '</div>';
     const noCycle = known.filter(ph => !c.phases[ph].cycle);
@@ -627,17 +647,17 @@ function renderTowerDetail(lineName, towerNum) {
   });
   html += '<div class="form-card"><h3>📝 تفاصيل الكشف</h3><div style="display:flex;flex-direction:column;gap:8px">';
   model.sections.forEach(sx => {
-    const tr = sx.state === 'treated', color = tr ? '#48BB78' : '#FC4444';
+    const tr = sx.state === 'treated', color = sx.pend ? '#D69E2E' : tr ? '#48BB78' : '#FC4444';
     html += `<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;padding:8px;background:#F8FAFC;border-radius:8px;border-right:3px solid ${color}">
       <div><strong style="color:#2E4057">${_tdEsc(sx.label)}:</strong> <span style="color:#4A5568">${_tdEsc(sx.display)}</span></div>
-      <span style="font-size:0.78rem;font-weight:700;color:${color};white-space:nowrap">${tr ? '✅ معالج' : '🔴 قيد المعالجة'}</span></div>`;
+      <span style="font-size:0.78rem;font-weight:700;color:${color};white-space:nowrap">${sx.pend === 'treated' ? '⏳ معالجة معلّقة (غير مؤكدة)' : sx.pend === 'observed' ? '⏳ رصد معلّق (غير مؤكد)' : tr ? '✅ معالج' : '🔴 قيد المعالجة'}</span></div>`;
   });
   if (r.notes) html += '<div style="padding:8px;background:#F8FAFC;border-radius:8px;border-right:3px solid #A0AEC0"><strong style="color:#2E4057">ملاحظات:</strong> <span style="color:#4A5568">' + _tdEsc(r.notes) + '</span></div>';
   if (model.footer === 'open') html += '<div class="empty-state" style="padding:10px">🔴 توجد بنود قيد المعالجة في هذا البرج</div>';
   if (model.unknown.length) html += '<div style="padding:10px;background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;color:#7B341E;font-size:0.82rem">⚠️ بيانات غير مسجّلة: ' + model.unknown.map(_tdEsc).join('، ') + '<br>لا يمكن الجزم بسلامة هذه الأقسام.</div>';
   const allGaps = model.gaps.concat(geoGaps);
   if (allGaps.length) html += '<div style="padding:10px;background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;color:#7B341E;font-size:0.82rem">⚠️ بيانات الدورات/المواد/الهندسة غير مكتملة: ' + allGaps.map(_tdEsc).join('؛ ') + '<br>الأضرار المعروضة مرصودة، لكن لا يُجزم بالمعالجة أو السلامة الكاملة.</div>';
-  if (model.footer === 'treated' && !geoGaps.length) html +=  '<div class="empty-state" style="padding:10px">✅ كل الملاحظات المسجّلة تمت معالجتها</div>';
+  if (model.footer === 'treated' && !geoGaps.length) html += '<div class="empty-state" style="padding:10px">✅ لا ضرر مفتوح حالياً — توجد معالجات/استبدالات مسجّلة سابقاً' + [model.priorIns ? 'عوازل: ' + model.priorIns + ' فيز' : '', model.textTreated ? 'بنود نصية: ' + model.textTreated : ''].filter(Boolean).map((x, i) => (i ? ' ؛ ' : ' (') + x).join('') + (model.priorIns || model.textTreated ? ')' : '') + '، ولا يُعرف إن كانت ضمن الضرر الحالي</div>';
   if (model.footer === 'clear' && !geoGaps.length) html += '<div class="empty-state" style="padding:10px">✅ لا توجد ملاحظات مسجّلة — كل الأقسام المنطبقة معروفة وسليمة</div>';
   html += '</div></div>';
   body.innerHTML = html;

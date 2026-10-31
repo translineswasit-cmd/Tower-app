@@ -9063,21 +9063,22 @@ async function loadTreatments() {
 
 // مهم: r.insulator_state أصبح يمثّل "الحقيقة الحالية الفعلية" دائماً — لأنه يتحدّث مباشرة بقاعدة البيانات
 // وقت المعالجة (PATCH على سجل الكشف نفسه)، فلا حاجة لأي مقارنة قبل/بعد أو جمع معالجات قديمة.
+// N24-B3B: for insulator phases "no damage" alone is NOT treatment. A phase counts as treated only when its state is a valid non-empty boolean array with no damaged position
+// AND a valid cycle array records a replacement (>0) at some position. A missing / unparseable / empty state (unknown or not-applicable circuit 2) is never treated.
+// (It claims nothing about WHEN the replacement happened or whether it belonged to a current damage episode.)
+function _insPhaseTreated(r, circuit, phase) {
+  try {
+    const sr = circuit === 2 ? r.insulator_state_2 : r.insulator_state, cr = circuit === 2 ? r.insulator_cycle_2 : r.insulator_cycle;
+    if (sr == null || sr === '' || cr == null || cr === '') return false;
+    const st = typeof sr === 'string' ? JSON.parse(sr) : sr, cy = typeof cr === 'string' ? JSON.parse(cr) : cr;
+    const a = st && st[phase], c = cy && cy[phase];
+    if (!Array.isArray(a) || !a.length || !a.every(x => typeof x === 'boolean') || !Array.isArray(c) || c.length !== a.length || !c.every(x => Number.isInteger(x) && x >= 0)) return false;
+    return !a.some(Boolean) && c.some(x => x > 0);
+  } catch (e) { return false; }
+}
 function isTreatedInDB(inspectionId, key, r) {
-  if (r && key && key.startsWith('ins2_')) {
-    const phase = key.split('_')[1];
-    try {
-      const state = safeParseJSON(r.insulator_state_2 || '{}');
-      return !(state[phase] || []).some(Boolean);
-    } catch (e) { return false; }
-  }
-  if (r && key && key.startsWith('ins_')) {
-    const phase = key.split('_')[1];
-    try {
-      const state = JSON.parse(r.insulator_state || '{}');
-      return !(state[phase] || []).some(Boolean); // لا يوجد أي متضرر متبقي بهذا الفيز = معالج بالكامل
-    } catch (e) { return false; }
-  }
+  if (r && key && key.startsWith('ins2_')) return _insPhaseTreated(r, 2, key.split('_')[1]);
+  if (r && key && key.startsWith('ins_')) return _insPhaseTreated(r, 1, key.split('_')[1]);
   const _csp = csPendingTreated(inspectionId); if (_csp && _csp.has(key)) return true; // v335-C2: معالجة نصية معلّقة بالطابور الدائم تغلب الحالة المقروءة (لا تُطبَّق مرتين: اتحاد مفاتيح)
   try { if (opsPendingObserved(inspectionId, key)) return false; } catch (e) {}   // v335-C4: رصد معلّق لاحق لهذا المكوّن يُلغي «معالج» المقروء
   const _csk = csTreatedKeys(inspectionId); // v335: مفاتيح المعالجة الفعّالة كما حلّها الخادم من المعالجات الحالية (تعديل/حذف يُعكسان)
