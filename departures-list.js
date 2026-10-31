@@ -338,9 +338,11 @@ function renderDepLineTowers(lineName, held) {
 
   html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
   visibleTowers.forEach(({r, deps}) => {
-    const level = getTowerCriticalityLevel(r);
+    // v335-C6r29 (N24-B1): these towers HAVE an open departure (deps) - a missing / "ok" severity never turns them green. N24-B1a: rdy is 'complete' here only because this list states departures, never health (a recorded simple grade keeps its colour)
+    const _dInfo = { rdy: 'complete', stale: false, comps: null, pendTreated: null, openAny: !!(deps && deps.length) };
+    const level = towerCardLevel(r, _dInfo);
     const meta = TOWER_LEVEL_META[level] || TOWER_LEVEL_META.red;
-    const catIconsHTML = buildCategoryIconsHTML(r);
+    const catIconsHTML = buildCategoryIconsHTML(r, towerOpenFields(r, _dInfo));
     html += `<div onclick="openDepTowerDetail('${lineName.replace(/'/g,"\\'")}','${r.tower_number}')"
       style="cursor:pointer;border:2px solid ${meta.border};border-radius:10px;padding:10px;text-align:center;background:${meta.bg};position:relative">
       ${catIconsHTML}

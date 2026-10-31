@@ -307,7 +307,7 @@ function renderLineTowerList(lineName, held) {
   let html = (typeof csLineBanner === 'function' ? csLineBanner(lineName, held) : '') + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">';
   towers.forEach(t => {
     const r = recByTower[t.num];
-    let statusBadge, borderColor, completeLine = '';
+    let statusBadge, borderColor, completeLine = '', _openF = null;
     const _inf = (typeof csTowerInfo === 'function' && csLiveEnabled()) ? csTowerInfo(lineName, t.num) : null;
     if (!r && _inf && _inf.status === 'uninitialized') {
       statusBadge = '⚠️ غير مهيّأ'; borderColor = '#E53E3E';
@@ -317,15 +317,22 @@ function renderLineTowerList(lineName, held) {
       const deps = extractDepsFromRecord(r);
       const allTreated = deps.length > 0 && isFullyTreated(r.id, deps, r);
       // v335-C6r9d: border colour = recorded severity (same rule/palette as the tower cards); completeness is a SEPARATE concise line; grey only for a tower never inspected
-      const _lvl = getTowerCriticalityLevel(r);
+      // v335-C6r29 (N24-B1): same decision as the tower cards (towerCardLevel) - no healthy colour from absent / all-"ok" severities, unknown or unverified state, or an open defect without a matching severity
+      const _rdy = csLiveEnabled() ? (hasValidInspectionId(r.id) ? csTowerCompleteness(_inf && _inf.readiness ? { readiness: _inf.readiness } : null, null, r) : 'unverified') : 'complete';
+      const _ck = csKey(lineName, t.num), _card = csLiveEnabled() ? _csCards.get(_ck) : null;
+      const _cinfo = csLiveEnabled() ? towerCardInfo(lineName, t.num, _card, _csMem.get(_ck), r, _rdy, !!held) : { rdy: _rdy, stale: false, comps: null, pendTreated: null };
+      const _lvl = towerCardLevel(r, _cinfo);
+      _openF = _cinfo.openFields || null;
       borderColor = (TOWER_LEVEL_META[_lvl] || TOWER_LEVEL_META.none).border;
-      const _rdy = csLiveEnabled() ? csTowerCompleteness(_inf && _inf.readiness ? { readiness: _inf.readiness } : null, null, r) : 'complete';
-      if (csLiveEnabled()) completeLine = csCompletenessText(_rdy);
-      if (!deps.length) statusBadge = (csLiveEnabled() && _rdy !== 'complete') ? '⚪ لا مغادرات معروفة' : '✅ سليم';
-      else if (allTreated) statusBadge = (csLiveEnabled() && _rdy !== 'complete') ? '✅ المعروف معالج' : '✅ معالج';
+      if (_cinfo.unmatchedOpen) completeLine = '🔴 ضرر مفتوح بلا درجة مطابقة';
+      else if (_lvl === 'review' && _cinfo.why === 'noevidence') completeLine = '⚠️ لا دليل على السلامة — راجع التفاصيل';
+      else if (_lvl === 'review' && _cinfo.why === 'simple') completeLine = '📝 درجة مسجّلة: بسيطة — الحالة غير مؤكدة';
+      if (csLiveEnabled() && !_cinfo.unmatchedOpen && !(_lvl === 'review' && (_cinfo.why === 'noevidence' || _cinfo.why === 'simple'))) completeLine = csCompletenessText(_rdy);
+      if (!deps.length) statusBadge = (csLiveEnabled() && (_rdy !== 'complete' || _lvl === 'review')) ? '⚪ لا مغادرات معروفة' : '✅ سليم';
+      else if (allTreated) statusBadge = (csLiveEnabled() && (_rdy !== 'complete' || _lvl === 'review')) ? '✅ المعروف معالج' : '✅ معالج';
       else statusBadge = '🔴 مغادرات';
     }
-    const catIconsHTML = buildCategoryIconsHTML(r);
+    const catIconsHTML = buildCategoryIconsHTML(r, _openF);
     html += `<div onclick="openTowerDetail('${lineName.replace(/'/g,"\\'")}','${t.num}')"
       style="cursor:pointer;border:2px solid ${borderColor};border-radius:10px;padding:10px;text-align:center;background:white;position:relative">
       ${catIconsHTML}

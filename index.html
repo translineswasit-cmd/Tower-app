@@ -103,6 +103,7 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .tower-box:hover { transform:translateY(-2px); }
 /* N03-B: ألوان البلاطة بأصناف بدل style مضمَّن لكل بلاطة (نفس القيم حرفياً من TOWER_LEVEL_META) ورموز الفئات بأصناف بدل ~10 أنماط مضمّنة لكل بلاطة */
 .tl-none { background:#e2e8f0; border-color:#cbd5e0; color:#4a5568; }
+.tl-review { background:#EDE9FE; border-color:#7C3AED; border-style:dashed; color:#4C1D95; }
 .tl-green { background:#9AE6B4; border-color:#68D391; color:#22543D; }
 .tl-teal { background:#B2F5EA; border-color:#4FD1C5; color:#234E52; }
 .tl-yellow { background:#FDE9A0; border-color:#F0C75E; color:#7C5E10; }
@@ -3981,7 +3982,7 @@ function getDepartureCategoryIcons(rec) {
 // يبني شريط رموز الحالة للبرج — يظهر دائماً على كل برج مكشوف
 // ✅ = سليم (ok) | ❌ = لم يُكشف (فارغ) | بدون علامة = مغادرة موجودة
 // الرموز: ⚡ كهربائية / 🔧 حديد / ⚪ قواعد / 🔥 حرائق / 💧 غسل
-function buildCategoryIconsHTML(rec) {
+function buildCategoryIconsHTML(rec, openFields) {
   if (!rec) return ''; // برج لم يُكشف بعد — لا شيء
   // N03-B: نفس الرموز والمواضع والألوان تماماً، لكن بأصناف CSS (.ci*) بدل أنماط مضمّنة مكررة لكل رمز
   const grayCircle = '<span class="ci-g"></span>';
@@ -3992,15 +3993,18 @@ function buildCategoryIconsHTML(rec) {
     return '<span class="ci-i">' + symbol + overlay + '</span>';
   }
   // للكهربائي نأخذ أسوأ قيمة بين العوازل والأسلاك والأرضي
-  const elSev = [rec.sev_insulator, rec.sev_wires, rec.sev_ground]
+  // N24-B1: a confirmed remaining defect is never drawn as a check mark (nor as a missing-data cross) just because its recorded severity is absent or "ok": it gets the plain icon (no overlay)
+  const _ev = (f) => (openFields && openFields.has(f) && (!rec[f] || rec[f] === 'ok')) ? 'open' : rec[f];
+  const _sI = _ev('sev_insulator'), _sW = _ev('sev_wires'), _sG = _ev('sev_ground');
+  const elSev = [_sI, _sW, _sG]
     .find(s => s && s !== '' && s !== 'ok') ||
-    ([rec.sev_insulator, rec.sev_wires, rec.sev_ground].every(s => s === 'ok') ? 'ok' : '');
+    ([_sI, _sW, _sG].every(s => s === 'ok') ? 'ok' : '');
   const washBadge = rec.insulator_washing && rec.insulator_washing !== '' ? rec.insulator_washing : '';
   let html = '<div class="ci">';
   html += icon('<span>⚡</span>', elSev);
-  html += icon('<span>🔧</span>', rec.sev_iron || '');
-  html += icon('<span>' + grayCircle + '</span>', rec.sev_foundation || '');
-  html += icon('<span>🔥</span>', rec.sev_fire || '');
+  html += icon('<span>🔧</span>', _ev('sev_iron') || '');
+  html += icon('<span>' + grayCircle + '</span>', _ev('sev_foundation') || '');
+  html += icon('<span>🔥</span>', _ev('sev_fire') || '');
   if (washBadge !== '') html += icon('<span>💧</span>', washBadge, true);
   html += '</div>';
   return html;
@@ -4060,6 +4064,83 @@ function getTowerCriticalityLevel(rec) {
   return 'green';
 }
 
+// v335-C6r29 (N24-B1): ONE decision for the tower card colour. getTowerCriticalityLevel (above) is unchanged and still gives the recorded-severity colour; this wrapper only
+// removes the false "healthy" claim. A green that is NOT an explicit recorded "simple" severity means "healthy" and is shown only when ALL hold: the applicable state is fully known
+// (completeness 'complete' from the server readiness or detail components), the card was verified by the server in this open (not cached / loading / failed / offline), the status is
+// not 'needs_review', and no confirmed remaining defect exists in a section whose recorded severity is absent or "ok". Otherwise the card is the neutral "needs review" level - distinct
+// from grey (never inspected) and from every severity colour. Nothing is invented: a remaining defect is only taken from (a) the card's own current insulator damage arrays,
+// (b) the authoritative components of a detail read whose revision equals the card's revision. Severity colours (yellow/orange/red) and explicit "simple" are never changed.
+function csSevFieldOfKey(k) {
+  k = String(k);
+  if (/^ins2?_/.test(k)) return 'sev_insulator';
+  if (k === 'iron') return 'sev_iron';
+  if (k === 'foundation') return 'sev_foundation';
+  if (/^wire_/.test(k)) return 'sev_wires';
+  if (/^ground_/.test(k)) return 'sev_ground';
+  if (k === 'fire') return 'sev_fire';
+  return null;   // road / washing / attachment carry no severity field and never colour the card
+}
+function towerWorstSeverity(rec) {
+  let worst = null, wr = -1;
+  ['sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire'].forEach(f => { const r = SEVERITY_RANK[rec[f]]; if (r != null && r > wr) { wr = r; worst = rec[f]; } });
+  return worst;
+}
+// Set of severity fields that have a CONFIRMED remaining defect. info.comps = components array of an authoritative detail read; info.pendTreated = Set of locally queued treated keys.
+function towerOpenFields(rec, info) {
+  const out = new Set();
+  try {
+    ['insulator_state', 'insulator_state_2'].forEach(f => {
+      const raw = rec[f]; if (raw == null || raw === '') return;
+      const st = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (st && typeof st === 'object' && ['R','S','T'].some(ph => Array.isArray(st[ph]) && st[ph].some(v => v === true))) out.add('sev_insulator');
+    });
+  } catch (e) { /* unreadable damage array: no evidence either way (never invented) */ }
+  if (info && Array.isArray(info.comps)) info.comps.forEach(c => {
+    if (!c || typeof c.k !== 'string' || c.ap === 'not_applicable' || c.ds !== 'known' || c.cond !== 'defect') return;
+    const f = csSevFieldOfKey(c.k); if (!f) return;
+    if (f !== 'sev_insulator' && info.pendTreated && info.pendTreated.has(c.k)) return;   // a queued local treatment of this section (same overlay the tower detail applies)
+    out.add(f);
+  });
+  return out;
+}
+// info: { rdy: 'complete'|'partial'|'incomplete'|'unverified', stale: bool, needsReview: bool, comps: array|null, pendTreated: Set|null, openAny: bool }
+function towerCardLevel(rec, info) {
+  if (!rec) return 'none';
+  info = info || {};
+  const lvl = getTowerCriticalityLevel(rec), sev = towerWorstSeverity(rec);
+  const open = towerOpenFields(rec, info);
+  let unmatched = false;
+  open.forEach(f => { if (SEVERITY_RANK[rec[f]] == null) unmatched = true; });   // open defect whose recorded severity is absent / "ok" / invalid
+  if (info.openAny && !open.size && !sev) unmatched = true;                       // an open departure exists (departures list) but no severity is recorded at all
+  info.unmatchedOpen = unmatched; info.openFields = open;
+  if (lvl === 'green' && sev !== 'simple') {                                       // a "healthy" claim, not a recorded severity
+    // "proven" healthy needs positive evidence: either authoritative components of this revision (no remaining defect found above), or at least one explicitly recorded "ok" severity.
+    // A card with NO severity recorded at all cannot show that a non-insulator section has no open defect, so it is never green.
+    const proven = Array.isArray(info.comps) || ['sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire'].some(f => rec[f] === 'ok');
+    if (unmatched) { info.why = 'open'; return 'review'; }
+    if (info.needsReview || info.stale || info.rdy !== 'complete') { info.why = 'state'; return 'review'; }   // each of these already has its own line (needs review / cached / completeness)
+    if (!proven) { info.why = 'noevidence'; return 'review'; }
+    return 'green';
+  }
+  if (lvl === 'green' && unmatched) { info.why = 'open'; return 'review'; }
+  // N24-B1a: an explicit recorded "simple" severity is kept as INFORMATION, but green (= the colour of a healthy tower) is only shown while the state is verified and complete.
+  // When completeness is incomplete / partial / unknown, or the card is cached / loading / failed / offline, or status is needs_review, the card is "needs review" and the simple grade is stated in a line.
+  if (lvl === 'green' && sev === 'simple' && (info.needsReview || info.stale || info.rdy !== 'complete')) { info.why = 'simple'; return 'review'; }                                // explicit simple elsewhere must not hide another open defect
+  return lvl;
+}
+// authoritative inputs for one card, from data already held (no request): components only when the detail read is the SAME revision as the card
+function towerCardInfo(line, tower, card, detail, rec, rdy, stale) {
+  const info = { rdy: rdy, stale: !!stale, needsReview: !!(card && card.status === 'needs_review'), comps: null, pendTreated: null };
+  try {
+    const env = detail && detail.env;
+    // N24-B1a: components are authoritative ONLY when BOTH revisions are positive numbers and equal; a missing card, an invalid / zero card revision or an invalid detail revision => ignored
+    const cr = card ? card.rev : NaN, er = env ? env.rev : NaN;
+    if (env && env.basis === 'operations' && Array.isArray(env.components) && typeof cr === 'number' && typeof er === 'number' && Number.isFinite(cr) && cr > 0 && cr === er) info.comps = env.components;
+    if (info.comps && rec && rec.id != null && typeof csPendingTreated === 'function') info.pendTreated = csPendingTreated(rec.id);
+  } catch (e) { info.comps = null; }
+  return info;
+}
+
 function isInspectionComplete(rec) {
   if (!rec) return false;
   // ملاحظة: tower_attachments (ملحقات البرج) أُزيل من هذا الفحص لأنه لا يوجد له حقل إدخال
@@ -4070,6 +4151,7 @@ function isInspectionComplete(rec) {
 
 const TOWER_LEVEL_META = {
   none:   { bg:'#e2e8f0', border:'#cbd5e0', text:'#4a5568' },
+  review: { bg:'#EDE9FE', border:'#7C3AED', text:'#4C1D95' },   // N24-B1: needs review - incomplete / unverified / open defect without a matching severity
   green:  { bg:'#9AE6B4', border:'#68D391', text:'#22543D' },
   teal:   { bg:'#B2F5EA', border:'#4FD1C5', text:'#234E52' },
   yellow: { bg:'#FDE9A0', border:'#F0C75E', text:'#7C5E10' },
@@ -4154,7 +4236,10 @@ function renderTowersGridFromCache(lineName) {
         const rdy = rec ? (local && !hasValidInspectionId(local.id) ? 'unverified' : csTowerCompleteness(card, detail, rec)) : null;
         // v335-C6r9d: the COLOUR is the recorded severity only (simple = green, moderate = yellow, then the higher levels); grey is reserved for a tower with no effective inspection/current source.
         // Incompleteness (sections not recorded / completeness not confirmed) is a separate concise line below - an unrecorded section never changes the severity colour and is never labelled healthy.
-        let level = rec ? getTowerCriticalityLevel(rec) : 'none';
+        // v335-C6r29 (N24-B1): the colour never claims health from absent / all-"ok" severities: see towerCardLevel
+        const _stale = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && (card ? card.status !== 'no_source' : !!rec);   // N24-B1a: a held detail-only tower (no card) is just as unverified
+        const _info = rec ? towerCardInfo(lineName, t.num, card, detail, rec, rdy, _stale || (local && !hasValidInspectionId(local.id))) : null;
+        let level = rec ? towerCardLevel(rec, _info) : 'none';
         const meta = TOWER_LEVEL_META[level];
         const dateLine = rec ? ('📅 ' + (rec.inspection_date||'—')) :
           card && card.status === 'no_source' ? 'لم يُكشف بعد' :
@@ -4163,11 +4248,14 @@ function renderTowersGridFromCache(lineName) {
           cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
         const completeLine = rec ? csCompletenessText(rdy) : '';
         // v335-C6r6: a card that was not verified by the server in this open is never presented as fresh
-        const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && !!card && card.status !== 'no_source';
+        const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && (card ? card.status !== 'no_source' : !!rec);
         let staleLine = '';
         if (rec && unverified) staleLine = cardLine.error ? (cardLine.offline ? '📴 دون اتصال — آخر حالة محفوظة' : '⚠️ آخر حالة محفوظة — تعذّر التحديث') : '📴 مخزّنة بالجهاز — جارٍ التحقق';
         if (card && card.status === 'needs_review') staleLine = '⚠️ الحالة تحتاج مراجعة';
-        const catIconsHTML = buildCategoryIconsHTML(rec);
+        if (rec && level !== 'none' && _info.unmatchedOpen) staleLine = (staleLine ? staleLine + ' · ' : '') + '🔴 ضرر مفتوح بلا درجة مطابقة';
+        else if (rec && level === 'review' && _info.why === 'noevidence') staleLine = (staleLine ? staleLine + ' · ' : '') + '⚠️ لا دليل على السلامة — راجع التفاصيل';
+        else if (rec && level === 'review' && _info.why === 'simple') staleLine = (staleLine ? staleLine + ' · ' : '') + '📝 درجة مسجّلة: بسيطة — الحالة غير مؤكدة';
+        const catIconsHTML = buildCategoryIconsHTML(rec, _info ? _info.openFields : null);
         return `<div class="tower-box tl-${TOWER_LEVEL_META[level] ? level : 'none'}" data-t="${t.num}">
           <div class="tower-box-num">${t.num}</div>
           ${catIconsHTML}
