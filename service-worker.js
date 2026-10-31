@@ -1,6 +1,44 @@
-const CACHE_NAME = 'tower-app-v335-C6r27-P03B1';
+const CACHE_NAME = 'tower-app-v335-C6r28-P03C4';   // مرشّح اختبار — ليس إصداراً معتمداً
 // N23: خطوط المذكرة في كاش مستقل غير مرتبط برقم الإصدار (≈1.9MB): لا تُعاد تنزيلها مع كل إصدار، وتُخزَّن عند أول استخدام للمذكرة (دون إبطاء بدء التطبيق).
 const FONT_CACHE = 'tower-memo-fonts-v1';
+
+
+// v335-C6r28 (P03-C4): مكتبات التصدير المحلية (jsPDF/XLSX/ExcelJS) في كاش مستقل غير مرتبط برقم إصدار التطبيق (≈2.2MB): لا تُعاد تنزيلها مع كل إصدار.
+// لا تدخل CRITICAL_ASSETS فلا تؤخّر التثبيت ولا بدء التطبيق؛ تُخزَّن (أ) بعد خمول الصفحة بإنترنت عبر رسالة 'precache-export-libs' من الصفحة،
+// و(ب) عند أول جلب فعلي. لا تُخزَّن أي استجابة إلا إن طابقت الحجم وبصمة SHA-256 المثبّتين (يحمي من صفحة تسجيل دخول واي فاي مقيِّد أو تنزيل ناقص).
+// عند تغيير أي ملف مكتبة: عدّل LIB_PINS وارفع لاحقة LIB_CACHE (v1→v2) ليحذف التنشيط الكاش القديم.
+const LIB_CACHE = 'tower-export-libs-v1';
+const LIB_PINS = {
+  'jspdf.umd.min.js': { bytes: 364463, sha256: '98ccf17aa10c20bb1301762618fcc9b6ab3a4e7f26b6071d64d0b41154df3875' },
+  'xlsx.full.min.js': { bytes: 881727, sha256: 'c9506197caf809a075b6dee1da0d36fb19da7158ffe8a88e7b0c96c5d8623c99' },
+  'exceljs.min.js': { bytes: 947702, sha256: '7e49da68588e250dbb8bba190d2caa8ab3787cc0284bda1d8b2f805c4df742c9' }
+};
+const LIB_RE = /\/vendor\/(jspdf\.umd\.min\.js|xlsx\.full\.min\.js|exceljs\.min\.js)$/;
+async function libStoreIfPinned(cache, url, response) {
+  try {
+    const name = url.split('/').pop(), pin = LIB_PINS[name];
+    if (!pin || !response || !response.ok || response.status !== 200) return false;
+    const buf = await response.clone().arrayBuffer();
+    if (buf.byteLength !== pin.bytes) return false;
+    const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf))).map(x => x.toString(16).padStart(2, '0')).join('');
+    if (h !== pin.sha256) return false;
+    await cache.put(url, response);
+    return true;
+  } catch (e) { return false; }
+}
+async function precacheExportLibs() {
+  try {
+    const c = await caches.open(LIB_CACHE);
+    for (const name of Object.keys(LIB_PINS)) {
+      const url = new URL('./vendor/' + name, self.registration.scope).href;
+      if (await c.match(url)) continue;
+      try { const r = await fetch(url, { cache: 'reload' }); await libStoreIfPinned(c, url, r); } catch (e) {}
+    }
+  } catch (e) {}
+}
+self.addEventListener('message', (event) => {
+  if (event.data === 'precache-export-libs') event.waitUntil(precacheExportLibs());
+});
 
 // الأساسيات الحرجة فقط: بدونها التطبيق لا يعمل offline إطلاقاً
 const CRITICAL_ASSETS = [
@@ -93,9 +131,15 @@ self.addEventListener('activate', (event) => {
       const hasValidIndex = await newCache.match('./index.html');
       if (hasValidIndex) {
         const keys = await caches.keys();
-        return Promise.all(
-          keys.filter(key => key !== CACHE_NAME && key !== FONT_CACHE).map(key => caches.delete(key))
+        await Promise.all(
+          keys.filter(key => key !== CACHE_NAME && key !== FONT_CACHE && key !== LIB_CACHE).map(key => caches.delete(key))
         );
+        // كاش المكتبات: يبقى؛ وتُحذف منه أي مادة خارج القائمة الحالية
+        if (keys.includes(LIB_CACHE)) {
+          const lc = await caches.open(LIB_CACHE);
+          for (const r of await lc.keys()) if (!LIB_PINS[r.url.split('/').pop()]) await lc.delete(r);
+        }
+        return;
       }
       console.log('New cache incomplete (offline during update?) — keeping old cache as fallback');
     })
@@ -123,6 +167,19 @@ self.addEventListener('fetch', (event) => {
       if (net.ok) fc.put(event.request, net.clone());
       return net;
     }));
+    return;
+  }
+  // مكتبات التصدير المحلية: cache-first من كاش المكتبات (لا ينشئ كاشاً فارغاً)، وإلا الشبكة مع تخزين مشروط بالبصمة
+  if (LIB_RE.test(url)) {
+    event.respondWith((async () => {
+      const hit = await caches.match(url, { cacheName: LIB_CACHE });
+      if (hit) return hit;
+      try {
+        const net = await fetch(event.request);
+        if (net.ok) { const copy = net.clone(); event.waitUntil((async () => { await libStoreIfPinned(await caches.open(LIB_CACHE), url, copy); })()); }   // النسخة تُؤخذ قبل أي await وقبل أن تستهلك الصفحة الجسم
+        return net;
+      } catch (e) { return new Response('', { status: 504, statusText: 'Offline' }); }
+    })());
     return;
   }
   event.respondWith(

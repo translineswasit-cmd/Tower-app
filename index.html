@@ -1660,6 +1660,22 @@ function genUUID() {
   });
 }
 
+// v335-C6r28 (P03-C4): مكتبات التصدير الثلاث (jsPDF 2.5.1 / XLSX 0.18.5 / ExcelJS 4.4.0) صارت ملفات محلية في ./vendor (نفس البايتات الأصلية
+// المتحقَّق منها بالحجم وSHA-256) وتُحمَّل كسولاً عند أول تصدير فقط كما كان. لو تعذّر الملف المحلي (غير موجود/غير مخزَّن) نرجع تلقائياً إلى رابط CDN
+// الأصلي نفسه بنفس الطريقة السابقة تماماً، فلا ينقص شيء عمّا كان قبل. docx 8.5.0 (Word) لم يتغيّر إطلاقاً.
+function loadExportLib(localSrc, cdnSrc, isReady, onDone, onFail) {
+  const attach = (src, isCdn) => {
+    const script = document.createElement('script');
+    script.src = src;
+    const bad = () => { script.remove(); if (!isCdn) attach(cdnSrc, true); else onFail(); };
+    // نجاح التحميل لا يكفي: لو وصلت صفحة غير سكربت (واي فاي مقيِّد) أو ملف ناقص يُنفَّذ بخطأ ولا يظهر الكائن العام، فنعدّه فشلاً ونرجع إلى CDN
+    script.onload = () => { if (isReady()) onDone(); else bad(); };
+    script.onerror = bad;
+    document.head.appendChild(script);
+  };
+  attach(localSrc, false);
+}
+
 // تحميل كسول لمكتبة jsPDF: لا تُحمَّل إلا عند أول طلب تصدير PDF فعلي (بدل تحميلها بكل فتحة تطبيق).
 // لو محمَّلة مسبقاً (window.jspdf موجودة) ترجع فوراً بدون أي تحميل جديد. لو التحميل جارٍ أصلاً
 // (استدعتها أكثر من وظيفة بنفس اللحظة)، الكل يشارك نفس الـPromise بدل تكرار طلب التحميل.
@@ -1669,11 +1685,7 @@ function ensureJsPDFLoaded() {
   if (window.jspdf) return Promise.resolve();
   if (_jsPDFLoadPromise) return _jsPDFLoadPromise;
   _jsPDFLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-    script.onload = () => resolve();
-    script.onerror = () => { _jsPDFLoadPromise = null; reject(new Error('فشل تحميل مكتبة jsPDF')); };
-    document.head.appendChild(script);
+    loadExportLib('vendor/jspdf.umd.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', () => !!window.jspdf, () => resolve(), () => { _jsPDFLoadPromise = null; reject(new Error('فشل تحميل مكتبة jsPDF')); });
   });
   return _jsPDFLoadPromise;
 }
@@ -1687,11 +1699,7 @@ function ensureXLSXLoaded() {
   if (window.XLSX) return Promise.resolve();
   if (_xlsxLoadPromise) return _xlsxLoadPromise;
   _xlsxLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-    script.onload = () => resolve();
-    script.onerror = () => { _xlsxLoadPromise = null; reject(new Error('فشل تحميل مكتبة XLSX')); };
-    document.head.appendChild(script);
+    loadExportLib('vendor/xlsx.full.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', () => !!window.XLSX, () => resolve(), () => { _xlsxLoadPromise = null; reject(new Error('فشل تحميل مكتبة XLSX')); });
   });
   return _xlsxLoadPromise;
 }
@@ -1704,11 +1712,7 @@ function ensureExcelJSLoaded() {
   if (window.ExcelJS) return Promise.resolve();
   if (_excelJSLoadPromise) return _excelJSLoadPromise;
   _excelJSLoadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
-    script.onload = () => resolve();
-    script.onerror = () => { _excelJSLoadPromise = null; reject(new Error('فشل تحميل مكتبة ExcelJS')); };
-    document.head.appendChild(script);
+    loadExportLib('vendor/exceljs.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js', () => !!window.ExcelJS, () => resolve(), () => { _excelJSLoadPromise = null; reject(new Error('فشل تحميل مكتبة ExcelJS')); });
   });
   return _excelJSLoadPromise;
 }
@@ -8069,7 +8073,16 @@ async function _syncStaffRosterQueueInner() {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('service-worker.js')
-      .then(reg => {})
+      .then(reg => {
+        // v335-C6r28 (P03-C4): تخزين مكتبات التصدير مسبقاً للعمل بلا إنترنت — بعد خمول الصفحة (≈12 ثانية من التحميل) وبالإنترنت فقط ولا يُحسب على بدء التطبيق.
+        // لو لم يصل الطلب (عامل قديم/إغلاق مبكر) يبقى التخزين عند أول تصدير فعلي.
+        setTimeout(() => {
+          try {
+            if (!navigator.onLine || (navigator.connection && navigator.connection.saveData)) return;
+            navigator.serviceWorker.ready.then(r => { if (r.active) r.active.postMessage('precache-export-libs'); }).catch(() => {});
+          } catch (e) {}
+        }, 12000);
+      })
       .catch(err => {});
   });
 }
