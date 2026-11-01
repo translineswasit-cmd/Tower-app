@@ -332,7 +332,7 @@ function csHFindings(id) {
   const own = m.texts.filter(i => csHTextAdv(_v(i)));
   const anyAdv = own.length || (csHDouble() && CS_H[m.c === 1 ? 'wires2' : 'wires1'].texts.some(i => csHTextAdv(_v(i))));
   if (own.length) { if (sevAdv) out.push('درجة الخطورة: ' + sevTxt); own.forEach(i => out.push(csHShort(_v(i)))); }
-  else if (m.c === 1 && sevAdv && !anyAdv) out.push('درجة الخطورة: ' + sevTxt);
+  else if (m.c === 1 && sevAdv && !anyAdv && !m.texts.every(i => _v(i) === 'سليم')) out.push('درجة الخطورة: ' + sevTxt);   // N25-R4c: دائرة سجّلت «سليم» صراحةً لا تُحمَّل درجة دائرة أخرى
   return out;
 }
 function csHIsHealthy(id) {
@@ -356,26 +356,30 @@ function csHCircuitEvidence(id) {
 }
 function csHFp(id) {
   const m = CS_H[id]; let v = null; try { v = opsSectionVals()[id]; } catch (e) { v = null; }
-  return JSON.stringify([_v('f_line_name'), _v('f_tower_number'), v, _v(m.sev), id === 'wires1' || id === 'wires2' ? _v('f_wires_circuit') : null]);
+  return JSON.stringify([_v('f_line_name'), _v('f_tower_number'), v, _v(m.sev)]);   // N25-R4c: محدّد الدائرة واجهة عرض فقط — لا يُبطل تأكيداً معلّقاً لدائرة أخرى
 }
 function csHEls(id) {
-  const m = CS_H[id]; const l = [m.sev].concat(m.texts); if (m.kind === 'wires') l.push('f_wires_circuit'); return l;
+  const m = CS_H[id]; return [m.sev].concat(m.texts);
 }
 function csHRebuildIns() {
   if (!_hBuildArgs) return;
   try { buildInsulatorUI(_hBuildArgs.voltage, _hBuildArgs.towerType, insulatorState, insulatorCycleState, insulatorState2, insulatorCycleState2, chainTypes, chainTypes2); } catch (e) { console.warn('[tower-app] N21 insulator rebuild failed', e); }
 }
+// N25-R4c: إظهار صناديق الأسلاك مستقل لكل دائرة ولا يمسح أي قيمة: الدائرة تظهر إن اختيرت أو إن كان فيها نص ضرر (لا يُخفى ضرر مُدخَل أبداً)
+function csHWiresBlocksSync() {
+  const cb = csHEl('block_wires_circuit'), b1 = csHEl('block_wires'), b2 = csHEl('block_wires_c2'); if (!b1) return;
+  const sev = _v('f_sev_wires'), adv = !!sev && sev !== 'ok';
+  if (!csHDouble()) { b1.style.display = adv ? '' : 'none'; if (b2) b2.style.display = 'none'; if (cb) cb.style.display = 'none'; return; }
+  const choice = _v('f_wires_circuit'), d1 = CS_H.wires1.texts.some(i => csHTextAdv(_v(i))), d2 = CS_H.wires2.texts.some(i => csHTextAdv(_v(i)));
+  if (cb) cb.style.display = (adv || d1 || d2) ? '' : 'none';
+  b1.style.display = (adv && (choice === '1' || choice === 'both')) || d1 ? '' : 'none';
+  if (b2) b2.style.display = (adv && (choice === '2' || choice === 'both')) || d2 ? '' : 'none';
+}
 function csHSyncBlocks(id) {
   const m = CS_H[id]; if (m.kind === 'ins' || m.kind === 'wash' || m.kind === 'road') return;
+  if (m.kind === 'wires') { csHWiresBlocksSync(); return; }
   const sev = _v(m.sev), adv = !!sev && sev !== 'ok';
-  if (m.kind === 'wires' && csHDouble()) {
-    const circ = _v('f_wires_circuit'); const cb = csHEl('block_wires_circuit'), b1 = csHEl('block_wires'), b2 = csHEl('block_wires_c2');
-    if (cb) cb.style.display = adv ? '' : 'none';
-    if (b1) b1.style.display = adv && (circ === '1' || circ === 'both') ? '' : 'none';
-    if (b2) b2.style.display = adv && (circ === '2' || circ === 'both') ? '' : 'none';
-    return;
-  }
-  const blk = csHEl(m.kind === 'wires' ? 'block_wires' : SEVERITY_SECTION_MAP[m.sec].blockId); if (blk) blk.style.display = adv ? '' : 'none';
+  const blk = csHEl(SEVERITY_SECTION_MAP[m.sec].blockId); if (blk) blk.style.display = adv ? '' : 'none';
 }
 function csHSnapTake(id) {
   const m = CS_H[id]; const snap = { base: _opsBaseline, vals: {}, ins: null, fp: null };
@@ -399,17 +403,14 @@ function csHApply(id) {
     csHEl(m.sev).value = m.okVal; m.texts.forEach(i => { csHEl(i).value = ''; });   // الطريق: تُفرَّغ الملاحظات المرتبطة بالضرر بعد التأكيد
   } else if (m.kind === 'sev') {
     csHEl(m.sev).value = 'ok'; onSeverityChange(m.sec);
-    if (id === 'ground') { const g2 = csHEl('groundBlock2'); if (g2 && g2.style.display === 'none' && csHEl('f_ground_2')) csHEl('f_ground_2').value = ''; }   // لا يُختلق أرضي ثانٍ لبرج بأرضي واحد
+    if (id === 'ground') { const g2 = csHEl('groundBlock2'); if (g2 && g2.style.display === 'none' && csHEl('f_ground_2')) csHEl('f_ground_2').value = ''; }   // لا يُختلق أرضي ثانٍ لبرج بأرضي واحد (قرار N21 — لم يتغيّر في R4c؛ انظر ملاحظة الاكتمال)
   } else if (!csHDouble()) {
     csHEl(m.sev).value = 'ok'; onSeverityChange('wires');
   } else {
+    // N25-R4c: أسلاك دائرة واحدة من خط مزدوج — تُسجَّل هذه الدائرة وحدها «سليمة». الدائرة الأخرى: لا نص يُكتب ولا يُمسح ولا تعطيل لمدخلاتها ولا مسح لضررها.
     m.texts.forEach(i => { csHEl(i).value = 'سليم'; });
     const o = CS_H[m.c === 1 ? 'wires2' : 'wires1'];
-    if (!o.texts.some(i => csHTextAdv(_v(i)))) {
-      csHEl('f_sev_wires').value = 'ok';
-      const oid = m.c === 1 ? 'wires2' : 'wires1';
-      if (csHCircuitEvidence(oid)) { o.texts.forEach(i => { if (_v(i) === '') csHEl(i).value = 'سليم'; }); csHEl('f_wires_circuit').value = ''; }   // الدائرتان سليمتان صراحةً: لا دائرة مغادرة (سلامة الأخرى المحفوظة تُعرض صراحةً)
-    }
+    if (!o.texts.some(i => csHTextAdv(_v(i)))) csHEl('f_sev_wires').value = 'ok';   // الدرجة المشتركة «سليم» فقط حين لا ضرر على أي دائرة؛ مع ضرر على الأخرى تبقى درجتها
     csHSyncBlocks(id);
   }
   _hSnap[id].fp = csHFp(id);
@@ -533,6 +534,7 @@ function csHRefresh() {
       const healthy = csHIsHealthy(id);
       cb.checked = healthy;
       sp.textContent = '🟢 ' + (dbl ? m.label1 : (m.labelS || m.label1)) + (dbl && (m.kind === 'ins' || m.kind === 'wires') ? ' — لا يمسّ الدائرة الأخرى' : '');
+      if (dbl && m.kind === 'wires' && !healthy && m.texts.every(i => _v(i) === '') && CS_H[m.c === 1 ? 'wires2' : 'wires1'].texts.some(i => _v(i) !== '')) sp.textContent += ' — لم تُسجَّل بعد (تبقى «غير مسجّلة» ما لم تسجّلها)';
       cb.parentNode.style.borderColor = healthy ? '#276749' : (p ? '#C05621' : '#A0AEC0'); cb.parentNode.style.background = healthy ? '#C6F6D5' : '#fff';
       if (p) {
         w.style.display = '';
@@ -933,16 +935,13 @@ function onSeverityChange(section) {
   if (section === 'wires' && isDoubleCircuitLine(lineName)) {
     const circuitBlock = document.getElementById('block_wires_circuit');
     const c2Block = document.getElementById('block_wires_c2');
-    if (sevVal === 'ok' || sevVal === '') {
-      if (circuitBlock) circuitBlock.style.display = 'none';
-      if (block) block.style.display = 'none';
-      if (c2Block) c2Block.style.display = 'none';
+    if (sevVal === 'ok') {
+      cfg.fields.forEach(fid => { const el = document.getElementById(fid); if (el) el.value = 'سليم'; });
       document.getElementById('f_wires_circuit').value = '';
-      cfg.fields.forEach(fid => { const el = document.getElementById(fid); if (el) el.value = sevVal === 'ok' ? 'سليم' : ''; });
       ['f_wires_r1_c2','f_wires_s1_c2','f_wires_t1_c2'].forEach(fid => { const el = document.getElementById(fid); if (el) el.value = ''; });
-    } else {
-      if (circuitBlock) circuitBlock.style.display = '';
-      onWiresCircuitChange(); // يحدّث إظهار الصناديق حسب الدائرة المختارة سابقاً (لو موجودة)
+      csHWiresBlocksSync();
+    } else {   // '' أو درجة ضرر: لا يُمحى أي نص مُدخَل (ضرر أو «سليم»)؛ تُحدَّث الظاهرية فقط (الدرجة المشتركة لا تمسح دائرة)
+      csHWiresBlocksSync();
     }
     return;
   }
@@ -961,13 +960,9 @@ function onSeverityChange(section) {
 
 // تحدّد أي صناديق نص تظهر حسب الدائرة المختارة لمغادرة الأسلاك (خط مزدوج فقط)
 function onWiresCircuitChange() {
-  const choice = document.getElementById('f_wires_circuit').value;
-  const block1 = document.getElementById('block_wires');
-  const block2 = document.getElementById('block_wires_c2');
-  if (choice === '1') { block1.style.display = ''; block2.style.display = 'none'; ['f_wires_r1_c2','f_wires_s1_c2','f_wires_t1_c2'].forEach(fid => document.getElementById(fid).value = ''); }
-  else if (choice === '2') { block1.style.display = 'none'; block2.style.display = ''; ['f_wires_r1','f_wires_s1','f_wires_t1'].forEach(fid => document.getElementById(fid).value = ''); }
-  else if (choice === 'both') { block1.style.display = ''; block2.style.display = ''; }
-  else { block1.style.display = 'none'; block2.style.display = 'none'; }
+  // N25-R4c: المحدّد يتحكم بما يظهر فقط؛ لا يمسح نص أي دائرة (كان يمسح الدائرة غير المختارة فيُضيع «سليم» أو الضرر المُدخَل)
+  try { csHWiresBlocksSync(); } catch (e) { /* UI only */ }
+  try { csHRefresh(); } catch (e) { /* UI only */ }
 }
 
 function getFormData() {
@@ -1128,14 +1123,17 @@ function afterGridSaveSuccess(d) {
 
 function opsSectionVals() {
   const json = o => JSON.stringify(o || null);
+  const dblNow = (() => { try { return isDoubleCircuitLine(_v('f_line_name')); } catch (e) { return false; } })();
+  const wT1 = [_v('f_wires_r1'), _v('f_wires_s1'), _v('f_wires_t1')], wT2 = [_v('f_wires_r1_c2'), _v('f_wires_s1_c2'), _v('f_wires_t1_c2')];
   return {
     ins1: json({ s: insulatorState, c: chainTypes, sv: _v('f_sev_insulator'), h: !!_insHealthy[1] }),
     ins2: json({ s: insulatorState2, c: chainTypes2, h: !!_insHealthy[2] }),
     washing: _v('f_insulator_washing'),
     iron: _v('f_sev_iron') + '|' + _v('f_iron_intersections'),
     foundation: _v('f_sev_foundation') + '|' + _v('f_tower_foundations'),
-    wires1: [_v('f_sev_wires'), _v('f_wires_circuit'), _v('f_wires_r1'), _v('f_wires_s1'), _v('f_wires_t1')].join('|'),
-    wires2: [_v('f_wires_circuit'), _v('f_wires_r1_c2'), _v('f_wires_s1_c2'), _v('f_wires_t1_c2')].join('|'),
+    // N25-R4c: الدائرتان مستقلتان: محدّد الدائرة خارج القيم؛ الدرجة المشتركة تدخل في قيمة الدائرة التي فيها نص فقط (خط مزدوج) فلا تُحسب دائرة فارغة «مرصودة» لأن الدرجة تغيّرت
+    wires1: [(dblNow && !wT1.some(x => x !== '')) ? '' : _v('f_sev_wires')].concat(wT1).join('|'),
+    wires2: [wT2.some(x => x !== '') ? _v('f_sev_wires') : ''].concat(wT2).join('|'),
     ground: [_v('f_sev_ground'), _v('f_ground_1'), _v('f_ground_2')].join('|'),
     fire: _v('f_sev_fire') + '|' + _v('f_fire_causes_notes'),
     road: _v('f_road_access') + '|' + _v('f_road_access_notes')
@@ -1160,7 +1158,7 @@ function opsHasContent(id) {
     case 'washing': return any('f_insulator_washing');
     case 'iron': return any('f_sev_iron', 'f_iron_intersections');
     case 'foundation': return any('f_sev_foundation', 'f_tower_foundations');
-    case 'wires1': return any('f_sev_wires', 'f_wires_r1', 'f_wires_s1', 'f_wires_t1');
+    case 'wires1': return csHDouble() ? any('f_wires_r1', 'f_wires_s1', 'f_wires_t1') : any('f_sev_wires', 'f_wires_r1', 'f_wires_s1', 'f_wires_t1');   // N25-R4c: بخط مزدوج درجة مشتركة بلا نص دائرة أولى ليست رصداً لها
     case 'wires2': return any('f_wires_r1_c2', 'f_wires_s1_c2', 'f_wires_t1_c2');
     case 'ground': return any('f_sev_ground', 'f_ground_1', 'f_ground_2');
     case 'fire': return any('f_sev_fire', 'f_fire_causes_notes');
@@ -1306,7 +1304,12 @@ async function opsSaveObservation(d) {
   if (!r.ok) { showToast(r.reason === 'storage' ? '❌ لم يُحفظ الكشف (ذاكرة الجهاز ممتلئة) وحقولك باقية — حرّر مساحة واضغط حفظ ثانيةً' : '❌ لم يُحفظ الكشف: ' + (r.reason === 'migration_refused' ? (_opsMig.msg || 'قائمة معلّقات قديمة غير قابلة للترحيل') : MSG_QUEUE_UNREADABLE) + ' حقولك باقية.', 'error'); return false; }
   opsApplyEntryToCache(r.entry);
   { const sk = (b.extra && b.extra.skipped_unknown) || [];
-    showToast('✅ حُفظ الكشف على الجهاز — لم يُؤكَّد على السيرفر بعد وسيُرسل تلقائياً' + (sk.length ? ' — لم تُسجَّل ' + sk.join(' و') + ' (حالتها غير مسجّلة: علّم ضرراً أو اضغط «تسجيل عوازل هذه الدائرة سليمة»)' : '') + (((b.extra && b.extra.material_only) || []).length ? ' — حُفظت المادة فقط لـ ' + b.extra.material_only.join(' و') + ' وحالة عوازلها بقيت غير مسجّلة' : '')); }
+    // N25-R4c: تفسير صريح لما قد يبقى غير مسجّل بسبب قيد النموذج (لا يُختلق شيء): الأرضي الثاني لا يُعرض إلا لـ400 ك.ف، بينما يحتسبه الخادم قسماً مطبَّقاً في اكتمال البطاقة
+    let g2note = ''; try {
+      const cm = b.payload && b.payload.comps || {}; const ev = opsEnvKnown(d.line_name, d.tower_number); const g2k = ev ? opsCompOf(ev, 'ground_2') : null;
+      if (cm.ground_1 && !cm.ground_2 && Number(currentVoltage) !== 400 && !(g2k && g2k.ds === 'known')) g2note = ' — ملاحظة: «الأرضي الثاني» غير مُدرج في نموذج ' + currentVoltage + ' ك.ف فلا يُسجَّل، ويحتسبه الخادم قسماً غير مسجّل؛ لذلك قد تبقى البطاقة «أقسام أخرى غير مسجّلة» حتى لو سجّلت كل أقسام النموذج (ليس نقصاً في مدخلاتك)';
+    } catch (e) { g2note = ''; }
+    showToast('✅ حُفظ الكشف على الجهاز — لم يُؤكَّد على السيرفر بعد وسيُرسل تلقائياً' + (sk.length ? ' — لم تُسجَّل ' + sk.join(' و') + ' (حالتها غير مسجّلة: علّم ضرراً أو اضغط «تسجيل عوازل هذه الدائرة سليمة»)' : '') + (((b.extra && b.extra.material_only) || []).length ? ' — حُفظت المادة فقط لـ ' + b.extra.material_only.join(' و') + ' وحالة عوازلها بقيت غير مسجّلة' : '') + g2note); }
   document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   resetTowerFieldsOnly();
   if (currentGridLine) renderTowersGridFromCache(currentGridLine);
