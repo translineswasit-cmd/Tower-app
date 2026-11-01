@@ -103,7 +103,6 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .tower-box:hover { transform:translateY(-2px); }
 /* N03-B: ألوان البلاطة بأصناف بدل style مضمَّن لكل بلاطة (نفس القيم حرفياً من TOWER_LEVEL_META) ورموز الفئات بأصناف بدل ~10 أنماط مضمّنة لكل بلاطة */
 .tl-none { background:#e2e8f0; border-color:#cbd5e0; color:#4a5568; }
-.tl-review { background:#EDE9FE; border-color:#7C3AED; border-style:dashed; color:#4C1D95; }
 .tl-green { background:#9AE6B4; border-color:#68D391; color:#22543D; }
 .tl-teal { background:#B2F5EA; border-color:#4FD1C5; color:#234E52; }
 .tl-yellow { background:#FDE9A0; border-color:#F0C75E; color:#7C5E10; }
@@ -1623,21 +1622,29 @@ const LINE_VOLTAGE = {"واسط الحرارية - الامين رقم 1 400 ك.
 // الخطوط المزدوجة (دائرتين فعليتين على نفس هيكل البرج) — عوازل وأسلاك مكرّرة لكل دائرة
 const DOUBLE_CIRCUIT_LINES = ["دبوني - جصان (1+2) 132 ك.ف","شمال الكوت - جنوب الكوت (1+2) 132 ك.ف","شمال غرب الكوت - الحي (1+2) 132 ك.ف","واسط - شمال الكوت (1+2) 132 ك.ف","واسط - شمال غرب الكوت (1+2) 132 ك.ف","واسط - نعمانية (1+2) 132 ك.ف","واسط الحرارية - عزيزية (1+2) 132 ك.ف"];
 
-// يتحقق هل الخط مزدوج الدائرة — إما من الإعداد المسجَّل، أو من وجود بيانات دائرة ثانية فعلية بالسجل
-// نفسه (state2JSON). هذا التحقق المزدوج مهم: إعداد "عدد الدوائر" سهل يُضبط غلط بالخطأ (صار قبل)،
-// وبدون هذا الاحتياط، أي خط بإعداد خاطئ يفقد عرض دائرته الثانية بالتصدير كلياً — صورة ونص، بصمت تام
+// N25-R4g (OWNER circuit rules, the SAME rule as the server): ALL 400 kV lines are single circuit; a 132 kV line is double when its NAME carries (1+2) / (2+3) / (3+4) (Arabic or Western digits, any harmless spacing)
+// or when the owner configured circuit_count = 2 in the line specs; every other 132 kV line is single. A saved circuit_count of 1 is the column default, so it is never a reason to hide a name-identified circuit 2.
+function lineNamePairDouble(name) {
+  const t = String(name || '').replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 0x660)).replace(/[\u06F0-\u06F9]/g, d => String(d.charCodeAt(0) - 0x6F0)).replace(/[\uFF0B\uFE62]/g, '+').replace(/[\s\u200e\u200f\u061c]/g, '');
+  const m = /(^|[^0-9])([1-4])\+([1-4])($|[^0-9])/.exec(t);
+  return !!m && Number(m[3]) === Number(m[2]) + 1;
+}
+function lineVoltageByName(lineName) {
+  const v = LINE_VOLTAGE[lineName]; if (v) return Number(v);
+  const m = /(400|132)\s*ك\.ف\s*$/.exec(String(lineName || '')); return m ? Number(m[1]) : null;
+}
+// يتحقق هل الخط مزدوج الدائرة — بقاعدة المالك أعلاه، وكذلك لو وُجدت بيانات دائرة ثانية فعلية بالسجل نفسه (state2JSON): البيانات المسجّلة لا تُخفى أبداً
 function isDoubleCircuitLine(lineName, state2JSON) {
-  const ov = getLineSettingsOverride(lineName);
-  if (ov && ov.circuit_count != null) {
-    if (Number(ov.circuit_count) === 2) return true;
-    // الإعداد يقول دائرة وحدة، لكن لو السجل نفسه فيه بيانات دائرة ثانية فعلية، نصدّق البيانات لا الإعداد
-    if (state2JSON) {
-      const st2 = safeParseJSON(state2JSON);
-      if (st2 && ['R','S','T'].some(p => Array.isArray(st2[p]) && st2[p].length)) return true;
-    }
-    return false;
+  if (state2JSON) {
+    const st2 = safeParseJSON(state2JSON);
+    if (st2 && ['R','S','T'].some(p => Array.isArray(st2[p]) && st2[p].length)) return true;
   }
-  return DOUBLE_CIRCUIT_LINES.includes(lineName);
+  const volt = lineVoltageByName(lineName);
+  const ov = getLineSettingsOverride(lineName);
+  const ov2 = !!(ov && ov.circuit_count != null && Number(ov.circuit_count) === 2);   // the owner's EXPLICIT double (a saved 1 is the column default, never an intent)
+  if (volt === 400) return ov2;   // 400 kV is single by the project rule; an explicit double contradicts it -> shown as a CONFLICT (see csFormCircuitNote), never silently single
+  if (ov2) return true;
+  return lineNamePairDouble(lineName) || DOUBLE_CIRCUIT_LINES.includes(lineName);
 }
 
 // ==================== كادر قسم الخطوط (جدول ديناميكي: أعضاء + أعمدة قابلة للتعديل الكامل) ====================
@@ -2266,6 +2273,13 @@ function csGroundConflictNote(readiness) {
   return c === 'ground_2_data_on_132' ? '⚠️ للمراجعة: سُجّلت بيانات «أرضي ثانٍ» لبرج 132 ك.ف (قاعدته سلك واحد) — محفوظة كما هي'
        : c === 'ground_2_not_applicable_on_400' ? '⚠️ للمراجعة: «الأرضي الثاني» مسجّل غير منطبق لبرج 400 ك.ف (قاعدته سلكان) — يبقى غير مكتمل' : '';
 }
+// N25-R4g: a circuit-configuration conflict is shown for review and never hides recorded circuit-2 data
+function csCircuitConflictNote(readiness) {
+  const c = readiness && readiness.circuit_conflict;
+  return c === 'circuit2_data_on_single_circuit' ? '⚠️ للمراجعة: سُجّلت بيانات «الدائرة الثانية» لخط مفرد الدائرة — محفوظة كما هي'
+       : c === 'circuit_rule_conflict' ? '⚠️ للمراجعة: إعداد الدوائر يخالف قاعدة المشروع لهذا الجهد'
+       : c === 'circuit_sources_conflict' ? '⚠️ للمراجعة: مصادر عدد الدوائر متعارضة' : '';
+}
 function csReadinessOf(env) {
   if (!env || typeof env !== 'object') return null;
   if (env.readiness && typeof env.readiness === 'object' && Array.isArray(env.readiness.core_unknown)) return env.readiness;
@@ -2273,8 +2287,8 @@ function csReadinessOf(env) {
   const mc = env.meta && env.meta.circuits, c2 = mc ? mc.circuit2_applicability : (env.meta ? env.meta.circuit2 : null);
   const byK = {}; env.components.forEach(c => { if (c && typeof c.k === 'string') byK[c.k] = c; });
   const gr = csGroundRuleOf(env), g2 = byK.ground_2;
-  const unk = k => { if (k === 'ground_2' && gr === 1) return false; if (k === 'ground_2' && gr === 2 && g2 && g2.ap === 'not_applicable') return true; const c = byK[k]; if (!c) return !(/^ins2_|_c2$/.test(k) && c2 === 'not_applicable'); return c.ap !== 'not_applicable' && c.ds !== 'known'; };
-  return { core_unknown: CS_RD_CORE.filter(unk).sort(), other_unknown: CS_RD_OTHER.filter(unk).length, c2: c2 || null, ground_rule: gr, ground_conflict: csGroundConflictOf(gr, g2), derived: true };
+  const unk = k => { if (k === 'ground_2' && gr === 1) return false; if (k === 'ground_2' && gr === 2 && g2 && g2.ap === 'not_applicable') return true; const c = byK[k]; if (!c) return !(/^ins2_|_c2$/.test(k) && c2 === 'not_applicable'); if (/^ins2_|_c2$/.test(k) && c2 === 'not_applicable' && c.ds !== 'known' && c.ds !== 'invalid') return false; return c.ap !== 'not_applicable' && c.ds !== 'known'; };   // N25-R4g: circuit-2 rows with no recorded data are not required on a single-circuit tower
+  return { core_unknown: CS_RD_CORE.filter(unk).sort(), other_unknown: CS_RD_OTHER.filter(unk).length, c2: c2 || null, ground_rule: gr, ground_conflict: csGroundConflictOf(gr, g2), circuit_conflict: (mc && mc.rule_conflict === true) ? 'circuit_rule_conflict' : (c2 === 'not_applicable' && Object.keys(byK).some(k => /^ins2_|_c2$/.test(k) && (byK[k].ds === 'known' || byK[k].ds === 'invalid'))) ? 'circuit2_data_on_single_circuit' : (mc && mc.status === 'conflict') ? 'circuit_sources_conflict' : null, derived: true };
 }
 // 'complete' | 'incomplete' | 'unverified'. 'unverified' = completeness cannot be established from what is held (older summary, cached entry from an older build, a local-only record): never shown as complete.
 function csTowerCompleteness(card, detail, rec) {
@@ -2671,6 +2685,7 @@ function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
     version: env.version || null,
     materialsStatus: sumLv ? (keepD ? keepD.materialsStatus : null) : (mats ? mats.status : (meta.materials_status || null)),
     materials: sumLv ? (keepD ? keepD.materials : null) : mats,
+    circuits: sumLv ? (keepD ? keepD.circuits || null : null) : (meta.circuits || null),   // N25-R4g: the SERVER's effective circuit decision for this tower
     prefillReady: sumLv ? (keepD ? keepD.prefillReady : null) : (meta.prefill_ready === undefined ? null : !!meta.prefill_ready),
     blockers: sumLv ? (keepD ? keepD.blockers : []) : (Array.isArray(meta.prefill_blockers) ? meta.prefill_blockers : []),
     geometryStatus: sumLv ? (keepD ? keepD.geometryStatus : null) : (g ? (g.status || null) : null),
@@ -2697,6 +2712,38 @@ function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
 }
 
 function csTowerInfo(line, tower) { return _csInfo.get(csKey(line, tower)) || null; }
+// N25-R4g: the SERVER's effective circuit decision for ONE tower (meta.circuits of the held detail read). { double, conflict } or null when none is held.
+// resolved 1/2 -> that count; a circuit CONFLICT -> operationally double (nothing hidden, circuit-2 readings stay recordable) and flagged. circuit_count=1 is never trusted here: only the server decides.
+function csCircuitDecision(line, tower) {
+  try {
+    if (!csFlagOn() || !CS_AUTH.token || line == null || tower == null || tower === '') return null;
+    const info = csTowerInfo(line, tower), c = info && info.circuits; if (!c || typeof c !== 'object') return null;
+    const v = Number(c.value);
+    if ((c.status === 'agreed' || c.status === 'single_source') && (v === 1 || v === 2)) return { double: v === 2, conflict: c.rule_conflict === true };
+    if (c.status === 'conflict') return { double: true, conflict: true };
+  } catch (e) {}
+  return null;
+}
+// OPERATIONAL circuit count (form visibility, master action, payload): the server decision when held, else the client rule. Recorded circuit-2 data of the row always keeps it visible.
+function isDoubleOperational(line, tower, state2JSON) {
+  const d = csCircuitDecision(line, tower);
+  if (!d) return isDoubleCircuitLine(line, state2JSON);
+  if (d.double) return true;
+  try { const cm = csComps(line, tower); if (cm && cm.byK && Object.keys(cm.byK).some(k => /^ins2_|_c2$/.test(k) && (cm.byK[k].ds === 'known' || cm.byK[k].ds === 'invalid'))) return true; } catch (e) {}   // recorded circuit-2 evidence of the held state is never hidden
+  if (state2JSON) { const st2 = safeParseJSON(state2JSON); if (st2 && ['R','S','T'].some(p => Array.isArray(st2[p]) && st2[p].length)) return true; }
+  return false;
+}
+function csFormCircuitNote() {
+  let el = document.getElementById('circuitConflictNote');
+  const line = (document.getElementById('f_line_name') || {}).value, tower = (document.getElementById('f_tower_number') || {}).value;
+  const d = csCircuitDecision(line, tower);
+  const info = csTowerInfo(line, tower), cs = info && info.circuits;
+  const _vl = lineVoltageByName(line), _ov = getLineSettingsOverride(line);
+  const ruleOnly = !d && _vl === 400 && !!_ov && Number(_ov.circuit_count) === 2;   // no server decision held yet (never-written tower): the line spec itself contradicts the 400 kV rule
+  const txt = ruleOnly ? '⚠️ للمراجعة: خط 400 ك.ف مضبوط مزدوجاً في مواصفات الخط — يخالف قاعدة المشروع (دائرة واحدة)؛ تُعرض الدائرة الثانية ولا يُخفى شيء' : !d ? '' : (cs && cs.status === 'conflict') ? '⚠️ للمراجعة: مصادر عدد الدوائر متعارضة (إعداد الخط مقابل السجل) — تُعرض الدائرة الثانية ولا يُخفى شيء' : d.conflict ? '⚠️ للمراجعة: عدد الدوائر المسجَّل يخالف قاعدة المشروع لهذا الجهد' : '';
+  if (!el) { if (!txt) return; const anchor = document.getElementById('incompleteBanner'); if (!anchor || !anchor.parentNode) return; el = document.createElement('div'); el.id = 'circuitConflictNote'; el.style.cssText = 'background:#FEFCBF;border:1px solid #D69E2E;color:#744210;border-radius:8px;padding:8px 10px;margin:8px 0;font-weight:700;font-size:13px'; anchor.parentNode.insertBefore(el, anchor.nextSibling); }
+  el.textContent = txt; el.style.display = txt ? '' : 'none';
+}
 
 function csComps(line, tower) { return _csComps.get(csKey(line, tower)) || null; }
 
@@ -4221,20 +4268,14 @@ function towerCardLevel(rec, info) {
   open.forEach(f => { if (SEVERITY_RANK[rec[f]] == null) unmatched = true; });   // open defect whose recorded severity is absent / "ok" / invalid
   if (info.openAny && !open.size && !sev) unmatched = true;                       // an open departure exists (departures list) but no severity is recorded at all
   info.unmatchedOpen = unmatched; info.openFields = open;
-  if (lvl === 'green' && sev !== 'simple') {                                       // a "healthy" claim, not a recorded severity
-    // "proven" healthy needs positive evidence: either authoritative components of this revision (no remaining defect found above), or at least one explicitly recorded "ok" severity.
-    // A card with NO severity recorded at all cannot show that a non-insulator section has no open defect, so it is never green.
-    const proven = Array.isArray(info.comps) || ['sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire'].some(f => rec[f] === 'ok');
-    if (unmatched) { info.why = 'open'; return 'review'; }
-    if (info.needsReview || info.stale || info.rdy !== 'complete') { info.why = 'state'; return 'review'; }   // each of these already has its own line (needs review / cached / completeness)
-    if (!proven) { info.why = 'noevidence'; return 'review'; }
-    return 'green';
-  }
-  if (lvl === 'green' && unmatched) { info.why = 'open'; return 'review'; }
-  // N24-B1a: an explicit recorded "simple" severity is kept as INFORMATION, but green (= the colour of a healthy tower) is only shown while the state is verified and complete.
-  // When completeness is incomplete / partial / unknown, or the card is cached / loading / failed / offline, or status is needs_review, the card is "needs review" and the simple grade is stated in a line.
-  if (lvl === 'green' && sev === 'simple' && (info.needsReview || info.stale || info.rdy !== 'complete')) { info.why = 'simple'; return 'review'; }                                // explicit simple elsewhere must not hide another open defect
-  return lvl;
+  // N25-R4g (owner rule): the COLOUR is the highest recorded severity of the current state (RED > ORANGE > YELLOW > GREEN) and is INDEPENDENT of completeness. There is no purple / "review" colour any more:
+  // incompleteness, staleness and review/conflict warnings are shown by their own text lines. Unknown is never healthy: a tower with NO assessed evidence (no recorded severity, no known component) or with an
+  // open defect whose severity is not recorded is the neutral grey, never green.
+  if (lvl !== 'green') return lvl;
+  if (unmatched) { info.why = 'open'; return 'none'; }
+  const proven = !!sev || (Array.isArray(info.comps) && info.comps.some(c => c && c.ds === 'known')) || ['sev_insulator','sev_iron','sev_foundation','sev_wires','sev_ground','sev_fire'].some(f => rec[f] === 'ok');
+  if (!proven) { info.why = 'noevidence'; return 'none'; }
+  return 'green';
 }
 // authoritative inputs for one card, from data already held (no request): components only when the detail read is the SAME revision as the card
 function towerCardInfo(line, tower, card, detail, rec, rdy, stale) {
@@ -4259,7 +4300,6 @@ function isInspectionComplete(rec) {
 
 const TOWER_LEVEL_META = {
   none:   { bg:'#e2e8f0', border:'#cbd5e0', text:'#4a5568' },
-  review: { bg:'#EDE9FE', border:'#7C3AED', text:'#4C1D95' },   // N24-B1: needs review - incomplete / unverified / open defect without a matching severity
   green:  { bg:'#9AE6B4', border:'#68D391', text:'#22543D' },
   teal:   { bg:'#B2F5EA', border:'#4FD1C5', text:'#234E52' },
   yellow: { bg:'#FDE9A0', border:'#F0C75E', text:'#7C5E10' },
@@ -4356,15 +4396,14 @@ function renderTowersGridFromCache(lineName) {
           cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
         let completeLine = rec ? csCompletenessText(rdy) : '';
         if (rec && rdy === 'complete') { const _en = csEngineeringNote(card && card.readiness, csTowerInfo(lineName, t.num)); if (_en) completeLine += ' · ' + _en; }   // N24-B2
-        if (rec) { const _gc = csGroundConflictNote(card && card.readiness); if (_gc) completeLine += (completeLine ? ' · ' : '') + _gc; }   // N25-R4e: التعارض يُعرض ولا يُخفى
+        if (rec) { const _gc = csGroundConflictNote(card && card.readiness); if (_gc) completeLine += (completeLine ? ' · ' : '') + _gc; const _cc = csCircuitConflictNote(card && card.readiness); if (_cc) completeLine += (completeLine ? ' · ' : '') + _cc; }   // N25-R4e/R4g: التعارض يُعرض ولا يُخفى
         // v335-C6r6: a card that was not verified by the server in this open is never presented as fresh
         const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && (card ? card.status !== 'no_source' : !!rec);
         let staleLine = '';
         if (rec && unverified) staleLine = cardLine.error ? (cardLine.offline ? '📴 دون اتصال — آخر حالة محفوظة' : '⚠️ آخر حالة محفوظة — تعذّر التحديث') : '📴 مخزّنة بالجهاز — جارٍ التحقق';
         if (card && card.status === 'needs_review') staleLine = '⚠️ الحالة تحتاج مراجعة';
-        if (rec && level !== 'none' && _info.unmatchedOpen) staleLine = (staleLine ? staleLine + ' · ' : '') + '🔴 ضرر مفتوح بلا درجة مطابقة';
-        else if (rec && level === 'review' && _info.why === 'noevidence') staleLine = (staleLine ? staleLine + ' · ' : '') + '⚠️ لا دليل على السلامة — راجع التفاصيل';
-        else if (rec && level === 'review' && _info.why === 'simple') staleLine = (staleLine ? staleLine + ' · ' : '') + '📝 درجة مسجّلة: بسيطة — الحالة غير مؤكدة';
+        if (rec && _info.unmatchedOpen) staleLine = (staleLine ? staleLine + ' · ' : '') + '🔴 ضرر مفتوح بلا درجة مطابقة';
+        else if (rec && level === 'none' && _info.why === 'noevidence') staleLine = (staleLine ? staleLine + ' · ' : '') + 'لم يُكشف بعد — لا درجة مسجّلة';
         const catIconsHTML = buildCategoryIconsHTML(rec, _info ? _info.openFields : null);
         return `<div class="tower-box tl-${TOWER_LEVEL_META[level] ? level : 'none'}" data-t="${t.num}">
           <div class="tower-box-num">${t.num}</div>
@@ -9100,6 +9139,7 @@ const _PREFILL_BANNER = {
 };
 
 function _renderPrefillBanner() {
+  try { csFormCircuitNote(); } catch (e) {}
   const b = document.getElementById('incompleteBanner');
   if (!b) return;
   const s = _prefillState;

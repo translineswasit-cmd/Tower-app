@@ -288,7 +288,7 @@ let _hPrev = {};          // selectId -> آخر قيمة درجة معروفة (
 let _hRoadClr = null;     // مسح مؤكَّد لملاحظات الطريق (يُرسل clear_road_notes مع الرصد فقط)
 let _hBuildArgs = null;   // آخر وسائط buildInsulatorUI لإعادة رسم العوازل بعد تغيير الأعلام
 
-function csHDouble() { try { return isDoubleCircuitLine(_v('f_line_name')); } catch (e) { return false; } }
+function csHDouble() { try { return isDoubleOperational(_v('f_line_name'), _v('f_tower_number')); } catch (e) { return false; } }
 function csHEl(id) { return document.getElementById(id); }
 function csHApplicable(id) {
   const m = CS_H[id]; if (!m) return false;
@@ -617,7 +617,7 @@ function buildInsulatorUI(voltage, towerType, savedState, savedCycle, savedState
   }
   const mode = getInsulatorMode(voltage, towerType, lineName, towerNum);
   const count = getInsulatorCount(mode);
-  const isDouble = isDoubleCircuitLine(lineName);
+  const isDouble = isDoubleOperational(lineName, _v('f_tower_number'));
   const chainsPerPhase = getChainsPerPhase(mode);
   const rowsPerChain = Math.floor(count / chainsPerPhase);
 
@@ -974,7 +974,7 @@ function onSeverityChange(section) {
   const lineName = document.getElementById('f_line_name') ? document.getElementById('f_line_name').value : '';
 
   // الأسلاك بخط مزدوج: نحتاج خطوة وسيطة (اختيار الدائرة) قبل إظهار صناديق النص
-  if (section === 'wires' && isDoubleCircuitLine(lineName)) {
+  if (section === 'wires' && isDoubleOperational(lineName, _v('f_tower_number'))) {
     const circuitBlock = document.getElementById('block_wires_circuit');
     const c2Block = document.getElementById('block_wires_c2');
     if (sevVal === 'ok') {
@@ -1026,7 +1026,7 @@ function getFormData() {
     const v1 = document.getElementById('f_wires_'+p+'1').value;
     document.getElementById('f_wires_'+p+'2').value = v1;
   });
-  const isDouble = isDoubleCircuitLine(lineName);
+  const isDouble = isDoubleOperational(lineName, _v('f_tower_number'));
   const d = {
     line_name: document.getElementById('f_line_name').value,
     inspection_date: document.getElementById('f_inspection_date').value,
@@ -1165,7 +1165,7 @@ function afterGridSaveSuccess(d) {
 
 function opsSectionVals() {
   const json = o => JSON.stringify(o || null);
-  const dblNow = (() => { try { return isDoubleCircuitLine(_v('f_line_name')); } catch (e) { return false; } })();
+  const dblNow = (() => { try { return isDoubleOperational(_v('f_line_name'), _v('f_tower_number')); } catch (e) { return false; } })();
   const wT1 = [_v('f_wires_r1'), _v('f_wires_s1'), _v('f_wires_t1')], wT2 = [_v('f_wires_r1_c2'), _v('f_wires_s1_c2'), _v('f_wires_t1_c2')];
   return {
     ins1: json({ s: insulatorState, c: chainTypes, sv: _v('f_sev_insulator'), h: !!_insHealthy[1] }),
@@ -1220,7 +1220,7 @@ function opsCaptureBaseline(mode) {
 
 function opsSectionAvailable(s) {
   if (!s.double) return true;
-  try { return isDoubleCircuitLine(_v('f_line_name')); } catch (e) { return false; }
+  try { return isDoubleOperational(_v('f_line_name'), _v('f_tower_number')); } catch (e) { return false; }
 }
 
 // حالة القسم (v335-C6r9d: تتبّع تغيير فقط — لا خانات تأكيد): 'changed' | 'inherited' | 'missing'
@@ -1240,7 +1240,7 @@ function opsSectionState(s) {
 function opsBuildObservation(d) {
   const line = d.line_name, tower = String(d.tower_number);
   const comps = {}, sev = {}, observed = [];
-  const isDouble = (() => { try { return isDoubleCircuitLine(line); } catch (e) { return false; } })();
+  const isDouble = (() => { try { return isDoubleOperational(line, _v('f_tower_number')); } catch (e) { return false; } })();
   const need = (sevId, textIds, label) => {   // درجة غير سليمة تتطلب وصفاً
     const sv = _v(sevId); if (sv && sv !== 'ok' && textIds.every(i => !_v(i))) return '⚠️ اكتب وصف مغادرة "' + label + '" قبل الحفظ';
     return null;
