@@ -593,6 +593,11 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
   <div class="form-card">
     <h3>🌍 الأرضي</h3>
+    <div class="field" id="groundWiresCfg" style="display:none">
+      <label>عدد أسلاك الأرضي في هذا البرج <span style="font-weight:400;color:#718096">(يُسجَّل كمعاينتك أنت؛ لا يُستنتج من الجهد)</span></label>
+      <select id="f_ground_wires"><option value="">-- غير محدد --</option><option value="1">سلك أرضي واحد</option><option value="2">سلكان أرضيان</option></select>
+      <div id="groundWiresHint" style="font-size:0.74rem;margin-top:3px;color:#7B341E"></div>
+    </div>
     <div class="field"><label>درجة خطورة مغادرة الأرضي</label>
       <select id="f_sev_ground" onchange="onSeverityUserChange('ground')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
     </div>
@@ -4946,7 +4951,7 @@ function updateWiresGroundUI() {
     const groundLbl1 = document.getElementById('groundLbl1');
     const groundLbl2 = document.getElementById('groundLbl2');
     const groundBlock2 = document.getElementById('groundBlock2');
-    if (currentVoltage === 400) {
+    if (typeof csGroundTwoOffered === 'function' ? csGroundTwoOffered() : currentVoltage === 400) {   // N25-R4d: القاعدة الموحّدة (الجهد 400، أو سلكان مسجّلان/مختاران صراحةً)
       groundLbl1.textContent = 'الأرضي 1 (' + spanLabel + ')';
       if (groundLbl2) groundLbl2.textContent = 'الأرضي 2 (' + spanLabel + ')';
       groundBlock2.style.display = 'flex';
@@ -4964,6 +4969,7 @@ function updateWiresGroundUI() {
     groundLbl1.textContent = 'الأرضي';
     groundBlock2.style.display = 'none';
   }
+  if (typeof csGroundSync === 'function') csGroundSync(true);   // N25-R4d: إظهار قائمة عدد الأسلاك وتلميحها (يحسبها المحرّر من الخادم + اختيار المفتش)
 }
 
 // ========================
@@ -6618,7 +6624,7 @@ const OPS_ERR_MSG = {
   base_missing: 'قاعدة الحالة غير معروفة', layout_mismatch: 'تخطيط العوازل المحفوظ يخالف هندسة البرج', geometry_unresolved: 'هندسة البرج غير محسومة', invalid_shape: 'شكل بيانات غير صالح',
   materials_incomplete: 'مادة السلاسل غير مكتملة — يلزم اختيار كل السلاسل', cycle_unknown: 'دورة المعالجة غير معروفة', legacy_patch_inconsistent: 'تعديل قديم لا يتّسق مع الحالة الحالية — لم يُطبَّق شيء',
   not_current_source: 'الكشف المقصود لم يعد مصدر الحالة الحالية', later_ops: 'عمليات أحدث على نفس المكوّنات — يلزم تصحيح صريح (للإلغاء: ألغِ الأحدث أولاً)', identity_variant: 'اسم الخط/البرج مختلف عن المسجَّل', needs_review: 'البرج بحالة تحتاج مراجعة',
-  op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', no_source: 'لا توجد حالة مرجعية لهذا البرج', circuit2_not_applicable: 'الدائرة الثانية غير منطبقة على هذا البرج', tower_type_mismatch: 'نوع البرج المسجَّل يخالف المرسل',
+  op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', no_source: 'لا توجد حالة مرجعية لهذا البرج', circuit2_not_applicable: 'الدائرة الثانية غير منطبقة على هذا البرج', invalid_ground_wires: 'قيمة عدد أسلاك الأرضي غير صالحة', ground_2_not_applicable: 'هذا البرج مسجَّل بسلك أرضي واحد: لا يُسجَّل أرضي ثانٍ إلا بعد اختيار «سلكان أرضيان»', ground_wires_conflict: 'لا يمكن تسجيل سلك أرضي واحد: الأرضي الثاني مسجَّل له بيانات أو معالجة (لم يُمحَ شيء). راجع حالته أولاً', tower_type_mismatch: 'نوع البرج المسجَّل يخالف المرسل',
   already_voided: 'أُلغي سابقاً', unknown_target: 'الهدف غير موجود', partial_item_removal_unsupported: 'إزالة جزء من عناصر مكوّن واحد غير مدعومة — أزل كل عناصره أو ألغِ المعالجة', legacy_without_delta: 'سجل قديم بلا أثر قابل للعكس'
 };
 
