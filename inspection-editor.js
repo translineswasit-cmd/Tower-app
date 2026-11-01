@@ -1,6 +1,81 @@
 /* inspection-editor.js — v335-C5r8
    محرر الكشف البصري للبرج: نافذة الكشف، بناء واجهة العوازل/السلاسل، قراءة/كتابة النموذج، حفظ الكشف والتعديل، تهيئة الكشف السابق، رصد الأقسام. منطق الحالة الموحدة (ops*) النقي والطابور يبقى بـ index.html.
    يُحمَّل ويُنفَّذ مرة واحدة فقط عند الطلب الفعلي؛ لا يعمل عند بدء التطبيق. سكربت كلاسيكي يشارك الربط العام مع index.html. */
+// ---- N25-R4i: تهيئة قسم العوازل عند فتح البرج: حالة صريحة (تحميل / تعذّر / إعادة محاولة) بدل إغفال القسم بصمت، وحاجز يمنع «الكل سليم»/الحفظ مع قسم عوازل غير مهيّأ ----
+let _insOpenSeq = 0;     // تسلسل فتح البرج: أي ردّ متأخر لفتح سابق يُهمل
+let _insCfg = null;      // { line, tower, seq, loading, failed, offline } للبرج المطلوب فتحه حالياً
+function csInsBuildTowerOptions(lineName) {
+  const tSel = document.getElementById('f_tower_number');
+  tSel.innerHTML = '<option value="">--</option>';
+  getLineTowers(lineName).forEach(t => {
+    const o = document.createElement('option');
+    o.value = t.num; o.textContent = 'برج ' + t.num + ' — ' + t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code || '';
+    tSel.appendChild(o);
+  });
+  tSel.dataset.loadedFor = lineName; tSel.disabled = false;
+  const v = Number(LINE_VOLTAGE[lineName]) || (typeof lineVoltageByName === 'function' ? Number(lineVoltageByName(lineName)) : 0) || 0;
+  currentVoltage = v;
+  updateWiresGroundUI();
+}
+// السبب الحالي لعدم تهيئة قسم العوازل (نص) أو '' إن كان القسم مبنياً سليماً. يُحسب من حالة النموذج الفعلية لا من أي علامة.
+function csInsGateReason() {
+  const line = _v('f_line_name'), tower = _v('f_tower_number');
+  const req = _insCfg && _insCfg.seq === _insOpenSeq ? _insCfg : null;   // يُصفَّر عند الإغلاق/المسح (resetTowerFieldsOnly)
+  if (!line || !tower) return req ? 'تعذّر تحديد البرج المطلوب (' + req.tower + ') في قائمة أبراج الخط على الجهاز — لم تُهيَّأ العوازل ولا تُعدّ سليمة.' : '';
+  const opt = document.getElementById('f_tower_number').selectedOptions[0];
+  if (!opt || !opt.dataset.type) return 'نوع هذا البرج غير متوفر في بيانات الخط على الجهاز — لم تُهيَّأ العوازل ولا تُعدّ سليمة.';
+  if (Number(currentVoltage) !== 132 && Number(currentVoltage) !== 400) return 'جهد هذا الخط غير معروف على الجهاز — لم تُهيَّأ العوازل ولا تُعدّ سليمة.';
+  const sec = document.getElementById('insulatorSection'), wrap = document.getElementById('phasesWrap');
+  if (!sec || sec.style.display === 'none' || !wrap || !wrap.querySelector('.phase-block')) return 'قسم العوازل لم يُهيَّأ بعد لهذا البرج — لا يُعدّ سليماً.';
+  return '';
+}
+function csInsCfgRefresh() {
+  let box = document.getElementById('insCfgState');
+  const sec = document.getElementById('insulatorSection');
+  if (!box && sec && sec.parentNode) {
+    box = document.createElement('div'); box.id = 'insCfgState'; box.setAttribute('role', 'alert');
+    box.style.cssText = 'display:none;background:#FFF5F5;border:1.5px solid #FC8181;color:#742A2A;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:0.85rem;line-height:1.8';
+    box.innerHTML = '<div data-ins-cfg-msg style="font-weight:700"></div><button type="button" class="btn btn-secondary" data-ins-cfg-retry style="margin-top:6px" onclick="csInsCfgRetry()">🔄 إعادة المحاولة</button>';
+    sec.parentNode.insertBefore(box, sec);
+  }
+  if (!box) return;
+  const why = csInsGateReason(), cfg = _insCfg;
+  if (!why) { box.style.display = 'none'; return; }
+  const msg = box.querySelector('[data-ins-cfg-msg]');
+  msg.textContent = (cfg && cfg.loading ? '⏳ جاري تحميل بيانات هذا البرج… ' : (navigator.onLine ? '⚠️ ' : '⚠️ بلا اتصال: ')) + why;
+  box.querySelector('[data-ins-cfg-retry]').disabled = !!(cfg && cfg.loading);
+  box.style.display = 'block';
+  try { csHRefresh(); } catch (e) { /* UI only */ }
+}
+// هل ما زال طلب إعادة المحاولة الملتقَط (cfg) هو نفسه الطلب/النموذج الحاليّ؟ (هوية الكائن + تسلسله + النافذة المفتوحة + الخط المحدد + البرج فارغ أو هو المطلوب). أي فتح/إغلاق/تغيير يدوي للخط أو البرج يُبطله.
+function csInsRetryValid(cfg) {
+  if (!cfg || _insCfg !== cfg || cfg.seq !== _insOpenSeq) return false;
+  const modal = document.getElementById('towerInspectionModal'); if (!modal || !modal.classList.contains('show')) return false;
+  if (_v('f_line_name') !== cfg.line) return false;
+  const t = _v('f_tower_number'); return t === '' || t === cfg.tower;
+}
+// تغيير الخط/البرج يدوياً من القوائم يُبطل أي إعادة محاولة معلّقة (الأحداث البرمجية لا تُطلق change، فلا يتأثر فتح البرج نفسه)
+document.addEventListener('change', e => {
+  const id = e && e.target && e.target.id; if (id !== 'f_line_name' && id !== 'f_tower_number') return;
+  if (_insCfg) { _insCfg = null; _insOpenSeq++; }
+  setTimeout(() => { try { csInsCfgRefresh(); } catch (x) { /* UI only */ } }, 0);
+}, true);
+// إعادة المحاولة: يُعاد جلب بيانات أبراج الخطوط إن أمكن ثم تُبنى القائمة والعوازل للبرج المطلوب نفسه. قبل أي تعديل للنموذج بعد الانتظار يُتحقَّق من هوية الطلب الملتقَط نفسه (لا مقارنة التسلسل العام بنفسه). لا يمسّ حقول الفني.
+async function csInsCfgRetry() {
+  const cfg = _insCfg; if (!csInsRetryValid(cfg) || cfg.loading) return;
+  cfg.loading = true; csInsCfgRefresh();
+  try { if (navigator.onLine && typeof loadLineTowersCache === 'function') await loadLineTowersCache(); } catch (e) { /* يبقى الفشل صريحاً */ }
+  cfg.loading = false;                                       // كائن هذا الطلب فقط؛ لا يلمس واجهة نموذج آخر
+  if (!csInsRetryValid(cfg)) return;                         // فُتح/أُغلق/تغيّر الخط أو البرج أثناء الانتظار: يُهمل الطلب كلياً (لا بناء، لا قراءة سابقة، لا تحديث واجهة)
+  const edited = _prefillUserEdited;
+  csInsBuildTowerOptions(cfg.line);
+  document.getElementById('f_tower_number').value = cfg.tower;
+  onTowerChangeOriginal();                                  // يبني نوع البرج والعوازل فقط؛ لا إبطال ولا مسح لما أدخله الفني
+  _prefillUserEdited = edited;
+  try { csHRefresh(); } catch (e) { /* UI only */ }
+  if (_v('f_tower_number') && !edited) checkPreviousInspection(cfg.line, _v('f_tower_number'));
+  csInsCfgRefresh();
+}
 function openTowerModalImpl(lineName, towerNum, scrollY0) {
   towerGridScrollY = (typeof scrollY0 === 'number') ? scrollY0 : window.scrollY; // نحفظ موضع التمرير الحالي بشبكة الأبراج حتى نرجع له عند الإغلاق
   pushLevel(closeTowerInspectionModal);
@@ -13,23 +88,17 @@ function openTowerModalImpl(lineName, towerNum, scrollY0) {
   if (!dateField.value || dateField.value !== todayStr) {
     dateField.value = todayStr;
   }
+  // N25-R4i: خيارات البرج والجهد تُبنى من بيانات الخط الفعلية عند كل فتح. العلامة السابقة dataset.loadedFor كانت تُوهم أن القائمة جاهزة بعد أن يفرّغها clearForm() أو يبدّلها onLineChange()/setFormData()،
+  // فيبقى الاختيار فارغاً (قسم العوازل مخفي، «اختر البرج أولاً…»، الجهد 0). لا اعتماد على أي علامة أو متغير موروث.
   const tSel = document.getElementById('f_tower_number');
-  if (tSel.dataset.loadedFor !== lineName) {
-    tSel.innerHTML = '<option value="">--</option>';
-    getLineTowers(lineName).forEach(t => {
-      const o = document.createElement('option');
-      o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code||'';
-      tSel.appendChild(o);
-    });
-    tSel.dataset.loadedFor = lineName;
-    tSel.disabled = false;
-    currentVoltage = LINE_VOLTAGE[lineName];
-    updateWiresGroundUI();
-  }
+  _insOpenSeq++; _insCfg = { line: lineName, tower: String(towerNum), seq: _insOpenSeq, loading: false, failed: false, offline: false };
+  csInsBuildTowerOptions(lineName);
   tSel.value = towerNum;
   onTowerChange();
+  csInsCfgRefresh();
   document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + towerNum;
   document.getElementById('towerInspectionModal').classList.add('show');
+  csInsCfgRefresh();   // N25-R4i: بعد ظهور النافذة (يُظهر خطأ/إعادة محاولة صريحة إن لم تُهيَّأ العوازل)
   // بدون هذا، فتح البرج التالي كان يبقي نافذة الكشف بنفس موضع التمرير القديم (عادة قرب الأسفل عند
   // زر الحفظ) بدل الرجوع لأعلاها — فتظهر الملاحظات مباشرة بدل قسم العوازل
   const modalBox = document.querySelector('#towerInspectionModal .modal-box');
@@ -51,6 +120,7 @@ function closeTowerInspectionModal() {
 function resetTowerFieldsOnly() {
   invalidatePrefill(); // v334
   discardPendingInspectionAttemptForForm(); // إلغاء صريح لمحاولة هذا النموذج المعلّقة (قبل مسح الحقول)
+  _insCfg = null; _insOpenSeq++;   // N25-R4i: لا طلب فتح معلّق بعد الإغلاق/المسح
   document.getElementById('f_tower_number').value = '';
   document.getElementById('f_tower_type').value = '';
   document.getElementById('towerInfoBox').style.display = 'none';
@@ -65,7 +135,11 @@ function resetTowerFieldsOnly() {
 function onTowerChangeOriginal() {
   const sel = document.getElementById('f_tower_number');
   const opt = sel.selectedOptions[0];
-  if (!opt || !opt.dataset.type) { document.getElementById('towerInfoBox').style.display='none'; document.getElementById('insulatorSection').style.display='none'; updateWiresGroundUI(); return; }
+  if (!opt || !opt.dataset.type) {
+    document.getElementById('towerInfoBox').style.display='none'; document.getElementById('insulatorSection').style.display='none';
+    { const w = document.getElementById('phasesWrap'); if (w) w.innerHTML = ''; }   // N25-R4i: لا يبقى بناء/حالة عوازل برج سابق
+    insulatorState = {R:[],S:[],T:[]}; insulatorCycleState = {R:[],S:[],T:[]}; insulatorState2 = {R:[],S:[],T:[]}; insulatorCycleState2 = {R:[],S:[],T:[]}; chainTypes = {R:[],S:[],T:[]}; chainTypes2 = {R:[],S:[],T:[]};
+    updateWiresGroundUI(); try { csInsCfgRefresh(); } catch (e) { /* UI only */ } return; }
   const type = opt.dataset.type;       // النص العربي للعرض فقط (مثل "برج شد")
   const typeCode = opt.dataset.typeCode || type; // الكود الحقيقي (XC/XD/S/T...) لمنطق التصنيف
   document.getElementById('f_tower_type').value = typeCode;
@@ -489,6 +563,7 @@ function csHUncheck(id) {
 }
 function csHOnToggle(id, on) { if (on) csHRequest(id); else csHUncheck(id); csHRefresh(); }
 function csHMaster(on) {
+  if (on) { const _g = csInsGateReason(); if (_g) { showToast('⚠️ ' + _g, 'error'); csHRefresh(); return; } }   // N25-R4i: قسم عوازل غير مهيّأ لا يُعدّ سليماً
   const ids = CS_H_ORDER.filter(csHApplicable);
   if (on) ids.forEach(id => { if (!csHIsHealthy(id)) csHRequest(id); });
   else ids.slice().reverse().forEach(id => { delete _hPend[id]; if (csHSnapValid(id) && csHIsHealthy(id)) csHRestore(id); else if (CS_H[id].kind === 'ins' && _insHealthy[CS_H[id].c] && csHIsHealthy(id)) _insHealthy[CS_H[id].c] = false; });
@@ -591,6 +666,7 @@ function csHRefresh() {
   if (mcb && mbox) {
     mbox.style.display = nApp ? '' : 'none';
     mcb.checked = nApp > 0 && nOk === nApp; mcb.indeterminate = nOk > 0 && nOk < nApp;
+    { const _g = csInsGateReason(); mcb.disabled = !!_g; if (_g) { mcb.checked = false; mcb.indeterminate = false; } }   // N25-R4i
     const pc = mbox.querySelector('[data-h-master-pending]');
     if (pc) { pc.style.display = nPend ? '' : 'none'; pc.textContent = nPend ? ('⚠️ ' + nPend + ' من الأقسام فيها ضرر مسجّل وتنتظر تأكيدك بجانب كل قسم — لم تُسجَّل سليمة بعد.') : ''; }
   }
@@ -1118,6 +1194,7 @@ function withSoftTimeout(promise, ms) {
 async function saveRecord() {
   const d = getFormData();
   if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
+  { const _ig = csInsGateReason(); if (_ig) { showToast('⚠️ ' + _ig + ' أعد المحاولة قبل الحفظ.', 'error'); try { csInsCfgRefresh(); } catch (e) {} return; } }   // N25-R4i: لا حفظ مع قسم عوازل منطبق غير مهيّأ
   // v334: كشف جديد لم تكتمل تهيئته من الكشف السابق (تحميل جارٍ/فشل/جزئي/مؤجَّل) لا يُحفظ إلا بعد قرار صريح
   if (!editId) { const _why = prefillSaveBlockReason(d.line_name, d.tower_number); if (_why) { showToast(_why, 'error'); return; } }
   // v335-C2: حراسة الكتابة الفعلية (مستقلة عن حالة الواجهة): برج غير محسوم/بياناته غير سليمة/طابور غير مقروء، مادة جزئية لدائرة مجهولة، حالة/دورات غير صالحة
@@ -1469,6 +1546,7 @@ function saveEditedPendingInspection() {
   if (editingPendingInspectionIndex === null) return;
   const d = getFormData();
   if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
+  { const _ig = csInsGateReason(); if (_ig) { showToast('⚠️ ' + _ig + ' أعد المحاولة قبل الحفظ.', 'error'); return; } }   // N25-R4i
   const q = getQueue();
   q[editingPendingInspectionIndex] = d;
   if (!safeSetItem(QUEUE_KEY, JSON.stringify(q))) return;
