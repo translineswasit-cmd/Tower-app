@@ -133,30 +133,34 @@ async function generateDailyReport() {
 
   document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">⏳ جاري التوليد...</div>';
   try {
+    try { await csDirsEnsure(); } catch (e) {}   // N25-R5: ترقيم الخطوط (لمفاتيح الهوية)
     const [inspRes, thermRes, lineThermRes, treatRes] = await Promise.all([
-      sbFetch(`inspections?select=line_name,tower_number&inspection_date=eq.${date}`),
-      sbFetch(`thermal_inspections?select=line_name,tower_number&inspection_date=eq.${date}`),
+      sbFetch(`inspections?select=line_name,tower_number,tower_id&inspection_date=eq.${date}`),
+      sbFetch(`thermal_inspections?select=line_name,tower_number,tower_id&inspection_date=eq.${date}`),
       sbFetch(`line_entry_thermal?select=line_name&inspection_date=eq.${date}`),
-      sbFetch(`treatments?select=line_name,tower_number,items_treated&treatment_date=eq.${date}`)
+      sbFetch(`treatments?select=line_name,tower_number,tower_id,items_treated&treatment_date=eq.${date}`)
     ]);
     const [insp, therm, lineTherm, treat] = await Promise.all([
       inspRes.json(), thermRes.json(), lineThermRes.json(), treatRes.json()
     ]);
 
     const byLine = {};
+    // N25-R5: مجموعة أبراج بهوية: عدّها = عدد الأبراج الفعلية (لا عدد الأرقام المتميزة) — برجان بنفس رقم اللقطة في اليوم نفسه يُعدّان برجين
+    class IdSet { constructor() { this.m = new Map(); } add(k, n) { this.m.set(k, n); return this; } get size() { return this.m.size; }
+      dupNote() { const c = {}; for (const n of this.m.values()) c[n] = (c[n] || 0) + 1; const d = Object.keys(c).filter(n => c[n] > 1); return d.length ? ' (ملاحظة: برجان مختلفان حملا الرقم ' + d.join('، ') + ' في ذلك اليوم بسبب إعادة الترقيم)' : ''; } [Symbol.iterator]() { return this.m.values(); } }
     function ensure(line) {
       if (!byLine[line]) byLine[line] = {
-        visualTowers: new Set(),
-        thermalTowers: new Set(),
+        visualTowers: new IdSet(),
+        thermalTowers: new IdSet(),
         hasThermal: false,
         lineEntryThermal: false,
         // معالجات: مصفوفة كائنات { tower, types: Set }
-        ironTowers: new Set(),      // حديد → بدون إطفاء
-        insulatorTowers: new Set(), // عوازل → بإطفاء
-        wireTowers: new Set(),      // أسلاك → بإطفاء
-        groundTowers: new Set(),    // أرضي → بإطفاء
-        foundationTowers: new Set(),// قواعد → بدون إطفاء
-        fireTowers: new Set(),      // حرائق
+        ironTowers: new IdSet(),      // حديد → بدون إطفاء
+        insulatorTowers: new IdSet(), // عوازل → بإطفاء
+        wireTowers: new IdSet(),      // أسلاك → بإطفاء
+        groundTowers: new IdSet(),    // أرضي → بإطفاء
+        foundationTowers: new IdSet(),// قواعد → بدون إطفاء
+        fireTowers: new IdSet(),      // حرائق
         hasOutage: false,           // يُحدَّث لاحقاً
         hasNoOutage: false
       };
@@ -166,13 +170,13 @@ async function generateDailyReport() {
     insp.forEach(r => {
       if (!r.line_name) return;
       const e = ensure(r.line_name);
-      if (r.tower_number != null) e.visualTowers.add(String(r.tower_number));
+      if (r.tower_number != null) e.visualTowers.add(csGroupKey(r), String(r.tower_number));
     });
     therm.forEach(r => {
       if (!r.line_name) return;
       const e = ensure(r.line_name);
       e.hasThermal = true;
-      if (r.tower_number != null) e.thermalTowers.add(String(r.tower_number));
+      if (r.tower_number != null) e.thermalTowers.add(csGroupKey(r), String(r.tower_number));
     });
     lineTherm.forEach(r => {
       if (!r.line_name) return;
@@ -187,15 +191,15 @@ async function generateDailyReport() {
       let items = r.items_treated;
       if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
       if (!Array.isArray(items)) return;
-      const tNum = r.tower_number != null ? String(r.tower_number) : null;
+      const tNum = r.tower_number != null ? String(r.tower_number) : null, tKey = csGroupKey(r);
       items.forEach(it => {
         const k = (it.key || '').toLowerCase();
-        if (k.startsWith('ins'))  { if (tNum) e.insulatorTowers.add(tNum); }
-        else if (k === 'iron')    { if (tNum) e.ironTowers.add(tNum); }
-        else if (k.startsWith('wire')) { if (tNum) e.wireTowers.add(tNum); }
-        else if (k.startsWith('ground')) { if (tNum) e.groundTowers.add(tNum); }
-        else if (k === 'foundation') { if (tNum) e.foundationTowers.add(tNum); }
-        else if (k === 'fire')    { if (tNum) e.fireTowers.add(tNum); }
+        if (k.startsWith('ins'))  { if (tNum) e.insulatorTowers.add(tKey, tNum); }
+        else if (k === 'iron')    { if (tNum) e.ironTowers.add(tKey, tNum); }
+        else if (k.startsWith('wire')) { if (tNum) e.wireTowers.add(tKey, tNum); }
+        else if (k.startsWith('ground')) { if (tNum) e.groundTowers.add(tKey, tNum); }
+        else if (k === 'foundation') { if (tNum) e.foundationTowers.add(tKey, tNum); }
+        else if (k === 'fire')    { if (tNum) e.fireTowers.add(tKey, tNum); }
       });
     });
 
@@ -217,12 +221,12 @@ async function generateDailyReport() {
       // كشف بصري
       if (info.visualTowers.size > 0) {
         const nums = sortT(info.visualTowers).join('، ');
-        notesParts.push(`تم الكشف البصري على الأبراج التالية: ${nums}`);
+        notesParts.push(`تم الكشف البصري على الأبراج التالية: ${nums}${info.visualTowers.dupNote()}`);
       }
       // كشف حراري بأبراج
       if (info.thermalTowers.size > 0) {
         const nums = sortT(info.thermalTowers).join('، ');
-        notesParts.push(`تم الكشف الحراري على الأبراج: ${nums}`);
+        notesParts.push(`تم الكشف الحراري على الأبراج: ${nums}${info.thermalTowers.dupNote()}`);
       }
       // معالجة حديد
       if (info.ironTowers.size > 0) {

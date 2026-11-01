@@ -560,12 +560,12 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
   }
   function openInspLine(l) {
     openView({ kind: 'insp_towers', title: l.line, sub: 'الأبراج المكشوفة في الفترة (' + fmt(l.towers) + ' برجاً · ' + fmt(l.tower_days) + ' كشفاً يومياً) — ليست بالضرورة كل أبراج الخط', params: { p_line: l.line },
-      next: row => ({ kind: 'insp_days', title: 'برج ' + row.tower + ' — ' + l.line, sub: 'أيام الكشف في الفترة', params: { p_line: l.line, p_tower: row.tower }, next: null }) });
+      next: row => ({ kind: 'insp_days', title: 'برج ' + row.tower + ' — ' + l.line, sub: 'أيام الكشف في الفترة', params: psTowerParams(l.line, row), next: null }) });
   }
   function treatTowersView(line, type) {
     const m = tmeta(type);
     return { kind: 'treat_towers', title: (line ? line + ' — ' : '') + m.n, sub: 'الأبراج التي عولجت (' + rangeSub() + ')', params: Object.assign({ p_line: line }, type ? { p_type: type } : {}),
-      next: row => ({ kind: 'treat_records', title: 'برج ' + row.tower + ' — ' + m.n, sub: line, params: Object.assign({ p_line: line, p_tower: row.tower }, type ? { p_type: type } : {}), next: null }) };
+      next: row => ({ kind: 'treat_records', title: 'برج ' + row.tower + ' — ' + m.n, sub: line, params: Object.assign(psTowerParams(line, row), type ? { p_type: type } : {}), next: null }) };
   }
   function openTreatType(d, t) {
     const m = tmeta(t.type), rows = [];
@@ -577,7 +577,7 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
   function openLineMenu(d, l) {
     const name = l.line, it = (d.insp.by_line || []).find(x => x.line === name), tr = (d.treat.by_line || []).find(x => x.line === name), em = (d.emg.by_line || []).find(x => x.line === name);
     const local = [];
-    if (it) local.push({ head: 'الأبراج المكشوفة', val: fmt(it.towers) + ' برجاً', note: fmt(it.tower_days) + ' كشفاً يومياً · ' + fmt(it.days) + ' يوم كشف', go: () => ({ kind: 'insp_towers', title: name, sub: 'الأبراج المكشوفة في الفترة', params: { p_line: name }, next: row => ({ kind: 'insp_days', title: 'برج ' + row.tower + ' — ' + name, sub: 'أيام الكشف', params: { p_line: name, p_tower: row.tower }, next: null }) }) });
+    if (it) local.push({ head: 'الأبراج المكشوفة', val: fmt(it.towers) + ' برجاً', note: fmt(it.tower_days) + ' كشفاً يومياً · ' + fmt(it.days) + ' يوم كشف', go: () => ({ kind: 'insp_towers', title: name, sub: 'الأبراج المكشوفة في الفترة', params: { p_line: name }, next: row => ({ kind: 'insp_days', title: 'برج ' + row.tower + ' — ' + name, sub: 'أيام الكشف', params: psTowerParams(name, row), next: null }) }) });
     if (tr) {
       (tr.types || []).forEach(ty => {
         const m = tmeta(ty.type);
@@ -665,12 +665,12 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
   function rowHtml(v, r, i) {
     switch (v.kind) {
       case 'insp_towers':
-        return `<button class="ps-row" data-sh="row" data-i="${i}"><div class="ps-rt"><span class="nm">برج ${esc(r.tower)}</span><span class="vl">${fmt(r.days)} <small>يوم كشف</small></span></div><div class="ps-note">أول كشف ${esc(dateStr(r.first))} · آخر كشف ${esc(dateStr(r.last))}${r.raw_rows > r.days ? ` · <b>${fmt(r.raw_rows - r.days)}</b> سجل مكرّر عُدّ مرة` : ''}</div></button>`;
+        return `<button class="ps-row" data-sh="row" data-i="${i}"><div class="ps-rt"><span class="nm">برج ${esc(r.tower)}</span><span class="vl">${fmt(r.days)} <small>يوم كشف</small></span></div>${psNoteHtml(r)}<div class="ps-note">أول كشف ${esc(dateStr(r.first))} · آخر كشف ${esc(dateStr(r.last))}${r.raw_rows > r.days ? ` · <b>${fmt(r.raw_rows - r.days)}</b> سجل مكرّر عُدّ مرة` : ''}</div></button>`;
       case 'insp_days':
-        return `<button class="ps-row" data-sh="row" data-i="${i}"><div class="ps-rt"><span class="nm">برج ${esc(r.tower)} — ${esc(dateStr(r.date))}</span><span class="vl"><small>عرض الكشف ‹</small></span></div><div class="ps-note">${esc(r.line)}${r.raw_rows > 1 ? ` · ${fmt(r.raw_rows)} سجلات لنفس اليوم عُدّت كشفاً واحداً (تُركَّب عند الفتح)` : ''}</div></button>`;
+        return `<button class="ps-row" data-sh="row" data-i="${i}"><div class="ps-rt"><span class="nm">برج ${esc(r.tower)} — ${esc(dateStr(r.date))}</span><span class="vl"><small>عرض الكشف ‹</small></span></div>${psNoteHtml(r)}<div class="ps-note">${esc(r.line)}${r.raw_rows > 1 ? ` · ${fmt(r.raw_rows)} سجلات لنفس اليوم عُدّت كشفاً واحداً (تُركَّب عند الفتح)` : ''}</div></button>`;
       case 'treat_towers': {
         const qn = r.unit ? qtyPlain({ unit: r.unit, qty: r.qty, pt: r.qty_partial_records, un: r.qty_unknown_records }) : '';
-        return `<button class="ps-row" data-sh="row" data-i="${i}"><div class="ps-rt"><span class="nm">برج ${esc(r.tower)}</span><span class="vl">${fmt(r.records)} <small>سجل</small></span></div><div class="ps-note">آخر معالجة ${esc(dateStr(r.last))}${qn ? ' · ' + esc(qn) : ''}</div></button>`;
+        return `<button class="ps-row" data-sh="row" data-i="${i}"><div class="ps-rt"><span class="nm">برج ${esc(r.tower)}</span><span class="vl">${fmt(r.records)} <small>سجل</small></span></div>${psNoteHtml(r)}<div class="ps-note">آخر معالجة ${esc(dateStr(r.last))}${qn ? ' · ' + esc(qn) : ''}</div></button>`;
       }
       case 'treat_records': {
         const types = (r.types || []).map(t => `<span class="ps-pill soft">${esc(tmeta(t).n)}</span>`).join('');
@@ -681,10 +681,10 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
           else if (r.qty_state === 'partial') qn = `<div class="ps-note">الكمية المسجّلة: <b style="color:#1a2e4a">${fmt(r.qty)} ${u}</b> — <b>جزئي:</b> بعض البنود بلا عدد (غير محسوب)</div>`;
           else qn = `<div class="ps-note">الكمية المسجّلة: <b style="color:#1a2e4a">${fmt(r.qty)} ${u}</b></div>`;
         }
-        return `<div class="ps-card"><div class="top"><span>برج ${esc(r.tower)} · ${esc(dateStr(r.date))}</span><span style="font-weight:600;color:#718096">${esc(r.by || '')}</span></div><div class="mut">${esc(r.line)}</div><div class="ps-pills">${itemPills(r.items)}</div>${types && (r.types || []).length > 1 ? `<div class="ps-pills">${types}</div>` : ''}${qn}${r.orphan ? '<div class="ps-orph">⚠ مرتبطة بكشف أُلغي سابقاً — محتسبة لأن المعالجة نفسها لم تُلغَ</div>' : ''}</div>`;
+        return `<div class="ps-card"><div class="top"><span>برج ${esc(r.tower)} · ${esc(dateStr(r.date))}</span><span style="font-weight:600;color:#718096">${esc(r.by || '')}</span></div><div class="mut">${esc(r.line)}</div>${psNoteHtml(r)}<div class="ps-pills">${itemPills(r.items)}</div>${types && (r.types || []).length > 1 ? `<div class="ps-pills">${types}</div>` : ''}${qn}${r.orphan ? '<div class="ps-orph">⚠ مرتبطة بكشف أُلغي سابقاً — محتسبة لأن المعالجة نفسها لم تُلغَ</div>' : ''}</div>`;
       }
       case 'emg_records':
-        return `<div class="ps-card"><div class="top"><span>${r.type ? esc(r.type) : '<i style="color:#718096">بلا نوع مسجّل</i>'}</span><span class="ps-pill" style="--c:${r.status === 'تمت المعالجة' ? '#2F855A' : '#C05621'}">${esc(r.status || '—')}</span></div><div class="mut">${esc(r.line || 'خط غير محدد')}${r.tower ? ' · برج ' + esc(r.tower) : ''}</div><div class="mut">بُلِّغ: ${esc(dateStr(r.reported))}${r.resolved ? ' · عولج: ' + esc(dateStr(r.resolved)) : ''}${r.by ? ' · ' + esc(r.by) : ''}</div>${r.details ? `<div class="mut" style="color:#4A5568">${esc(r.details)}</div>` : ''}</div>`;
+        return `<div class="ps-card"><div class="top"><span>${r.type ? esc(r.type) : '<i style="color:#718096">بلا نوع مسجّل</i>'}</span><span class="ps-pill" style="--c:${r.status === 'تمت المعالجة' ? '#2F855A' : '#C05621'}">${esc(r.status || '—')}</span></div><div class="mut">${esc(r.line || 'خط غير محدد')}${r.tower ? ' · برج ' + esc(r.tower) : ''}</div>${psNoteHtml(r)}<div class="mut">بُلِّغ: ${esc(dateStr(r.reported))}${r.resolved ? ' · عولج: ' + esc(dateStr(r.resolved)) : ''}${r.by ? ' · ' + esc(r.by) : ''}</div>${r.details ? `<div class="mut" style="color:#4A5568">${esc(r.details)}</div>` : ''}</div>`;
       case 'wo_records':
         return `<div class="ps-card"><div class="top"><span>${esc(r.work_type || 'بلا بيان')}</span><span style="font-weight:600;color:#718096">${esc(dateStr(r.date))}</span></div><div class="mut">${esc(r.line || '—')} · أمر عمل صادر</div></div>`;
       case 'tg_records':
@@ -697,6 +697,16 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
   const SEV = { ok: '🟢 سليم', simple: '⚪ مغادرة بسيطة', moderate: '🟡 مغادرة متوسطة', below_critical: '🟠 مغادرة دون الحرجة', critical: '🔴 مغادرة حرجة' };
   const WASH = { clean: '🟢 نظيف', needs_washing: '💧 يحتاج غسل', very_dirty: '🔴 ملوث جداً (منطقة معامل)' };
   const MAT = { glass: 'زجاج', plastic: 'بلاستك', ceramic: 'سيراميك' };
+  // N25-R5: النزول من برج إلى أيامه/سجلاته بالهوية الدائمة (p_tower_id) حين يوفّرها الخادم؛ الصف بلا هوية يبقى بالرقم (خط لم يُعَد ترقيمه أو غير مرتبط)
+  function psTowerParams(line, row) { return row && row.tower_id ? { p_line: line, p_tower_id: row.tower_id } : { p_line: line, p_tower: row.tower }; }
+  function psNote(r) {
+    if (!r) return '';
+    if (r.identity === 'retired') return 'برج محذوف — أرشيفه محفوظ';
+    if (r.identity === 'active' && r.current_number != null && String(r.current_number) !== String(r.tower)) return 'رقمه الحالي ' + r.current_number;
+    if (r.identity === 'unlinked' && typeof csIsZero === 'function' && !csIsZero(r.line)) return 'غير مرتبط بهوية البرج';
+    return '';
+  }
+  function psNoteHtml(r) { const n = psNote(r); return n ? `<div class="ps-note" style="color:#7B341E">${esc(n)}</div>` : ''; }
   function inspectView(r) {
     return { kind: 'inspect', title: 'برج ' + r.tower + ' — ' + dateStr(r.date), sub: r.line + ' · الكشف المحفوظ لهذا اليوم', row: r, ids: Array.isArray(r.ids) ? r.ids.slice() : [], rid: 0, loading: false, error: null, comp: null };
   }
@@ -719,7 +729,7 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
     v.loading = false;
     if (err) { v.error = err; renderSheet(false); return; }
     // لا يُعرض صف لا يطابق خط/برج/تاريخ البطاقة (لا تخمين)
-    const good = rows.filter(x => { const m = normLine(x.line_name) === normLine(r0.line) && String(x.tower_number).trim() === String(r0.tower).trim() && String(x.inspection_date).slice(0, 10) === String(r0.date).slice(0, 10); if (!m) mismatch++; return m; });
+    const good = rows.filter(x => { const m = (r0.tower_id ? String(x.tower_id || '') === String(r0.tower_id) : (normLine(x.line_name) === normLine(r0.line) && String(x.tower_number).trim() === String(r0.tower).trim())) && String(x.inspection_date).slice(0, 10) === String(r0.date).slice(0, 10); if (!m) mismatch++; return m; });
     let skipped = 0;
     const comp = (typeof dayCompose === 'function') ? dayCompose(good, id => { const c = typeof opsIsVoided === 'function' && opsIsVoided(id); if (c) skipped++; return c; })[0] : good[0];
     if (!comp) { v.error = skipped ? 'voided' : 'empty'; renderSheet(false); return; }
@@ -855,5 +865,5 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
   window.addEventListener('online', () => { if (pageActive() && S.mounted && S.tok && tokOk(S.tok)) { renderBody(); if (!S.cur || Date.now() - S.cur.at > FRESH_MS) load(false); } });
   window.addEventListener('offline', () => { if (pageActive() && S.mounted) renderBody(); });
 
-  window.PeriodStats = { open, purge, deactivate, sheetBack, _state: S, _sheet: SH, _phaseLine: phaseLine, _inspectHtml: inspectHtml };
+  window.PeriodStats = { open, purge, deactivate, sheetBack, _state: S, _sheet: SH, _phaseLine: phaseLine, _inspectHtml: inspectHtml, _towerParams: psTowerParams, _note: psNote };
 })();

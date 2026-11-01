@@ -122,7 +122,8 @@ function renderThermalArchive() {
     const mLine = !lineFilter || r.line_name === lineFilter;
     const mFrom = !dateFrom || (r.inspection_date && r.inspection_date >= dateFrom);
     const mTo = !dateTo || (r.inspection_date && r.inspection_date <= dateTo);
-    const mTower = !towerList.length || (r.tower_number != null && towerList.includes(String(r.tower_number)));
+    const fnum = csFilterNumber(r);   // N25-R5: الرقم الحالي لهوية البرج على خط أُعيد ترقيمه (null = محذوف/غير محلول فلا يطابق مرشّح رقم)
+    const mTower = !towerList.length || (fnum != null && towerList.includes(String(fnum)));
     return mLine && mFrom && mTo && mTower;
   });
 
@@ -130,7 +131,9 @@ function renderThermalArchive() {
   if (bulkBtn) bulkBtn.style.display = (currentUser.role==='admin') ? '' : 'none';
 
   const body = document.getElementById('thermalArchiveBody');
-  if (!filteredThermal.length) { body.innerHTML = '<div class="empty-state">لا توجد قياسات</div>'; return; }
+  const unavLines = towerList.length ? csIdentUnavailableLines([...new Set(thermalRecords.filter(r => !lineFilter || r.line_name === lineFilter).map(r => r.line_name))]) : [];   // N25-R5(r2)
+  const unavHtml = unavLines.length ? '<div class="empty-state" style="background:#FFFAF0;color:#7B341E;border-radius:8px;padding:10px;margin-bottom:8px" role="alert">⚠️ ' + escapeHtml(CS_IDENT_UNAVAILABLE_TEXT) + ' — مرشّح رقم البرج لا يطابق أي قياس على: ' + unavLines.map(escapeHtml).join('، ') + '</div>' : '';
+  if (!filteredThermal.length) { body.innerHTML = unavHtml + '<div class="empty-state">لا توجد قياسات</div>'; return; }
 
   // group by date, then by line
   const byDate = {};
@@ -156,7 +159,7 @@ function renderThermalArchive() {
       rows.forEach(r => {
         const flag = isHotRecord(r) ? '<span class="hot-flag">🔴 </span>' : '';
         html += `<tr>
-          <td>${flag}${r.point_label||''}</td>
+          <td>${flag}${r.point_label||''}${(function(){ const n = csRowNote(r); return n ? '<div style="font-size:0.7rem;color:#7B341E">' + escapeHtml(n) + '</div>' : ''; })()}</td>
           <td>${fmtTemp(r, r.r1)}</td><td>${fmtTemp(r, r.r2)}</td>
           <td>${fmtTemp(r, r.s1)}</td><td>${fmtTemp(r, r.s2)}</td>
           <td>${fmtTemp(r, r.t1)}</td><td>${fmtTemp(r, r.t2)}</td>
@@ -168,7 +171,7 @@ function renderThermalArchive() {
     });
     html += `</div>`;
   });
-  body.innerHTML = html;
+  body.innerHTML = unavHtml + html;
 }
 
 // ربط واجهة الأرشيف بجالب البيانات الدائم في index.html (loadThermalArchive): نفس التسلسل الأصلي بالضبط
@@ -184,6 +187,7 @@ thermalArchiveUI = {
     lineSel.innerHTML = '<option value="">-- كل الخطوط --</option>' + uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
     if (uniqueLines.includes(currentVal)) lineSel.value = currentVal;
     renderThermalArchive();
+    try { csDirsEnsure(uniqueLines).then(() => { if (document.getElementById('thermalArchiveBody')) renderThermalArchive(); }); } catch (e) {}   // N25-R5: ملاحظات الهوية بعد وصول دليل الأبراج
   }
 };
 (window.__thermalModules = window.__thermalModules || {}).archive = true;

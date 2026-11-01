@@ -59,6 +59,7 @@ async function _reportAuxFetch(table, extra, dateCol, lines, from, to) {
 async function reportEnsureAux(types, force, scope) {
   scope = scope || reportCaptureScope();
   const { lines, from, to, sess } = scope;
+  try { await csDirsEnsure(lines); } catch (e) {}   // N25-R5
   const key = _reportAuxScopeKey(lines, from, to);
   const failed = []; const rows = { treat: [], forms: [], raw: [] };
   const run = async (slot, fn) => {
@@ -219,7 +220,7 @@ function reportErrorText(e) {
 // ---- v335-C6r23 (P01-C): قراءة خفيفة لعدّاد النتيجة + قراءة خطوط متعددة بمساواة الخط + ذاكرة قصيرة العمر لصفوف الخادم الخام ----
 // العدّ لا يعتمد إلا على: id (الإلغاء/الأحدث)، line_name/tower_number/inspection_date (مفتاح اليوم والتكرار)، created_at (الأحدث). dayCompose وdedupeLatestPerTowerDate
 // وreportTowerPasses لا تقرأ غيرها لتحديد أي سجل يبقى. التصدير لا يستعمل هذا المسار أبداً (select=* كاملاً دائماً).
-const REPORT_COUNT_FIELDS = 'id,line_name,tower_number,inspection_date,created_at';
+const REPORT_COUNT_FIELDS = 'id,line_name,tower_number,tower_id,inspection_date,created_at';
 const REPORT_ROWS_TTL = 20000;            // = حداثة علامات الإلغاء (_reportEnsureMarks)
 const REPORT_LINES_CONCURRENCY = 3;
 let _reportRowsCache = null;              // { key, at, rows } — صفوف الخادم الخام فقط (قبل dayCompose/الإلغاء؛ تُطبَّق العلامات الحالية دائماً عند كل استعمال)
@@ -257,6 +258,7 @@ async function _reportFetchLinesEq(baseQuery, lines) {
   return [].concat.apply([], results).sort(_reportRowOrder);
 }
 async function fetchInspectionsForReport(lines, from, to, force, out, opts) {
+  try { await csDirsEnsure(lines); } catch (e) {}   // N25-R5: دليل الأبراج لتطبيق مفاتيح الهوية/المرشّح
   if (!(await _reportEnsureMarks(force))) throw new Error('report_marks_unavailable');
   let rows, basisNow = null;
   if (!from && !to && csLiveEnabled()) {
@@ -491,9 +493,11 @@ function toggleAllReportTowers() {
 }
 
 // دالة تحقق موحّدة: هل رقم برج معيّن يمر فلتر الأبراج الحالي (كل / نطاق / معيّنة)؟
-function reportTowerPasses(towerNumber) {
+function reportRowPasses(r) { return reportTowerPasses(csFilterNumber(r), true); }   // N25-R5: المرشّح يقارن الرقم الحالي لهوية البرج لا لقطة الصف
+function reportTowerPasses(towerNumber, fromRow) {
   const mode = document.querySelector('input[name="repTowersMode"]:checked').value;
   if (mode === 'all') return true;
+  if (towerNumber == null) return false;   // برج محذوف/غير محلول: لا يطابق مرشّح أرقام
   if (mode === 'range') {
     const from = parseFloat(document.getElementById('repTowerFrom').value);
     const to = parseFloat(document.getElementById('repTowerTo').value);
@@ -529,7 +533,7 @@ function treatmentMatchesCategories(t, categories) {
 function dedupeLatestPerTowerDate(rows, dateField) {
   const map = new Map();
   rows.forEach(r => {
-    const key = r.line_name + '||' + r.tower_number + '||' + (r[dateField] || '');
+    const key = csGroupKey(r) + '||' + (r[dateField] || '');   // N25-R5
     const existing = map.get(key);
     if (!existing || (r.created_at || '') > (existing.created_at || '')) map.set(key, r);
   });
@@ -541,7 +545,7 @@ async function getReportFilteredInspections(force, out, opts) {
   const from = document.getElementById('repFrom').value;
   const to = document.getElementById('repTo').value;
   const rows = await fetchInspectionsForReport(lines, from, to, force, out, opts);
-  const base = rows.filter(r => reportTowerPasses(r.tower_number));
+  const base = rows.filter(r => reportRowPasses(r));
   // ملاحظة مهمة: لا نفلتر بالتصنيف هنا — كل برج مطابق للخط/التاريخ/نطاق الأبراج يظهر بالتقرير دائماً،
   // والتصنيف المختار يتحكم بس بشنو المعلومات تُعرض بكل بطاقة (سليم أو تفاصيل الضرر) — راجع buildReportInspectionCardCanvas
   return sortByLineThenTower(dedupeLatestPerTowerDate(base, 'inspection_date'), 'tower_number');
@@ -556,7 +560,7 @@ function getReportFilteredTreatments(auxRows) {
     (!lines || lines.includes(t.line_name)) &&
     (!from || (t.treatment_date||'') >= from) &&
     (!to || (t.treatment_date||'') <= to) &&
-    reportTowerPasses(t.tower_number)
+    reportRowPasses(t)
   );
   const latest = dedupeLatestPerTowerDate(base, 'treatment_date');
   return sortByLineThenTower(latest.filter(t => treatmentMatchesCategories(t, categories)), 'tower_number');
@@ -572,7 +576,7 @@ function getReportFilteredThermalForms(auxRows) {
     .map(f => ({
       ...f,
       rows: (Array.isArray(f.rows) ? f.rows : [])
-        .filter(row => row.tower_number && reportTowerPasses(row.tower_number))
+        .filter(row => row.tower_number && (!csIsZero(f.line_name) ? document.querySelector('input[name="repTowersMode"]:checked').value === 'all' : reportTowerPasses(row.tower_number)))
         .sort((a,b) => (parseInt(a.tower_number)||0) - (parseInt(b.tower_number)||0))
     }))
     .filter(f => f.rows.length);
@@ -588,7 +592,7 @@ function getReportFilteredThermalRaw(auxRows) {
     (!lines || lines.includes(r.line_name)) &&
     (!from || (r.inspection_date||'') >= from) &&
     (!to || (r.inspection_date||'') <= to) &&
-    reportTowerPasses(r.tower_number)
+    reportRowPasses(r)
   );
 }
 
@@ -603,10 +607,13 @@ function monthNameFromDate(dateStr) {
 }
 
 // يبني كل ملاحظات الكشف الحراري الخاصة ببرج معيّن (من القراءات الخام + صفوف الاستمارات الرسمية)
-function getThermalNotesForTower(lineName, towerNumber, thermalRaw, thermalForms) {
+function getThermalNotesForTower(lineName, towerNumber, thermalRaw, thermalForms, gkey) {
   const notes = [];
+  const legacyKey = lineName + '||' + String(towerNumber), formsOk = !gkey || gkey === legacyKey || String(gkey).indexOf('F:') === 0;   // N25-R5: صفوف الاستمارات الرسمية بلا هوية: لا تُربط بالرقم على خط أُعيد ترقيمه
   thermalRaw.forEach(r => {
-    if (r.line_name !== lineName || String(r.tower_number) !== String(towerNumber)) return;
+    if (gkey && String(gkey).indexOf('F:') !== 0) { if (csGroupKey(r) !== gkey) return; }
+    else if (r.line_name !== lineName || String(r.tower_number) !== String(towerNumber)) return;
+    if (gkey && String(gkey).indexOf('F:') === 0) return;
     const phases = [['R', [r.r1, r.r2]], ['S', [r.s1, r.s2]], ['T', [r.t1, r.t2]]];
     let hot = [];
     phases.forEach(([p, vals]) => {
@@ -616,7 +623,7 @@ function getThermalNotesForTower(lineName, towerNumber, thermalRaw, thermalForms
     else notes.push(`✅ هذا البرج تم كشفه حرارياً بتاريخ ${r.inspection_date} والنتيجة سليم`);
   });
   thermalForms.forEach(f => {
-    if (f.line_name !== lineName) return;
+    if (f.line_name !== lineName || !formsOk) return;
     (f.rows||[]).forEach(row => {
       if (String(row.tower_number) !== String(towerNumber)) return;
       const phases = [['R', row.r], ['S', row.s], ['T', row.t]];
@@ -700,10 +707,14 @@ async function _updateReportResultCountNow() {
     // نحسب عدد الأبراج المشمولة (من المصدرين معاً: القراءات الخام + صفوف الاستمارات الرسمية)
     // بدل عدد الاستمارات — لأن التقرير صار يعرض ملاحظة لكل برج لا جدول لكل استمارة
     const towers = new Set();
-    getReportFilteredThermalRaw(aux.rows.raw).forEach(r => towers.add(r.line_name + '||' + r.tower_number));
-    getReportFilteredThermalForms(aux.rows.forms).forEach(f => (f.rows||[]).forEach(row => towers.add(f.line_name + '||' + row.tower_number)));
+    getReportFilteredThermalRaw(aux.rows.raw).forEach(r => towers.add(csGroupKey(r)));
+    getReportFilteredThermalForms(aux.rows.forms).forEach(f => (f.rows||[]).forEach(row => towers.add(!csIsZero(f.line_name) ? 'F:' + f.line_name + '||' + row.tower_number : f.line_name + '||' + row.tower_number)));
     parts.push(`🌡️ كشف حراري: ${towers.size} برج`);
   }
+  try {   // N25-R5(r2): مرشّح الأبراج بالرقم على خط ترقيمه غير معروف = غير متاح صراحةً (لا مطابقة بالرقم)
+    const m = document.querySelector('input[name="repTowersMode"]:checked');
+    if (m && m.value !== 'all') { const ul = csIdentUnavailableLines(getReportSelectedLines() || Object.keys(LINES_DATA || {})); if (ul.length) parts.push('⚠️ ' + CS_IDENT_UNAVAILABLE_TEXT + ' (' + ul.length + ' خط) — لا تطابق أرقام الأبراج هذه الخطوط'); }
+  } catch (e) {}
   if (!mine()) return;
   el.textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
 }
@@ -981,15 +992,15 @@ async function generateUnifiedReportPDF() {
   // قائمة موحّدة لكل (خط، برج) مذكور بأي من الأنواع المختارة — بدل أقسام منفصلة، كل برج يطلع
   // مرة وحدة وتحته كل بياناته بالترتيب: كشف ← معالجة ← ملاحظات الكشف الحراري (لو وُجدت)
   const towerMap = new Map();
-  function addTower(line_name, tower_number) {
+  function addTower(line_name, tower_number, gkey) {
     if (!line_name || tower_number == null || tower_number === '') return;
-    const key = line_name + '||' + tower_number;
-    if (!towerMap.has(key)) towerMap.set(key, { line_name, tower_number });
+    const key = gkey || (line_name + '||' + tower_number);
+    if (!towerMap.has(key)) towerMap.set(key, { line_name, tower_number, gkey: key });
   }
-  inspections.forEach(r => addTower(r.line_name, r.tower_number));
-  treatments.forEach(t => addTower(t.line_name, t.tower_number));
-  thermalRaw.forEach(r => addTower(r.line_name, r.tower_number));
-  thermalForms.forEach(f => (f.rows||[]).forEach(row => addTower(f.line_name, row.tower_number)));
+  inspections.forEach(r => addTower(r.line_name, r.tower_number, csGroupKey(r)));   // N25-R5: البرج = هويته الدائمة على خط أُعيد ترقيمه
+  treatments.forEach(t => addTower(t.line_name, t.tower_number, csGroupKey(t)));
+  thermalRaw.forEach(r => addTower(r.line_name, r.tower_number, csGroupKey(r)));
+  thermalForms.forEach(f => (f.rows||[]).forEach(row => addTower(f.line_name, row.tower_number, !csIsZero(f.line_name) ? 'F:' + f.line_name + '||' + row.tower_number : null)));
   const towerList = sortByLineThenTower([...towerMap.values()], 'tower_number');
 
   // v335-C6r8c: كل انتظار غير متزامن (مكتبة/بطاقات/مشاركة) يُتبع بإعادة التحقق من الجلسة والنطاق وتذكرة التصدير؛ الإبطال يوقف الإخراج
@@ -1024,10 +1035,10 @@ async function generateUnifiedReportPDF() {
     doc.text(new Date().toLocaleDateString('en-GB') + (types.includes('inspection') ? '  |  ' + reportBasisText(true, basisP.basis) : ''), pageW/2, 38, { align: 'center' });
     y = 50;
 
-    for (const { line_name, tower_number } of towerList) {
-      const insForTower = inspections.filter(r => r.line_name === line_name && String(r.tower_number) === String(tower_number));
-      const treatForTower = treatments.filter(t => t.line_name === line_name && String(t.tower_number) === String(tower_number));
-      const thermalNotes = types.includes('thermal') ? getThermalNotesForTower(line_name, tower_number, thermalRaw, thermalForms) : [];
+    for (const { line_name, tower_number, gkey } of towerList) {
+      const insForTower = inspections.filter(r => csGroupKey(r) === gkey);
+      const treatForTower = treatments.filter(t => csGroupKey(t) === gkey);
+      const thermalNotes = types.includes('thermal') ? getThermalNotesForTower(line_name, tower_number, thermalRaw, thermalForms, gkey) : [];
 
       for (const r of insForTower) { for (const card of await buildReportInspectionCardCanvas(r, categories)) await drawCard(card); }
       for (const t of treatForTower) await drawCard(await buildTreatLogRecordCanvas(t));
@@ -1102,7 +1113,7 @@ let _hubV = _hubV0();
 function hubVisualReset() { _hubSeq++; _hubV = _hubV0(); }
 function hubVoided(id) { try { return typeof opsIsVoided === 'function' && opsIsVoided(id); } catch (e) { return false; } }
 function hubCutoffDate() { const d = new Date(); d.setMonth(d.getMonth() - 6); return d.toISOString().split('T')[0]; }
-const HUB_LIGHT_FIELDS = 'id,line_name,tower_number,tower_type,created_by_name,created_at,inspection_date,sev_foundation,sev_iron,sev_insulator,sev_wires,sev_ground,sev_fire';
+const HUB_LIGHT_FIELDS = 'id,line_name,tower_number,tower_id,tower_type,created_by_name,created_at,inspection_date,sev_foundation,sev_iron,sev_insulator,sev_wires,sev_ground,sev_fire';
 function _hubGuard() {
   const seq = ++_hubSeq, s = _reportSess();
   return { seq, ok: () => seq === _hubSeq && _reportSessOk(s) && hubBrowseType === 'visual' };

@@ -52,8 +52,11 @@ function _histSessOk(s) { return !!s && s.gen === _csAuthGen && s.tok === CS_AUT
 
 function histParts(f) {
   const p = [];
-  if (f.line) p.push('line_name=eq.' + encodeURIComponent(f.line));
-  if (f.tower) p.push('tower_number=eq.' + encodeURIComponent(f.tower));
+  if (f.tid) p.push('tower_id=eq.' + encodeURIComponent(f.tid));   // N25-R5: هوية دائمة — تستغني عن الخط/الرقم (يتغيّران بإعادة الترقيم)
+  else {
+    if (f.line) p.push('line_name=eq.' + encodeURIComponent(f.line));
+    if (f.tower) p.push('tower_number=eq.' + encodeURIComponent(f.tower));
+  }
   if (f.from) p.push('treatment_date=gte.' + encodeURIComponent(f.from));
   if (f.to) p.push('treatment_date=lte.' + encodeURIComponent(f.to));
   return p;
@@ -163,7 +166,7 @@ function histViewVisible() {
 }
 function histLive(st) { return st === _histStore && _histSessOk(st.sess); }
 function histNewStore(filters) {
-  return { id: ++_histStoreSeq, sess: _histSess(), filters, pg: histPagerNew(filters), rows: [], ids: new Set(), status: 'idle', err: null, more: false, busy: false, capped: false, stale: false, banner: '' };
+  return { id: ++_histStoreSeq, sess: _histSess(), filters, pg: histPagerNew(filters), rows: [], ids: new Set(), status: 'idle', err: null, more: false, busy: false, capped: false, stale: false, banner: filters && filters.none === 'unavailable' ? '⚠️ ' + CS_IDENT_UNAVAILABLE_TEXT + ' — لا نتائج بالرقم. أعد الضغط على «عرض النتائج» عند توفر الاتصال.' : (filters && filters.none === 'none' ? 'لا يوجد برج فعّال بهذا الرقم بعد إعادة الترقيم — لا تُعرض معالجات برج آخر.' : '') };
 }
 function _digitsAscii(s) { return String(s || '').replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x6F0)).trim(); }
 function histReadFilters() {
@@ -187,6 +190,7 @@ function histCardHtml(t) {
       <div class="dep-card-header">
         <div class="dep-card-title" style="overflow-wrap:anywhere">✅ ${escapeHtml(m.line)} — برج ${escapeHtml(m.tower)}</div>
         <div class="dep-card-meta" style="overflow-wrap:anywhere">📅 ${escapeHtml(m.date)} | 👤 ${escapeHtml(m.by||'—')}</div>
+        ${(function(){ const n = csRowNote(t); return n ? '<div class="dep-card-meta" style="overflow-wrap:anywhere;color:#7B341E">سُجّلت على الرقم ' + escapeHtml(t.tower_number) + ' — ' + escapeHtml(n) + '</div>' : ''; })()}
         ${(currentUser.role==='admin')?`<button class="btn-sm" style="background:#EBF0F5;color:#2E4057;border:1px solid #CBD5E0;border-radius:6px;padding:4px 10px;font-size:0.78rem;cursor:pointer;margin-left:6px" onclick="openTreatmentEditModal('${t.id}')">✏️ تعديل</button><button class="btn-sm btn-del" onclick="deleteTreatmentRecord('${t.id}')">🗑️ حذف</button>`:''}
       </div>
       ${hasCircuit2?'<div style="font-size:0.72rem;font-weight:700;color:#4A5568;margin-top:10px">الدائرة الأولى</div>':''}
@@ -229,6 +233,7 @@ function histRender() {
     if (st.status === 'loading') { body.innerHTML = '<div class="empty-state" role="status">⏳ جاري التحميل...</div>'; histSetLive('جاري التحميل'); return; }
     if (st.status === 'offline') { body.innerHTML = histStatusMsg('offline', '📴 لا يوجد اتصال بالإنترنت — يلزم الاتصال لعرض سجل المعالجات. المعالجات المحفوظة على الجهاز تُرسل تلقائياً عند عودة الاتصال.', true); histSetLive('لا يوجد اتصال'); return; }
     if (st.status === 'error') { body.innerHTML = histStatusMsg('error', '⚠️ تعذّر تحميل سجل المعالجات (خطأ بالخادم أو الاتصال). هذا لا يعني عدم وجود معالجات.', true); histSetLive('تعذّر التحميل'); return; }
+    if (st.filters && st.filters.none && st.banner) { body.innerHTML = `<div class="empty-state" style="color:#92400E;background:#FEF3C7;border-radius:8px;padding:10px" role="alert">${st.banner}</div>`; histSetLive('الهوية غير محسومة'); return; }   // N25-R5(r2)
     body.innerHTML = '<div class="empty-state" role="status">لا توجد معالجات مطابقة للفلتر</div>'; histSetLive('لا توجد نتائج'); return;
   }
   body.innerHTML = (st.banner ? `<div class="empty-state" style="color:#92400E;background:#FEF3C7;border-radius:8px;padding:10px;margin-bottom:10px" role="alert">${st.banner}</div>` : '') +
@@ -298,6 +303,11 @@ async function histShowResults() {
     const body = document.getElementById('depLogBody');
     if (body) body.innerHTML = histStatusMsg('error', '⚠️ تاريخ البداية بعد تاريخ النهاية — صحّح التواريخ.', false);
     histSetLive('تاريخ البداية بعد تاريخ النهاية'); return;
+  }
+  if (f.line && f.tower) {   // N25-R5: برج محدد = هويته الدائمة (لا رقمه فقط): معالجاته بأرقامه السابقة تظهر، ومعالجات من يحمل رقمه سابقاً لا تظهر
+    let id; try { id = await csHistIdent(f.line, f.tower); } catch (e) { id = { mode: 'unavailable' }; }
+    if (id.mode === 'id') f.tid = id.tid;
+    else if (id.mode === 'none' || id.mode === 'unavailable') { f.tid = '00000000-0000-0000-0000-000000000000'; f.none = id.mode; }   // لا قراءة بالرقم: لا نتائج + رسالة صريحة
   }
   const st = histNewStore(f);
   _histStore = st;                       // يحلّ محل أي مخزن/طلب سابق؛ ردوده المتأخرة تُهمل
@@ -404,7 +414,7 @@ async function histBulkDelete() {
   const done = await opsDeleteTreatments(rows);
   showToast(done === n ? `📦 سُجّل إلغاء ${done} من ${n} معالجة وسيُرسل` : `⚠️ سُجّل إلغاء ${done} من ${n} معالجة فقط`, done === n ? undefined : 'error');
 }
-function histSig(f) { return JSON.stringify([f.line || '', f.tower || '', f.from || '', f.to || '']); }
+function histSig(f) { return JSON.stringify([f.line || '', f.tower || '', f.from || '', f.to || '', f.tid || '']); }
 
 // ========================
 // تعديل المعالجة (مودال مشترك بين المغادرات والمركز الموحّد)

@@ -31,7 +31,7 @@ async function printThermalArchiveImpl() {
         const ambient = rows[0].ambient_temp ?? '—';
         const title = `🌡️ ${line} — ${date} (حرارة الجو: ${ambient}°C)`;
         const tableRows = rows.map(r => [
-          (isHotRecord(r) ? '🔴 ' : '') + (r.point_label || ''),
+          (isHotRecord(r) ? '🔴 ' : '') + (r.point_label || '') + (csRowNote(r) ? ' (' + csRowNote(r) + ')' : ''),   // N25-R5
           fmtTemp(r, r.r1), fmtTemp(r, r.r2),
           fmtTemp(r, r.s1), fmtTemp(r, r.s2),
           fmtTemp(r, r.t1), fmtTemp(r, r.t2),

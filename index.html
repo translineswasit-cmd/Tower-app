@@ -2534,6 +2534,7 @@ function csPurgeUserData() {
   try { if (typeof depIndexReset === 'function') depIndexReset(); } catch (e) {}   // v335-C6r9: the departures index belongs to the account that read it
   try { if (typeof depxPurge === 'function') depxPurge(); } catch (e) {}   // v335-C6r10: ملف PDF الجاهز وعملية التصدير الجارية تخصّ الحساب الذي أنشأها
   try { if (window.PeriodStats && typeof window.PeriodStats.purge === 'function') window.PeriodStats.purge(); } catch (e) {}   // v335-C6r17 (N22): نتائج الإحصائيات تخصّ الحساب الذي قرأها
+  try { csDirPurge(); } catch (e) {}   // N25-R5(r2): دليل الأبراج المخزَّن يخص الحساب الذي قرأه
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -2652,6 +2653,124 @@ async function csLineIdentLoad(line) {      // تحديث خريطة خط؛ عن
     if (r && r.ok === true && r.towers) return csLineIdentAccept(line, r.topology_rev, r.towers, seq);
   } catch (e) {}
   return false;
+}
+// ---- N25-R5(r2): قراءات وتصديرات واعية بالهوية الدائمة (سجل البرج، المعالجات، إحصائيات الفترة، التقارير، الحراري، المغادرات) ----
+// القاعدة: صف الأرشيف يحتفظ بلقطته (الخط/الرقم وقت الحدث) ويُنسب لبرجه بـ tower_id وحده.
+// «الرقم الحالي» لا يُستعمل أبداً للمطابقة إلا بخريطة متماسكة مع أعلى نسخة ترقيم معروفة. ثلاث حالات للخط:
+//   zero        = نسخة الترقيم 0 مُثبتة إيجاباً (من الدليل أو خريطة الخط الحيّة) ⇒ المسار القديم بالرقم حرفياً
+//   map         = خريطة رقم↔هوية متماسكة مع أعلى نسخة معروفة (> 0)
+//   unavailable = لا معلومة أو خريطة أقدم من نسخة معروفة ⇒ لا مطابقة بالرقم الحالي؛ التجميع بـ tower_id، والمرشّح بالرقم الحالي «غير متاح»
+const CS_DIR_KEY = 'cs_tower_dir_v1';
+let _csDirs = (function () { try { const o = JSON.parse(localStorage.getItem(CS_DIR_KEY) || '{}') || {}; return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; } })();   // line -> { rev, byId:{id:{n,r,rn}}, byNum:{num:id}, unlinked, at }
+const _csDirInflight = {};
+const CS_IDENT_UNAVAILABLE_TEXT = 'تعذّر التحقق من ترقيم الخط (دليل الأبراج غير متاح) — لا تُنسب الأحداث إلى رقم برج حالي';
+function csDirGet(line) { return line && _csDirs[line] ? _csDirs[line] : null; }
+function csKnownRev(line) {           // أعلى نسخة ترقيم معروفة للخط (دليل أو خريطة الخط الحيّة)؛ null = لا معلومة
+  const d = csDirGet(line), l = _csLineId[line], v = [];
+  if (d && d.rev != null) v.push(Number(d.rev) || 0);
+  if (l && l.rev != null) v.push(Number(l.rev) || 0);
+  return v.length ? Math.max.apply(null, v) : null;
+}
+function csLineRev(line) { return csKnownRev(line); }
+function csIsZero(line) { return csKnownRev(line) === 0; }        // الصفر المثبَت إيجاباً فقط — «غير معروف» ليس صفراً
+function csMap(line) {                // خريطة الأرقام الحالية المتماسكة مع أعلى نسخة معروفة، وإلا null (الأقدم لا تُستعمل أبداً)
+  const k = csKnownRev(line); if (k == null || k === 0) return null;
+  const d = csDirGet(line);
+  if (d && Number(d.rev) === k) return { rev: k, byNum: d.byNum || {}, byId: d.byId || {}, full: true };
+  const l = _csLineId[line];
+  if (l && l.rev != null && Number(l.rev) === k && l.towers && typeof l.towers === 'object' && Object.keys(l.towers).length) {   // خريطة فارغة ليست متماسكة
+    const byNum = {}, byId = {}; Object.keys(l.towers).forEach(n => { byNum[n] = l.towers[n]; byId[l.towers[n]] = { n: String(n), r: false, rn: null }; });
+    return { rev: k, byNum, byId, full: false };
+  }
+  return null;
+}
+function csIdentState(line) { return csIsZero(line) ? 'zero' : (csMap(line) ? 'map' : 'unavailable'); }
+function csDirAccept(line, r) {
+  if (!line || !r || r.ok !== true || !Array.isArray(r.towers)) return null;
+  const rev = Number(r.topology_rev) || 0, known = csKnownRev(line);
+  if (known != null && rev < known) return null;                    // ردّ بنسخة أقدم من أي نسخة معروفة (مثلاً ردّ متأخر): يُرفض ولا يستعيد خريطة قديمة
+  const byId = {}, byNum = {};
+  r.towers.forEach(t => {
+    if (!t || !t.tower_id) return;
+    byId[t.tower_id] = { n: t.number == null ? null : String(t.number), r: !!t.retired, rn: t.retired_number == null ? null : String(t.retired_number) };
+    if (!t.retired && t.number != null) byNum[String(t.number)] = t.tower_id;
+  });
+  _csDirs[line] = { rev, byId, byNum, unlinked: r.unlinked || null, at: Date.now() };
+  try { localStorage.setItem(CS_DIR_KEY, JSON.stringify(_csDirs)); } catch (e) {}
+  return _csDirs[line];
+}
+function csDirPurge() { Object.keys(_csDirs).forEach(k => delete _csDirs[k]); try { localStorage.removeItem(CS_DIR_KEY); } catch (e) {} }
+async function csDirLoad(line, maxAgeMs) {
+  const cur = csDirGet(line), coherent = !!cur && Number(cur.rev) === csKnownRev(line);
+  if (coherent && maxAgeMs && Date.now() - cur.at < maxAgeMs) return cur;
+  if (!line || navigator.onLine === false) return cur;
+  const gen = _csAuthGen, ik = gen + '|' + line;
+  if (_csDirInflight[ik]) return _csDirInflight[ik];
+  const p = (async () => {
+    try {
+      const r = await csCall('app_tower_directory', { p_line_name: line });
+      if (gen !== _csAuthGen) return null;                          // الجلسة تغيّرت أثناء الطلب: لا يُقبل ردّ
+      if (r && r.ok === true) return csDirAccept(line, r) || csDirGet(line);
+    } catch (e) {}
+    return csDirGet(line);
+  })();
+  _csDirInflight[ik] = p;
+  try { return await p; } finally { delete _csDirInflight[ik]; }
+}
+// يحلّ «برج N من الخط L»: legacy (صفر مثبَت: بالرقم) | id (بالهوية) | none (خريطة متماسكة ولا برج فعّال بهذا الرقم) | unavailable (لا خريطة متماسكة: لا قراءة بالرقم)
+async function csHistIdent(line, tower) {
+  await csDirLoad(line, 15000);
+  const st = csIdentState(line);
+  if (st === 'zero') return { mode: 'legacy', rev: 0 };
+  if (st === 'unavailable') return { mode: 'unavailable', rev: csKnownRev(line) };
+  const m = csMap(line), tid = m.byNum[String(tower)];
+  return tid ? { mode: 'id', tid: String(tid), rev: m.rev } : { mode: 'none', rev: m.rev };
+}
+function csRowKey(r) {                // مفتاح هوية صف أرشيف: tower_id، وإلا مفتاح الرقم (غير مرتبط) — لا يُدمج أبداً مع هوية مرتبطة
+  if (!r) return '';
+  if (r.tower_id) return String(r.tower_id);
+  return 'U|' + String(r.line_name == null ? '' : r.line_name).replace(/\s+/g, ' ').trim() + '|' + String(r.tower_number == null ? '' : r.tower_number).trim();
+}
+function csGroupKey(r) {              // مفتاح تجميع «برج واحد»: الصفر المثبَت = (خط/رقم) كما كان حرفياً؛ غير ذلك tower_id متى وُجد (حتى بلا دليل)، وإلا مفتاح «غير مرتبط» منفصل
+  if (!r) return '';
+  if (csIsZero(r.line_name)) return (r.line_name || '') + '||' + String(r.tower_number);
+  if (r.tower_id) return 'T:' + r.tower_id;
+  return 'U:' + (r.line_name || '') + '||' + String(r.tower_number);
+}
+function csFilterNumber(r) {          // الرقم الذي يُقارَن بمرشّح «أبراج محددة/نطاق»: لقطة الصف (صفر مثبَت) | الرقم الحالي للهوية (خريطة متماسكة) | null = محذوف/غير محلول/غير متاح — لا مطابقة
+  if (!r) return null;
+  const st = csIdentState(r.line_name);
+  if (st === 'zero') return r.tower_number;
+  if (st !== 'map' || !r.tower_id) return null;
+  const e = csMap(r.line_name).byId[String(r.tower_id)];
+  return e && !e.r ? e.n : null;
+}
+async function csDirsEnsure(lines) {  // تحميل دليل الأبراج للخطوط (مخزَّن 15 ث، تزامن محدود)
+  const names = (lines && lines.length ? lines : Object.keys(typeof LINES_DATA === 'object' && LINES_DATA ? LINES_DATA : {})).slice();
+  let i = 0; const w = async () => { while (i < names.length) { const n = names[i++]; try { await csDirLoad(n, 15000); } catch (e) {} } };
+  await Promise.all([w(), w(), w(), w()]);
+}
+function csIdentUnavailableLines(lines) { return (lines || []).filter(l => l && csIdentState(l) === 'unavailable'); }
+function csRowIdent(r, line) {        // 'active' | 'retired' | 'unlinked' | 'unknown' | 'unavailable'
+  if (!r) return 'unknown';
+  const ln = line || r.line_name, st = csIdentState(ln);
+  if (st === 'zero') return r.tower_id ? 'active' : 'unlinked';
+  if (st === 'unavailable') return 'unavailable';
+  if (!r.tower_id) return 'unlinked';
+  const e = csMap(ln).byId[String(r.tower_id)];
+  return e ? (e.r ? 'retired' : 'active') : 'unknown';
+}
+function csRowNote(r, line) {         // نص عادي (يُهرَّب عند العرض): الرقم الحالي / محذوف / غير مرتبط / غير متاح — فارغ حيث لا لبس
+  if (!r) return '';
+  const ln = line || r.line_name, st = csIdentState(ln);
+  if (st === 'zero') return '';
+  if (st === 'unavailable') return r.tower_id ? 'الرقم الحالي لهذا البرج غير متاح (دليل الأبراج غير محمّل) — اللقطة التاريخية فقط' : 'بلا هوية برج وتعذّر التحقق من الترقيم — لا يُنسب لأي برج حالي';
+  if (!r.tower_id) return 'غير مرتبط بهوية البرج — لا يُنسب لأي برج حالي';
+  const e = csMap(ln).byId[String(r.tower_id)];
+  if (!e) return '';
+  if (e.r) return 'برج محذوف (كان رقمه ' + (e.rn || r.tower_number) + ') — أرشيفه محفوظ';
+  if (r.tower_number != null && e.n != null && String(e.n) !== String(r.tower_number)) return 'رقمه الحالي ' + e.n;
+  return '';
 }
 // ---- استيعاب الغلاف: هندسة + معلومات حل + مفاتيح المعالجة ----
 function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
@@ -4567,7 +4686,7 @@ function _dayJson(v) {   // {ok, obj}: obj=null يعني «غير مسجَّل»
   if (x === null) return { ok: true, obj: null };
   return (x && typeof x === 'object' && !Array.isArray(x)) ? { ok: true, obj: x } : { ok: false, obj: null };
 }
-function dayKeyOf(r) { return (r.line_name || '') + '||' + String(r.tower_number) + '||' + (r.inspection_date || ''); }
+function dayKeyOf(r) { return csGroupKey(r) + '||' + (r.inspection_date || ''); }   // N25-R5: خط لم يُعَد ترقيمه = المفتاح القديم نفسه حرفياً
 function dayComposeGroup(g) {
   if (g.length === 1) return g[0];
   const sorted = g.slice().sort((a, b) => { const ca = String(a.created_at || ''), cb = String(b.created_at || ''); return ca !== cb ? (ca < cb ? -1 : 1) : String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0; });
@@ -7657,6 +7776,7 @@ async function buildTreatLogRecordCanvas(t, opts) {
   if (seq != null) units.push(...textUnits(wrapWith(FONT_H, 'عملية رقم ' + seq), FONT_H, '#2E4057', LH_HEAD));
   units.push(...textUnits(wrapWith(FONT_H, `الخط: ${m.line || '-'}   |   برج: ${m.tower || '-'}`), FONT_H, '#1A2A46', LH_HEAD));
   units.push(...textUnits(wrapWith(FONT_H, `التاريخ: ${m.date || '-'}   |   المعالج: ${m.by || '-'}`), FONT_H, '#1A2A46', LH_HEAD));
+  if (t._idNote) units.push(...textUnits(wrapWith(FONT_T, 'هوية البرج: ' + t._idNote), FONT_T, '#7B341E', LH));   // N25-R5
   units.push({ kind: 'sep', h: SEP_H });
   if (m.itemLabels.length) units.push(...textUnits(wrapWith(FONT_T, 'المعالَج: ' + m.itemsText), FONT_T, '#3C3C3C', LH));
   if (m.notes) {

@@ -135,7 +135,24 @@ async function depLogExportCollect(run) {
   const f = run.f;
   const prog = n => { if (run.alive()) depLogExportUi(true, '⏳ جاري جلب المعالجات المطابقة: ' + n); };
   let rows = [];
-  if (f.towers && f.towers.length <= 10) {
+  // N25-R5: على خط أُعيد ترقيمه يُحلّ كل رقم مختار إلى هويته الدائمة فتُجلب معالجاته بأرقامه السابقة ولا تُجلب معالجات من حمل رقمه سابقاً
+  let idents = null;
+  if (f.towers && f.line) { idents = []; for (const tn of f.towers) idents.push(await csHistIdent(f.line, tn)); }
+  if (idents && idents.some(x => x.mode === 'unavailable')) { const e = new Error('identity_unavailable'); e.idUnavailable = true; throw e; }   // لا تصدير بالرقم حين تُجهَل هوية الأبراج: لا ملف ناقص ولا مخلوط
+  const byId = idents && idents.some(x => x.mode === 'id' || x.mode === 'none');
+  if (f.towers && byId) {
+    const tids = idents.filter(x => x.mode === 'id').map(x => x.tid);
+    if (tids.length <= 10) {
+      for (const tid of tids) {
+        const base = rows.length;
+        const part = await histFetchAll({ tid, from: f.from, to: f.to }, { alive: run.alive, onProgress: n => prog(base + n) });
+        rows = rows.concat(part);
+      }
+    } else {
+      rows = await histFetchAll({ line: f.line, from: f.from, to: f.to }, { alive: run.alive, onProgress: prog });
+      const set = new Set(tids); rows = rows.filter(t => t.tower_id && set.has(String(t.tower_id)));
+    }
+  } else if (f.towers && f.towers.length <= 10) {
     for (const tn of f.towers) {
       const base = rows.length;
       const part = await histFetchAll({ line: f.line, tower: tn, from: f.from, to: f.to }, { alive: run.alive, onProgress: n => prog(base + n) });
@@ -147,10 +164,15 @@ async function depLogExportCollect(run) {
   }
   const seen = new Set();
   rows = rows.filter(t => { const k = String(t.id); if (seen.has(k)) return false; seen.add(k); return true; });
+  // N25-R5: ملاحظة الهوية لكل صف (الرقم الحالي / برج محذوف / غير مرتبط) — اللقطة التاريخية نفسها لا تتغيّر
+  const lines = [...new Set(rows.map(t => t.line_name).filter(Boolean))];
+  for (const ln of lines) await csDirLoad(ln, 15000);
+  rows.forEach(t => { try { t._idNote = csRowNote(t); } catch (e) { t._idNote = ''; } });
   return sortTreatmentsByLineTowerThenDate(rows);
 }
 
 function depLogExportFail(err, what) {
+  if (err && err.idUnavailable) { showToast('⛔ ' + CS_IDENT_UNAVAILABLE_TEXT + ' — لم يُنشأ أي ملف', 'error'); return; }
   if (err && (err.aborted || err.stale)) { showToast('⛔ أُلغي التصدير (تغيّر الفلتر/الجلسة أو أُلغي) — لم يُنشأ أي ملف'); return; }
   console.error(err);
   showToast('❌ تعذر تجهيز ' + what + ' — البيانات غير مكتملة فلم يُنشأ أي ملف', 'error');
@@ -230,9 +252,9 @@ async function exportDepLogExcel() {
     const wb = new ExcelJS.Workbook();
     // صفحة من اليمين لليسار + تثبيت صف الترويسة. لا نحدد ارتفاع صفوف (التفاف النص يترك الارتفاع للبرنامج فلا يُخفى محتوى)
     const ws = wb.addWorksheet('سجل المعالجات', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
-    ws.columns = [{ width: 8 },{ width: 34 },{ width: 10 },{ width: 14 },{ width: 24 },{ width: 50 },{ width: 60 }];
+    ws.columns = [{ width: 8 },{ width: 34 },{ width: 10 },{ width: 14 },{ width: 24 },{ width: 50 },{ width: 60 },{ width: 36 }];
 
-    const headers = ['تسلسل', 'اسم الخط', 'رقم البرج', 'تاريخ المعالجة', 'المعالج', 'العناصر المعالجة', 'الملاحظات'];
+    const headers = ['تسلسل', 'اسم الخط', 'رقم البرج', 'تاريخ المعالجة', 'المعالج', 'العناصر المعالجة', 'الملاحظات', 'هوية البرج'];
     headers.forEach((label, i) => {
       const cell = ws.getCell(1, i + 1);
       cell.value = label;
@@ -249,12 +271,13 @@ async function exportDepLogExcel() {
         t.treatment_date || '', // نص YYYY-MM-DD كما كان
         t.treated_by || '',
         (t.items_treated || []).map(it => it.label).join('، '),
-        treatmentDisplayModel(t).notes // الملاحظات كاملة بأسطرها (العمود دائماً موجود حتى لو فارغاً)
+        treatmentDisplayModel(t).notes, // الملاحظات كاملة بأسطرها (العمود دائماً موجود حتى لو فارغاً)
+        t._idNote || ''
       ];
       values.forEach((val, ci) => {
         const cell = ws.getCell(rowNum, ci + 1);
         cell.value = val;
-        const isText = (ci === 1 || ci === 4 || ci === 5 || ci === 6); // الخط والمنفّذ والعناصر والملاحظات: يمين + التفاف
+        const isText = (ci === 1 || ci === 4 || ci === 5 || ci === 6 || ci === 7); // الخط والمنفّذ والعناصر والملاحظات: يمين + التفاف
         cell.alignment = isText ? { horizontal: 'right', vertical: 'top', wrapText: true } : { horizontal: 'center', vertical: 'top' };
       });
     });

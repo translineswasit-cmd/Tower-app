@@ -203,6 +203,8 @@ async function renderEmergencyLog() {
     if (lineFilter) data = data.filter(r => r.line_name === lineFilter);
 
     if (!data.length) { body.innerHTML = '<div class="empty-state">لا توجد مغادرات طارئة</div>'; return; }
+    try { await csDirsEnsure([...new Set(data.map(r => r.line_name).filter(Boolean))]); } catch (e) {}   // N25-R5: ترقيم الخطوط لملاحظات الهوية
+    if (!emgReqOk(rq)) return;
 
     const canDelete = currentUser.role === 'admin';
 
@@ -217,6 +219,7 @@ async function renderEmergencyLog() {
           <div class="dep-card-title">⚡ ${r.line_name} — برج ${r.tower_number}</div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${statusBadge}</div>
         </div>
+        ${(function(){ const n = csRowNote(r); return n ? '<div style="font-size:0.75rem;color:#7B341E">سُجّلت على الرقم ' + escapeHtml(String(r.tower_number)) + ' — ' + escapeHtml(n) + '</div>' : ''; })()}
         <div style="margin:8px 0;font-weight:700;color:#2E4057;font-size:0.9rem">${r.departure_type}</div>
         ${r.details ? `<div style="color:#4A5568;font-size:0.85rem;margin-bottom:8px">${r.details}</div>` : ''}
         <div style="font-size:0.75rem;color:#718096;margin-top:6px">

@@ -22,8 +22,8 @@
 const TH_PAGE = 50;          // حجم الصفحة المعروضة (حدث)
 const TH_CAP = 500;          // سقف الأحداث المعروضة
 const TH_ROUNDS = 6;         // أقصى جولات جلب لكل ضغطة «المزيد» (يحدّ الطلبات)
-const TH_I_SEL = 'id,client_uuid,line_name,tower_number,inspection_date,created_at,updated_at,created_by_name,insulator_state,insulator_state_2,insulator_washing,iron_intersections,tower_foundations,tower_attachments,wires_r1,wires_s1,wires_t1,wires_r1_c2,wires_s1_c2,wires_t1_c2,ground_1,ground_2,fire_causes,fire_causes_notes,sev_fire,road_access,road_access_notes,notes';
-const TH_T_SEL = 'id,client_uuid,line_name,tower_number,inspection_id,created_at,treatment_date,treated_by,items_treated,notes';
+const TH_I_SEL = 'id,client_uuid,line_name,tower_number,tower_id,inspection_date,created_at,updated_at,created_by_name,insulator_state,insulator_state_2,insulator_washing,iron_intersections,tower_foundations,tower_attachments,wires_r1,wires_s1,wires_t1,wires_r1_c2,wires_s1_c2,wires_t1_c2,ground_1,ground_2,fire_causes,fire_causes_notes,sev_fire,road_access,road_access_notes,notes';
+const TH_T_SEL = 'id,client_uuid,line_name,tower_number,tower_id,inspection_id,created_at,treatment_date,treated_by,items_treated,notes';
 const TH_I_ORD = 'inspection_date.desc,created_at.desc,id.desc';
 const TH_I_FLOOR = 'inspection_date=gte.0001-01-01';
 const TH_FIRE = { simple: 'مغادرة بسيطة', moderate: 'مغادرة متوسطة', below_critical: 'مغادرة دون الحرجة', critical: 'مغادرة حرجة' };
@@ -47,10 +47,14 @@ function thLineCands(name) {
   return out;
 }
 
-function thNewStore(line, tower, filter) {
-  const cands = thLineCands(line), streams = [];
-  cands.forEach(l => { streams.push({ k: 'i', line: l, cur: null, done: false, nullWarn: false, err: null }); streams.push({ k: 't', line: l, pg: histPagerNew({ line: l, tower: String(tower) }, { select: TH_T_SEL }), cur: null, done: false, err: null }); });
-  return { id: ++_thSeq, sess: _thSess(), line, tower: String(tower), cands, filter: filter || 'all', streams, ev: [], ids: new Set(), limit: TH_PAGE, status: 'idle', err: null, busy: false,
+function thNewStore(line, tower, filter, ident) {
+  const id = ident || { mode: 'legacy' }, streams = [];
+  const cands = id.mode === 'legacy' ? thLineCands(line) : [];
+  if (id.mode === 'id') {   // N25-R5: تيار واحد لكل نوع بالهوية الدائمة — يشمل كل ما سُجّل لهذا البرج بأي رقم سابق، ولا يلتقط ما يخص برجاً آخر يحمل الرقم الآن
+    streams.push({ k: 'i', line: null, tid: id.tid, cur: null, done: false, nullWarn: false, err: null });
+    streams.push({ k: 't', line: null, tid: id.tid, pg: histPagerNew({ tid: id.tid }, { select: TH_T_SEL }), cur: null, done: false, err: null });
+  } else cands.forEach(l => { streams.push({ k: 'i', line: l, cur: null, done: false, nullWarn: false, err: null }); streams.push({ k: 't', line: l, pg: histPagerNew({ line: l, tower: String(tower) }, { select: TH_T_SEL }), cur: null, done: false, err: null }); });
+  return { id: ++_thSeq, sess: _thSess(), line, tower: String(tower), ident: id, cands, filter: filter || 'all', streams, ev: [], ids: new Set(), limit: TH_PAGE, status: 'idle', err: null, busy: false,
     marks: null, open: new Set(), shown: [], sig: '', stale: false, firstDone: false, hadNet: false };
 }
 
@@ -79,7 +83,7 @@ async function _thQ(parts, sel, ord, lim) {
 // الصفحة التالية لتيار الكشوف. المؤشر = آخر صف خام (date, created_at, id)؛ ثلاثة أقسام منفصلة تماماً بـAND فقط (يدعمها app_data_read):
 //   Q2: date = d ∧ created_at = c ∧ id < cid    Q1: date = d ∧ created_at < c    Q3: date < d.  لا يُحدَّث المؤشر إلا بعد نجاح كل الطلبات.
 async function thInspNext(s, tower, n) {
-  const enc = encodeURIComponent, base = ['line_name=eq.' + enc(s.line), 'tower_number=eq.' + enc(tower)], lim = n + 1; let cand, nullWarn = s.nullWarn;
+  const enc = encodeURIComponent, base = s.tid ? ['tower_id=eq.' + enc(s.tid)] : ['line_name=eq.' + enc(s.line), 'tower_number=eq.' + enc(tower)], lim = n + 1; let cand, nullWarn = s.nullWarn;
   if (!s.cur) {
     let rows = await _thQ(base, TH_I_SEL, TH_I_ORD, lim);
     if (rows.length && rows[0].inspection_date == null) { nullWarn = true; rows = await _thQ(base.concat([TH_I_FLOOR]), TH_I_SEL, TH_I_ORD, lim); }   // صفوف بلا تاريخ تأتي أولاً في DESC ولا يمكن ترقيمها بـkeyset: تُستبعد مع تحذير صريح
@@ -229,6 +233,11 @@ function _e(v) { return (typeof escapeHtml === 'function') ? escapeHtml(v == nul
 const TH_CHIP = { ok: 'background:#F0FFF4;color:#276749;border:1px solid #9AE6B4', bad: 'background:#FFF5F5;color:#742A2A;border:1px solid #FEB2B2', warn: 'background:#FFFAF0;color:#7B341E;border:1px solid #F6AD55', pend: 'background:#FEFCBF;color:#744210;border:1px solid #ECC94B', info: 'background:#EBF8FF;color:#2A4365;border:1px solid #90CDF4', mod: 'background:#EDF2F7;color:#2D3748;border:1px solid #CBD5E0' };
 const thChip = c => `<span style="display:inline-block;margin:2px 0 0 4px;padding:2px 8px;border-radius:10px;font-size:0.72rem;${TH_CHIP[c.c] || TH_CHIP.info}">${_e(c.t)}</span>`;
 
+function thSnapNote(st, r) {   // N25-R5: لقطة الرقم وقت التسجيل + الرقم الحالي/الحذف حين يختلفان (لا لبس مع برج يحمل الرقم الآن)
+  if (!st.ident || st.ident.mode !== 'id') return '';
+  const n = csRowNote(r, st.line); if (!n) return '';
+  return `<div style="font-size:0.72rem;color:#7B341E;margin-top:4px">سُجّل على الرقم ${_e(r.tower_number)} — ${_e(n)}</div>`;
+}
 function thSecRow(s) {
   const mark = s.k === 'ok' ? '✔' : s.k === 'note' ? '📌' : s.k === 'invalid' ? '⚠️' : '▫️';
   const txt = s.k === 'missing' ? '<span style="color:#718096">غير مسجّل</span>' : s.k === 'ok' ? '<span style="color:#276749">' + _e(s.t || 'سليم') + ' — مسجّل</span>' : s.k === 'invalid' ? '<span style="color:#7B341E">' + _e(s.t) + '</span>' : '<span style="color:#2D3748">' + _e(s.t) + '</span>';
@@ -247,6 +256,7 @@ function thInspCard(st, e, pend) {
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong style="color:#1a2e4a">📋 كشف — ${_e(r.inspection_date || 'بلا تاريخ')}</strong><span style="font-size:0.76rem;color:#718096">👤 ${_e(r.created_by_name || 'غير مسجّل')}</span></div>
       <div style="font-size:0.8rem;color:#4A5568;margin-top:3px;overflow-wrap:anywhere">${sum}${topNotes ? '<br>' + topNotes : ''}</div>
       <div>${s.chips.map(thChip).join('')}${s.modified.length ? thChip({ c: 'mod', t: '✎ عُدِّل لاحقاً (' + s.modified.join('، ') + ')' }) : ''}</div></summary>
+      ${thSnapNote(st, r)}
       <div style="margin-top:8px;border-top:1px dashed #E2E8F0;padding-top:8px">
         <div style="display:flex;gap:14px;flex-wrap:wrap">${col(1, 'الدائرة الأولى')}${col(2, 'الدائرة الثانية')}${col(0, 'عام')}</div>
         ${r.notes ? `<div style="font-size:0.8rem;margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere">📝 ${_e(r.notes)}</div>` : ''}
@@ -260,6 +270,7 @@ function thTreatCard(st, e, pend, byId) {
   return `<div class="form-card th-card" data-id="${_e(id)}" style="margin-bottom:10px;${s.cancelled ? 'opacity:0.7;' : ''}border-right:4px solid ${s.cancelled ? '#A0AEC0' : '#48BB78'}">
     <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><strong style="color:#1a2e4a">🔧 معالجة — ${_e(r.treatment_date || 'بلا تاريخ')}</strong><span style="font-size:0.76rem;color:#718096">👤 ${_e(r.treated_by || 'غير مسجّل')}</span></div>
     <div style="margin-top:4px">${items === null ? '<span style="font-size:0.78rem;color:#7B341E">تفاصيل العناصر غير متاحة بهذه الصيغة القديمة</span>' : (items.length ? items.map(chip).join('') : '<span style="font-size:0.78rem;color:#7B341E">لا عناصر مسجّلة</span>')}</div>
+    ${thSnapNote(st, r)}
     ${r.notes ? `<div style="font-size:0.8rem;margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere">📝 ${_e(r.notes)}</div>` : ''}
     <div style="font-size:0.74rem;color:#718096;margin-top:6px">${r.inspection_id ? (insp ? 'مرتبطة بكشف ' + _e(insp.inspection_date) : 'مرتبطة بكشف غير محمَّل في القائمة الحالية') : 'غير مرتبطة بكشف محدد'}${s.partial ? ' · أُزيلت بعض عناصرها بعملية إلغاء جزئي مؤكدة' : ''}</div>
     <div>${s.chips.map(thChip).join('')}${s.modified.length ? thChip({ c: 'mod', t: '✎ عُدِّل لاحقاً (' + s.modified.join('، ') + ')' }) : ''}</div></div>`;
@@ -299,6 +310,8 @@ function thRender() {
   let h = `<div class="form-card" style="margin-bottom:8px;border-right:4px solid #2E4057"><div style="font-weight:700;color:#1a2e4a">🗼 ${_e(st.line)} — برج ${_e(st.tower)}</div>
     <div style="font-size:0.8rem;color:#2D3748;margin-top:4px">${_e(thCurrentStateLine(st))}</div>
     <div style="font-size:0.74rem;color:#7B341E;margin-top:4px">الأحداث أدناه لقطات تاريخية لما سُجّل، ولا تدل على أن عطلاً ما زال قائماً الآن.</div></div>`;
+  if (st.ident && st.ident.mode === 'none') h += '<div class="empty-state" style="background:#FFFAF0;color:#7B341E;border-radius:8px;padding:10px;margin-bottom:8px" role="alert">لا يوجد برج فعّال بهذا الرقم في الخط بعد إعادة الترقيم — لا يُعرض تاريخ أي برج آخر بدلاً منه.</div>';
+  else if (st.ident && st.ident.mode === 'unavailable') h += '<div class="empty-state" style="background:#FFFAF0;color:#7B341E;border-radius:8px;padding:10px;margin-bottom:8px" role="alert">' + _e(CS_IDENT_UNAVAILABLE_TEXT) + ' — لا يُعرض سجل بالرقم حتى لا يُخلط بين برجين حملا الرقم نفسه. أعد المحاولة عند توفر الاتصال. <button class="btn-sm btn-primary" onclick="thReopen()">إعادة المحاولة</button></div>';
   if (st.stale) h += `<div class="empty-state" style="background:#EBF8FF;color:#2A4365;border-radius:8px;padding:10px;margin-bottom:8px" role="status">تغيّرت بيانات هذا البرج — <button class="btn-sm btn-primary" onclick="thRefresh()">تحديث</button></div>`;
   h += thFilterBar(st);
   if (!pend.ok) h += '<div class="empty-state" style="background:#FFFAF0;color:#7B341E;border-radius:8px;padding:10px;margin-bottom:8px" role="alert">⚠️ تعذّرت قراءة الأعمال المعلّقة محلياً — قد توجد أحداث معلّقة غير معروضة.</div>';
@@ -370,9 +383,16 @@ function thOpenImpl(line, tower) {
   const dv = document.getElementById('towerDetailView'); if (dv) dv.style.display = 'none';
   document.getElementById('towerHistoryView').style.display = '';
   document.getElementById('towerHistoryTitle').textContent = `📜 سجل البرج — ${line} — برج ${tower}`;
-  const prev = _thStore; const st = thNewStore(line, tower, 'all'); _thStore = st; window.scrollTo(0, 0);
-  thLoad(st, true);
+  const prev = _thStore; const st = thNewStore(line, tower, 'all', { mode: 'legacy', pending: true }); st.status = 'loading'; _thStore = st; window.scrollTo(0, 0);
+  (async () => {   // N25-R5: تُحلّ الهوية أولاً (الدليل من الخادم أو المحفوظ) ثم تُبنى التيارات
+    let id; try { id = await csHistIdent(line, tower); } catch (e) { id = { mode: 'unavailable' }; }
+    if (_thStore !== st) return;
+    if (id.mode === 'none' || id.mode === 'unavailable') { st.ident = id; st.streams = []; st.status = 'ready'; st.firstDone = true; st.sig = ''; thRender(); return; }
+    const ns = thNewStore(line, tower, 'all', id); ns.id = st.id; _thStore = ns; thLoad(ns, true);
+  })();
+  thRender();
 }
+function thReopen() { const st = _thStore; if (st) thOpenImpl(st.line, st.tower); }
 function towerHistOpen(line, tower) { return thOpenImpl(line, tower); }
 function towerHistBack() {
   const v = document.getElementById('towerHistoryView'); if (v) v.style.display = 'none';

@@ -135,7 +135,11 @@ async function loadOfficialFormData() {
     const res = await sbFetch(`thermal_inspections?line_name=eq.${encodeURIComponent(line)}&inspection_date=eq.${date}&point_type=eq.tower`);
     const data = await res.json();
     const byTower = {};
-    data.forEach(r => { byTower[r.tower_number] = r; });
+    try { await csDirLoad(line, 15000); } catch (e) {}
+    let tfSkipped = 0;
+    // N25-R5: القراءة تُنسب للبرج الحالي بهويتها الدائمة؛ قراءة محذوف/غير محلول على خط أُعيد ترقيمه لا تُعبّأ في برج يحمل رقمها الآن
+    data.forEach(r => { const n = csFilterNumber(r); if (n == null) { tfSkipped++; return; } byTower[n] = r; });
+    if (tfSkipped) showToast('ℹ️ ' + tfSkipped + ' قراءة حرارية لم تُعبَّأ: برج محذوف أو غير مرتبط بهوية أو ترقيم الخط غير متاح (لا تُنسب القراءة إلى رقم حالي بالتخمين)', 'error');
 
     const avg = (a, b) => {
       const vals = [a, b].filter(v => v !== null && v !== undefined && v !== '').map(parseFloat);
