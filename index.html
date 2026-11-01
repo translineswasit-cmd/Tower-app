@@ -593,11 +593,7 @@ tbody tr:hover { background: #F7FAFC; }
   </div>
   <div class="form-card">
     <h3>🌍 الأرضي</h3>
-    <div class="field" id="groundWiresCfg" style="display:none">
-      <label>عدد أسلاك الأرضي في هذا البرج <span style="font-weight:400;color:#718096">(يُسجَّل كمعاينتك أنت؛ لا يُستنتج من الجهد)</span></label>
-      <select id="f_ground_wires"><option value="">-- غير محدد --</option><option value="1">سلك أرضي واحد</option><option value="2">سلكان أرضيان</option></select>
-      <div id="groundWiresHint" style="font-size:0.74rem;margin-top:3px;color:#7B341E"></div>
-    </div>
+    <div id="groundWiresHint" style="display:none;font-size:0.76rem;margin:0 0 8px;line-height:1.6"></div>
     <div class="field"><label>درجة خطورة مغادرة الأرضي</label>
       <select id="f_sev_ground" onchange="onSeverityUserChange('ground')"><option value="">-- اختر --</option><option value="ok">🟢 سليم</option><option value="simple">⚪ مغادرة بسيطة</option><option value="moderate">🟡 مغادرة متوسطة</option><option value="below_critical">🟠 مغادرة دون الحرجة</option><option value="critical">🔴 مغادرة حرجة</option></select>
     </div>
@@ -2253,14 +2249,32 @@ const _csCardRequests = new Map();
 // Returns null when completeness cannot be established (older summary without the key, uninitialised, no source): callers must NOT present that as complete.
 const CS_RD_CORE = ['ins_R','ins_S','ins_T','ins2_R','ins2_S','ins2_T','iron','foundation','road'];
 const CS_RD_OTHER = ['wire_r1','wire_s1','wire_t1','wire_r1_c2','wire_s1_c2','wire_t1_c2','ground_1','ground_2','fire','washing'];
+// N25-R4e: قاعدة المشروع المؤكَّدة من المالك — 132 ك.ف سلك أرضي واحد، 400 ك.ف سلكان — على الجهد «المحسوم» من الخادم فقط (agreed / single_source). جهد غير محسوم/متعارض/غير مدعوم => null (يبقى العدد مجهولاً صراحةً، لا يُفترض واحد).
+function csGroundRuleOf(env) {
+  const v = env && env.meta && env.meta.voltage; if (!v || (v.status !== 'agreed' && v.status !== 'single_source')) return null;
+  return Number(v.value) === 132 ? 1 : Number(v.value) === 400 ? 2 : null;
+}
+// تعارض بيانات مسجّلة مع القاعدة: يُعرض ولا يُمحى ولا يُخفى
+function csGroundConflictOf(rule, g2) {
+  if (!g2) return null;
+  if (rule === 1 && g2.ap !== 'not_applicable' && (g2.ds === 'known' || g2.ds === 'invalid')) return 'ground_2_data_on_132';
+  if (rule === 2 && g2.ap === 'not_applicable') return 'ground_2_not_applicable_on_400';
+  return null;
+}
+function csGroundConflictNote(readiness) {
+  const c = readiness && readiness.ground_conflict;
+  return c === 'ground_2_data_on_132' ? '⚠️ للمراجعة: سُجّلت بيانات «أرضي ثانٍ» لبرج 132 ك.ف (قاعدته سلك واحد) — محفوظة كما هي'
+       : c === 'ground_2_not_applicable_on_400' ? '⚠️ للمراجعة: «الأرضي الثاني» مسجّل غير منطبق لبرج 400 ك.ف (قاعدته سلكان) — يبقى غير مكتمل' : '';
+}
 function csReadinessOf(env) {
   if (!env || typeof env !== 'object') return null;
   if (env.readiness && typeof env.readiness === 'object' && Array.isArray(env.readiness.core_unknown)) return env.readiness;
   if (env.basis !== 'operations' || !Array.isArray(env.components) || env.status === 'no_source' || env.status === 'uninitialized' || env.status === 'card_pending') return null;
   const mc = env.meta && env.meta.circuits, c2 = mc ? mc.circuit2_applicability : (env.meta ? env.meta.circuit2 : null);
   const byK = {}; env.components.forEach(c => { if (c && typeof c.k === 'string') byK[c.k] = c; });
-  const unk = k => { const c = byK[k]; if (!c) return !(/^ins2_|_c2$/.test(k) && c2 === 'not_applicable'); return c.ap !== 'not_applicable' && c.ds !== 'known'; };
-  return { core_unknown: CS_RD_CORE.filter(unk).sort(), other_unknown: CS_RD_OTHER.filter(unk).length, c2: c2 || null, derived: true };
+  const gr = csGroundRuleOf(env), g2 = byK.ground_2;
+  const unk = k => { if (k === 'ground_2' && gr === 1) return false; if (k === 'ground_2' && gr === 2 && g2 && g2.ap === 'not_applicable') return true; const c = byK[k]; if (!c) return !(/^ins2_|_c2$/.test(k) && c2 === 'not_applicable'); return c.ap !== 'not_applicable' && c.ds !== 'known'; };
+  return { core_unknown: CS_RD_CORE.filter(unk).sort(), other_unknown: CS_RD_OTHER.filter(unk).length, c2: c2 || null, ground_rule: gr, ground_conflict: csGroundConflictOf(gr, g2), derived: true };
 }
 // 'complete' | 'incomplete' | 'unverified'. 'unverified' = completeness cannot be established from what is held (older summary, cached entry from an older build, a local-only record): never shown as complete.
 function csTowerCompleteness(card, detail, rec) {
@@ -2279,12 +2293,30 @@ function csCompletenessText(rdy) {
 // v335-C6r31 (N24-B2): "الكشف مكتمل" means ONLY that every applicable inspected section is recorded (readiness). It does NOT mean the engineering data (chain material, geometry, circuits, cycles) is verified.
 // Engineering data is flagged here ONLY from what is already held (no request): the card readiness' prefill_ready === false, or the held tower info (prefillReady / materialsStatus from a detail read).
 // A legacy-convention material is invisible to a card-only read (the server readiness does not carry it) - see the SQL proposal; nothing is invented when the information is not held.
+// N25-R4e: اسم المانع الهندسي المحدّد بالعربية (من prefill_blockers المحفوظة بالخادم) بدل التحذير العام. «سليم» يؤكد الحالة فقط وليس نوع/مادة المعدّة؛ لا يُخترع شيء ولا يُخفى تحذير حقيقي.
+function csBlockerAr(b) {
+  b = String(b || '');
+  if (/^materials_missing/.test(b)) return 'مادة سلاسل العوازل (زجاج/بلاستيك/خزف) لم تُسجَّل';
+  if (/^materials_(incomplete|invalid)/.test(b)) return 'مادة سلاسل العوازل غير مكتملة أو غير صالحة';
+  if (/^voltage_/.test(b)) return 'الجهد غير محسوم';
+  if (/^tower_type_/.test(b)) return 'نوع البرج غير محسوم';
+  if (/^circuits_/.test(b)) return 'عدد/انطباق الدوائر غير محسوم';
+  if (/^geometry_/.test(b)) return 'هندسة السلاسل غير محسومة';
+  if (/^insulator_circuit(\d)_/.test(b)) return 'بيانات عوازل الدائرة ' + (RegExp.$1 === '2' ? 'الثانية' : 'الأولى') + ' المحفوظة ناقصة';
+  if (b === 'tower_needs_review') return 'حالة البرج تحتاج مراجعة';
+  if (b === 'no_source') return 'لا يوجد كشف مرجعي';
+  return 'بيان هندسي غير مؤكد (' + b + ')';
+}
 function csEngineeringNote(readiness, info) {
   let unv = false;
   if (readiness && readiness.prefill_ready === false) unv = true;
   if (info && info.prefillReady === false) unv = true;
   if (info && typeof info.materialsStatus === 'string' && info.materialsStatus !== 'complete') unv = true;
-  return unv ? '🔧 بيانات هندسية غير مؤكدة' : '';
+  if (!unv) return '';
+  const bl = info && Array.isArray(info.blockers) ? info.blockers : [];
+  if (bl.length) { const seen = {}; const t = bl.map(csBlockerAr).filter(x => !seen[x] && (seen[x] = 1)); return '🔧 بيانات هندسية غير مؤكدة: ' + t.join('، '); }
+  if (info && info.materialsStatus === 'legacy_interpretable') return '🔧 مادة السلاسل زجاج افتراضي بحسب الاعتماد القديم (غير مرصود فعلياً)';
+  return '🔧 بيانات هندسية غير مؤكدة (افتح البرج لعرض السبب)';
 }
 function csCardAccept(line, tower, env, ticket) {
   const key = csKey(line, tower), old = _csCards.get(key);
@@ -4319,6 +4351,7 @@ function renderTowersGridFromCache(lineName) {
           cardLine && cardLine.loading ? 'جارٍ قراءة الحالة…' : 'الحالة غير متاحة';
         let completeLine = rec ? csCompletenessText(rdy) : '';
         if (rec && rdy === 'complete') { const _en = csEngineeringNote(card && card.readiness, csTowerInfo(lineName, t.num)); if (_en) completeLine += ' · ' + _en; }   // N24-B2
+        if (rec) { const _gc = csGroundConflictNote(card && card.readiness); if (_gc) completeLine += (completeLine ? ' · ' : '') + _gc; }   // N25-R4e: التعارض يُعرض ولا يُخفى
         // v335-C6r6: a card that was not verified by the server in this open is never presented as fresh
         const unverified = !!(cardLine && !cardLine.verified && (cardLine.loading || cardLine.error)) && (card ? card.status !== 'no_source' : !!rec);
         let staleLine = '';
@@ -4951,7 +4984,7 @@ function updateWiresGroundUI() {
     const groundLbl1 = document.getElementById('groundLbl1');
     const groundLbl2 = document.getElementById('groundLbl2');
     const groundBlock2 = document.getElementById('groundBlock2');
-    if (typeof csGroundTwoOffered === 'function' ? csGroundTwoOffered() : currentVoltage === 400) {   // N25-R4d: القاعدة الموحّدة (الجهد 400، أو سلكان مسجّلان/مختاران صراحةً)
+    if (typeof csGroundTwoOffered === 'function' ? csGroundTwoOffered() : currentVoltage === 400) {   // N25-R4e: قاعدة المشروع على الجهد المحسوم (132 = سلك واحد، 400 = سلكان) + عرض أي بيانات أرضٍ ثانٍ مسجّلة (لا تُخفى)
       groundLbl1.textContent = 'الأرضي 1 (' + spanLabel + ')';
       if (groundLbl2) groundLbl2.textContent = 'الأرضي 2 (' + spanLabel + ')';
       groundBlock2.style.display = 'flex';
@@ -4969,7 +5002,7 @@ function updateWiresGroundUI() {
     groundLbl1.textContent = 'الأرضي';
     groundBlock2.style.display = 'none';
   }
-  if (typeof csGroundSync === 'function') csGroundSync(true);   // N25-R4d: إظهار قائمة عدد الأسلاك وتلميحها (يحسبها المحرّر من الخادم + اختيار المفتش)
+  if (typeof csGroundSync === 'function') csGroundSync(true);   // N25-R4e: تلميح القاعدة/التعارض فقط (لا قائمة اختيار)
 }
 
 // ========================
@@ -6624,7 +6657,7 @@ const OPS_ERR_MSG = {
   base_missing: 'قاعدة الحالة غير معروفة', layout_mismatch: 'تخطيط العوازل المحفوظ يخالف هندسة البرج', geometry_unresolved: 'هندسة البرج غير محسومة', invalid_shape: 'شكل بيانات غير صالح',
   materials_incomplete: 'مادة السلاسل غير مكتملة — يلزم اختيار كل السلاسل', cycle_unknown: 'دورة المعالجة غير معروفة', legacy_patch_inconsistent: 'تعديل قديم لا يتّسق مع الحالة الحالية — لم يُطبَّق شيء',
   not_current_source: 'الكشف المقصود لم يعد مصدر الحالة الحالية', later_ops: 'عمليات أحدث على نفس المكوّنات — يلزم تصحيح صريح (للإلغاء: ألغِ الأحدث أولاً)', identity_variant: 'اسم الخط/البرج مختلف عن المسجَّل', needs_review: 'البرج بحالة تحتاج مراجعة',
-  op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', no_source: 'لا توجد حالة مرجعية لهذا البرج', circuit2_not_applicable: 'الدائرة الثانية غير منطبقة على هذا البرج', invalid_ground_wires: 'قيمة عدد أسلاك الأرضي غير صالحة', ground_2_not_applicable: 'هذا البرج مسجَّل بسلك أرضي واحد: لا يُسجَّل أرضي ثانٍ إلا بعد اختيار «سلكان أرضيان»', ground_wires_conflict: 'لا يمكن تسجيل سلك أرضي واحد: الأرضي الثاني مسجَّل له بيانات أو معالجة (لم يُمحَ شيء). راجع حالته أولاً', tower_type_mismatch: 'نوع البرج المسجَّل يخالف المرسل',
+  op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', no_source: 'لا توجد حالة مرجعية لهذا البرج', circuit2_not_applicable: 'الدائرة الثانية غير منطبقة على هذا البرج', invalid_ground_wires: 'قيمة عدد أسلاك الأرضي غير صالحة', ground_2_not_applicable: 'الأرضي الثاني غير منطبق على هذا البرج حسب قاعدة المشروع (132 ك.ف سلك أرضي واحد) — لم يُسجَّل شيء', ground_wires_conflict: 'تعارض في عدد أسلاك الأرضي: قاعدة المشروع 132 ك.ف سلك واحد و400 ك.ف سلكان، أو الأرضي الثاني مسجَّل له بيانات/معالجة — لم يُمحَ شيء؛ راجع المدير', tower_type_mismatch: 'نوع البرج المسجَّل يخالف المرسل',
   already_voided: 'أُلغي سابقاً', unknown_target: 'الهدف غير موجود', partial_item_removal_unsupported: 'إزالة جزء من عناصر مكوّن واحد غير مدعومة — أزل كل عناصره أو ألغِ المعالجة', legacy_without_delta: 'سجل قديم بلا أثر قابل للعكس'
 };
 

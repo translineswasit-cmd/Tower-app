@@ -390,55 +390,38 @@ function csHSnapTake(id) {
 function csHSnapValid(id) { const s = _hSnap[id]; return !!s && s.base === _opsBaseline && s.fp === csHFp(id); }
 // تطبيق «سليم» على قسم واحد (بعد التحقق من عدم وجود ضرر أو بعد التأكيد الصريح)
 // =====================================================================================================================================
-// N25-R4d: تهيئة أسلاك الأرضي لهذا البرج — قاعدة واحدة يشترك بها النموذج والزر الرئيسي والحمولة واكتمال الخادم.
-// المصادر بالترتيب: (1) 400 ك.ف: النموذج يعرض الأرضي 1 و2 (قاعدة قائمة)؛ (2) حالة الخادم لهذا البرج: ground_2 غير منطبق (سلك واحد، بشهادة مفتش سابق)،
-// أو ground_2 له بيانات (سلكان)؛ (3) اختيار المفتش الآن في «عدد أسلاك الأرضي». لا شيء يُستنتج من الجهد: خارج هذه المصادر التهيئة «غير مؤكدة» صراحةً
-// ويبقى الأرضي الثاني قسماً غير مسجّل (البطاقة «أقسام أخرى غير مسجّلة») ولا يصير سليماً بالإهمال.
+// N25-R4e: عدد أسلاك الأرضي = قاعدة المشروع التي أكّدها المالك: 132 ك.ف سلك واحد، 400 ك.ف سلكان. تُطبَّق تلقائياً على الجهد «المحسوم» من الخادم (agreed / single_source)؛
+// لا قائمة اختيار ولا حقل إضافي. جهد غير محسوم/متعارض/غير مدعوم => العدد مجهول صراحةً (لا يُفترض واحد): الأرضي الثاني يبقى قسماً غير مسجّل ويُقال ذلك.
+// بدون حالة خادم محفوظة (برج جديد على الجهاز بلا قراءة) يُستعمل جهد سجلّ الخط فقط إن كان 132 أو 400. أي أرضٍ ثانٍ مسجَّل لبرج 132 يبقى ظاهراً ومحفوظاً ويُبلَّغ كتعارض (لا يُمحى ولا يُخفى).
 // =====================================================================================================================================
-let _gwSyncedFor = null, _gwBusy = false;
-function csGroundServer() {
-  let env = null; try { env = opsEnvKnown(_v('f_line_name'), _v('f_tower_number')); } catch (e) { env = null; }
-  const g2 = env ? opsCompOf(env, 'ground_2') : null;
-  if (!g2) return 'unknown';
-  if (g2.ap === 'not_applicable') return 'one';
-  return (g2.ds === 'known' || g2.ds === 'invalid') ? 'two' : 'unknown';
+let _gwBusy = false;
+function csGroundEnv() { try { return opsEnvKnown(_v('f_line_name'), _v('f_tower_number')); } catch (e) { return null; } }
+function csGroundRule() {   // 1 | 2 | null
+  const env = csGroundEnv();
+  if (env && env.meta && env.meta.voltage) return csGroundRuleOf(env);
+  const v = Number(currentVoltage); return v === 132 ? 1 : v === 400 ? 2 : null;
 }
-function csGroundCfg() {
-  const v = Number(currentVoltage), server = csGroundServer(), pick = _v('f_ground_wires');
-  if (v === 400) return { mode: server === 'one' ? 'one' : 'two', server, pick: '', show: server === 'one', source: server === 'one' ? 'server' : 'voltage400' };
-  const mode = pick === '1' ? 'one' : pick === '2' ? 'two' : server === 'one' ? 'one' : server === 'two' ? 'two' : 'unconfirmed';
-  return { mode, server, pick, show: true, source: pick ? 'inspector' : (server !== 'unknown' ? 'server' : 'none') };
+function csGroundServerData() {   // الأرضي الثاني محفوظ له بيانات (أو غير صالحة) على الخادم؟
+  const env = csGroundEnv(); const g2 = env ? opsCompOf(env, 'ground_2') : null;
+  return !!g2 && g2.ap !== 'not_applicable' && (g2.ds === 'known' || g2.ds === 'invalid');
 }
-function csGroundTwoOffered() { try { return csGroundCfg().mode === 'two'; } catch (e) { return Number(currentVoltage) === 400; } }
-function csGroundSync(fromUi) {
-  const box = csHEl('groundWiresCfg'), sel = csHEl('f_ground_wires'), hint = csHEl('groundWiresHint'); if (!box || !sel) return;
-  const b = _opsBaseline;
-  if (_gwSyncedFor !== b) {   // أول مزامنة لهذا الأساس: القائمة تعرض ما سجّله الخادم (لا اختياراً ضمنياً)
-    _gwSyncedFor = b; const sv = csGroundServer(); sel.value = Number(currentVoltage) === 400 ? '' : (sv === 'one' ? '1' : sv === 'two' ? '2' : '');
-  }
-  const c = csGroundCfg(); box.style.display = c.show && _v('f_tower_number') ? '' : 'none';
-  if (hint) {
-    hint.style.color = c.mode === 'unconfirmed' ? '#7B341E' : '#276749';
-    hint.textContent = c.mode === 'unconfirmed' ? '⚠️ عدد أسلاك الأرضي غير مؤكد لهذا البرج: الخادم يحتسب «الأرضي الثاني» قسماً مطلوباً، فتبقى البطاقة «أقسام أخرى غير مسجّلة» إلى أن تختار العدد (لا يُسجَّل شيء بدلاً عنك).'
-      : c.mode === 'one' ? '✔ سلك أرضي واحد: «الأرضي الثاني» غير منطبق على هذا البرج' + (c.source === 'server' ? ' (مسجَّل سابقاً)' : ' (سيُسجَّل مع هذا الحفظ)')
-      : '✔ سلكان أرضيان: سجّل «الأرضي 1» و«الأرضي 2»';
-  }
-  // اتساق ظهور كتلة الأرضي الثاني مع القاعدة (التسميات من updateWiresGroundUI)
-  const g2 = csHEl('groundBlock2'); const want = c.mode === 'two';
-  if (!_gwBusy && g2 && (g2.style.display !== 'none') !== want && _v('f_tower_number')) {
+function csGroundServerDamaged() {   // أرضي ثانٍ محفوظ على الخادم بضرر/غير صالح: لا يُستبدل بـ«سليم» بلا تأكيد صريح
+  const env = csGroundEnv(); const g2 = env ? opsCompOf(env, 'ground_2') : null;
+  return !!g2 && g2.ap !== 'not_applicable' && ((g2.ds === 'known' && g2.cond !== 'ok') || g2.ds === 'invalid');
+}
+function csGroundTwoOffered() { try { return csGroundRule() === 2 || csGroundServerData(); } catch (e) { return Number(currentVoltage) === 400; } }
+function csGroundSync() {
+  const hint = csHEl('groundWiresHint'); if (!hint) return;
+  let rule = null, data = false, num = _v('f_tower_number'); try { rule = csGroundRule(); data = csGroundServerData(); } catch (e) { /* ignore */ }
+  let t = '', col = '#7B341E';
+  if (num && rule === 1 && data) t = '⚠️ تعارض للمراجعة: لهذا البرج (132 ك.ف — سلك أرضي واحد حسب قاعدة المشروع) بيانات «أرضي ثانٍ» مسجّلة سابقاً؛ تبقى ظاهرة ومحفوظة ولا تُمحى.';
+  else if (num && rule === null && Number(currentVoltage) !== 0) t = '⚠️ الجهد غير محسوم/غير مدعوم لهذا البرج: عدد أسلاك الأرضي غير معروف، فيبقى «الأرضي الثاني» قسماً غير مسجّل (لا يُفترض عدد).';
+  hint.style.color = col; hint.style.display = t ? '' : 'none'; hint.textContent = t;
+  const g2 = csHEl('groundBlock2'); const want = csGroundTwoOffered();
+  if (!_gwBusy && g2 && (g2.style.display !== 'none') !== want && num) {
     _gwBusy = true; try { updateWiresGroundUI(); } finally { _gwBusy = false; }
     const g2b = csHEl('groundBlock2'); if (g2b && (g2b.style.display !== 'none') !== want) g2b.style.display = want ? 'flex' : 'none';
   }
-}
-function csGroundOnPick() {
-  _prefillUserEdited = true;
-  const c = csGroundCfg();
-  // سلكان بعد أن سُجّل الأرضي «سليم» بكتلة ثانية مخفية: لا يُختلق أرضي ثانٍ سليم — يعود القسم غير مسجّل ليُعلَّم صراحةً
-  if (c.mode === 'two' && _v('f_sev_ground') === 'ok' && !_v('f_ground_2')) { csHEl('f_sev_ground').value = ''; onSeverityChange('ground'); }
-  // سلك واحد: لا يبقى نص في كتلة مخفية
-  if (c.mode !== 'two' && csHEl('f_ground_2') && csHEl('groundBlock2') && csHEl('groundBlock2').style.display === 'none') csHEl('f_ground_2').value = '';
-  try { updateWiresGroundUI(); } catch (e) { /* ignore */ }
-  csHRefresh();
 }
 function csHInsAllHealthy() {
   return [1].concat(csHDouble() ? [2] : []).every(c => { let red = 0; try { red = csHRed(c).total; } catch (e) { red = 1; } return red === 0 && (!!_insHealthy[c] || !csInsCircuitUnknown(c)); });
@@ -571,7 +554,7 @@ function csHEnsure() {
     const note = document.createElement('div'); note.style.cssText = 'font-size:0.72rem;color:#4A5568;margin-top:3px'; note.setAttribute('data-h-master-note', '');
     note.textContent = 'يشمل كل أقسام الكشف: العوازل (كل دائرة)، نظافة العوازل (نظيفة)، تقاطعات الحديد، القواعد، الأسلاك (كل دائرة)، الأرضي، مسببات الحرائق، وجود الطريق (متاح). القسم الذي فيه ضرر مسجّل يحتاج تأكيده بنفسه.';
     mb.appendChild(note);
-    const gwn = document.createElement('div'); gwn.setAttribute('data-h-master-gw', ''); gwn.style.cssText = 'font-size:0.78rem;color:#7B341E;margin-top:3px;display:none'; mb.appendChild(gwn);
+
     const cnt = document.createElement('div'); cnt.setAttribute('data-h-master-pending', ''); cnt.style.cssText = 'font-size:0.78rem;color:#7B341E;margin-top:3px;display:none'; mb.appendChild(cnt);
     anchor.parentNode.insertBefore(mb, anchor);
   }
@@ -608,8 +591,6 @@ function csHRefresh() {
   if (mcb && mbox) {
     mbox.style.display = nApp ? '' : 'none';
     mcb.checked = nApp > 0 && nOk === nApp; mcb.indeterminate = nOk > 0 && nOk < nApp;
-    const gwn = mbox.querySelector('[data-h-master-gw]');
-    if (gwn) { let un = false; try { un = csGroundCfg().mode === 'unconfirmed'; } catch (e) { un = false; } gwn.style.display = un ? '' : 'none'; gwn.textContent = un ? '⚠️ حقل واحد ما زال مطلوباً: «عدد أسلاك الأرضي في هذا البرج» (قسم الأرضي). إن تركته فيُحفظ كل ما سجّلتَه لكن تبقى البطاقة «أقسام أخرى غير مسجّلة» لأن الأرضي الثاني غير مؤكَّد.' : ''; }
     const pc = mbox.querySelector('[data-h-master-pending]');
     if (pc) { pc.style.display = nPend ? '' : 'none'; pc.textContent = nPend ? ('⚠️ ' + nPend + ' من الأقسام فيها ضرر مسجّل وتنتظر تأكيدك بجانب كل قسم — لم تُسجَّل سليمة بعد.') : ''; }
   }
@@ -1325,7 +1306,7 @@ function opsBuildObservation(d) {
     else if (!_v('f_sev_ground')) err.push('⚠️ حدّد درجة خطورة الأرضي');
     else {
       comps.ground_1 = { text: _v('f_ground_1') || 'سليم' };
-      const g2 = document.getElementById('groundBlock2'); if (g2 && g2.style.display !== 'none' || _v('f_ground_2')) comps.ground_2 = { text: _v('f_ground_2') || 'سليم' };
+      const g2 = document.getElementById('groundBlock2'); if ((g2 && g2.style.display !== 'none' || _v('f_ground_2')) && !(csGroundRule() === 1 && (!_v('f_ground_2') || _v('f_ground_2') === 'سليم') && csGroundServerDamaged())) comps.ground_2 = { text: _v('f_ground_2') || 'سليم' };   // N25-R4e: على برج 132 لا يُكتب «سليم» فوق أرضٍ ثانٍ مسجَّل بضرر لم يظهر في النموذج
       sev.sev_ground = _v('f_sev_ground'); observed.push('ground');
     }
   }
@@ -1348,11 +1329,9 @@ function opsBuildObservation(d) {
            insulator_svg_r: d.insulator_svg_r, insulator_svg_s: d.insulator_svg_s, insulator_svg_t: d.insulator_svg_t } };
   Object.keys(payload.row).forEach(k => { if (payload.row[k] === undefined || payload.row[k] === '') delete payload.row[k]; });
   if (_ident) { payload.tower_id = _ident.tower_id; payload.topology_rev = _ident.topology_rev; }
-  { const gc = csGroundCfg(); if (gc.pick && gc.pick !== (gc.server === 'one' ? '1' : gc.server === 'two' ? '2' : '') && Number(currentVoltage) !== 400) payload.ground_wires = Number(gc.pick); }   // N25-R4d: تهيئة صريحة من المفتش، تُرسَل فقط إن اختلفت عن المسجَّل
   if (isObs('road') && comps.road && comps.road.text === 'متاح' && !_v('f_road_access_notes') && _hRoadClr && _hRoadClr.base === _opsBaseline && _hRoadClr.line === line && _hRoadClr.tower === tower) payload.clear_road_notes = true;   // N21: مسح صريح مؤكَّد فقط
   const extra = { sections: observed, skipped_unknown: skippedUnknown, material_only: materialOnly };
-  // N25-R4d: revision أساس ground_2 يُلتقط مع تصريح عدد الأسلاك (فحص التعارض في الخادم)
-  if (env) { payload.base = opsBaseFor(env, Object.keys(comps).concat(payload.ground_wires && !comps.ground_2 ? ['ground_2'] : [])); payload.base_src = env.source ? env.source.inspection_id : null; extra.base_mode = null; }
+  if (env) { payload.base = opsBaseFor(env, Object.keys(comps)); payload.base_src = env.source ? env.source.inspection_id : null; extra.base_mode = null; }
   else { payload.base = {}; extra.base_mode = 'unknown'; }
   return { ok: true, payload, extra };
 }
@@ -1367,11 +1346,7 @@ async function opsSaveObservation(d) {
   if (!r.ok) { showToast(r.reason === 'storage' ? '❌ لم يُحفظ الكشف (ذاكرة الجهاز ممتلئة) وحقولك باقية — حرّر مساحة واضغط حفظ ثانيةً' : '❌ لم يُحفظ الكشف: ' + (r.reason === 'migration_refused' ? (_opsMig.msg || 'قائمة معلّقات قديمة غير قابلة للترحيل') : MSG_QUEUE_UNREADABLE) + ' حقولك باقية.', 'error'); return false; }
   opsApplyEntryToCache(r.entry);
   { const sk = (b.extra && b.extra.skipped_unknown) || [];
-    // N25-R4c: تفسير صريح لما قد يبقى غير مسجّل بسبب قيد النموذج (لا يُختلق شيء): الأرضي الثاني لا يُعرض إلا لـ400 ك.ف، بينما يحتسبه الخادم قسماً مطبَّقاً في اكتمال البطاقة
-    let g2note = ''; try {
-      const cm = b.payload && b.payload.comps || {}; const gc = csGroundCfg();
-      if (cm.ground_1 && gc.mode === 'unconfirmed') g2note = ' — ملاحظة: عدد أسلاك الأرضي لهذا البرج غير مؤكَّد، فيبقى «الأرضي الثاني» غير مسجّل وتبقى البطاقة «أقسام أخرى غير مسجّلة» حتى تحدّد العدد (سلك/سلكان) في قسم الأرضي';
-    } catch (e) { g2note = ''; }
+    const g2note = '';
     showToast('✅ حُفظ الكشف على الجهاز — لم يُؤكَّد على السيرفر بعد وسيُرسل تلقائياً' + (sk.length ? ' — لم تُسجَّل ' + sk.join(' و') + ' (حالتها غير مسجّلة: علّم ضرراً أو اضغط «تسجيل عوازل هذه الدائرة سليمة»)' : '') + (((b.extra && b.extra.material_only) || []).length ? ' — حُفظت المادة فقط لـ ' + b.extra.material_only.join(' و') + ' وحالة عوازلها بقيت غير مسجّلة' : '') + g2note); }
   document.getElementById('towerInspectionModal').classList.remove('show'); popLevelIfMatches(closeTowerInspectionModal);
   resetTowerFieldsOnly();
@@ -1787,7 +1762,6 @@ function onTowerChange() {
   document.addEventListener('input', mark, true);
   document.addEventListener('change', mark, true);
   // v335-C6r15 (N21): قائمة درجة العوازل: «سليم» تمرّ عبر بوابة التأكيد (لا تمسح علامات حمراء بصمت)؛ ما سواها يُسجَّل كقيمة سابقة. بقية القوائم عبر onSeverityUserChange.
-  document.addEventListener('change', e => { const t = e && e.target; if (t && t.id === 'f_ground_wires') csGroundOnPick(); });   // N25-R4d
   document.addEventListener('change', e => {
     const t = e && e.target; if (!t || t.id !== 'f_sev_insulator') return;
     if (t.value !== 'ok') { _hPrev[t.id] = t.value; csHRefresh(); return; }
