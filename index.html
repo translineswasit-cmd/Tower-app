@@ -2551,6 +2551,57 @@ function csRemember(line, tower, env, asOf) {
   csPersist();
 }
 
+// ---- N25-R4a: هوية البرج الدائمة (tower_id) + رقم نسخة طوبولوجيا الخط — تُتعلَّم من قراءات الخادم فقط، ولا تُستنتج من الرقم أبداً ----
+// مصدران يُوفَّقان بنسخة الطوبولوجيا (لا يتقدّم أحدهما على الآخر بلا مبرر):
+//  • _csIdent: هوية الغلاف الذي جاءت منه بيانات البرج (قراءة app_tower_state) — «هوية البيانات»
+//  • _csLineId: خريطة رقم→هوية للخط كله (app_line_identity) — «هوية الاختيار الحالي»
+// النموذج المفتوح يلتقط لقطة (csIdentSnap) لحظة فتحه ويحتفظ بها؛ لا يُعاد حلّ الرقم عند الحفظ.
+const _csIdent = new Map();            // csKey(line,tower) -> { tower_id, topology_rev }
+const CS_LINEID_KEY = 'cs_line_ident_v2';
+let _csLineId = (function () { try { const o = JSON.parse(localStorage.getItem(CS_LINEID_KEY) || '{}') || {}; return (o && typeof o === 'object') ? o : {}; } catch (e) { return {}; } })();   // line -> { rev, towers:{num:id}, at }
+const _csIdSeq = {};                   // line -> { issued, applied }  (ردّ أقدم من ردّ طُبِّق فعلاً يُرفض)
+function csIdentSnap(line, tower, opts) {
+  const l = _csLineId[line]; const mid = l && l.towers ? l.towers[String(tower)] : null;
+  const m = mid ? { tower_id: String(mid), topology_rev: Number(l.rev) || 0 } : null;
+  if (opts && opts.mapOnly) return m ? Object.assign({ src: 'map' }, m) : null;   // نماذج بلا غلاف حالة (حراري/مغادرات): خريطة الخط وحدها
+  const e = _csIdent.get(csKey(line, tower));
+  if (e && m) {
+    if (e.tower_id === m.tower_id) return { tower_id: e.tower_id, topology_rev: Math.max(e.topology_rev, m.topology_rev), src: 'env+map' };
+    // تعارض: بيانات الغلاف تخص برجاً غير صاحب الرقم في الخريطة — الأحدث نسخةً يفوز؛ والغلاف الأقدم = بيانات قديمة لا يُبنى عليها حفظ
+    if (e.topology_rev < m.topology_rev) return { blocked: 'stale_cache', cached: e, current: m };
+    if (e.topology_rev > m.topology_rev) return { tower_id: e.tower_id, topology_rev: e.topology_rev, src: 'env' };
+    return { blocked: 'conflict', cached: e, current: m };
+  }
+  if (e) {
+    if (l && Number(l.rev) > e.topology_rev) return { blocked: 'stale_cache', cached: e, current: null };   // الخريطة أحدث والرقم غير موجود فيها
+    return { tower_id: e.tower_id, topology_rev: e.topology_rev, src: 'env' };
+  }
+  return m ? Object.assign({ src: 'map' }, m) : null;
+}
+function csIdentOf(line, tower) { const s = csIdentSnap(line, tower); return s && !s.blocked ? s : null; }
+function csIdentBlockMsg(b) {
+  return b === 'stale_cache' ? '⚠️ تغيّر ترقيم أبراج هذا الخط وبيانات هذا البرج المحفوظة على الجهاز قديمة — اتصل بالإنترنت وحدّث ثم اختر البرج من جديد (لم يُحفظ شيء)'
+       : '⚠️ تعارض بين بيانات هذا البرج وخريطة ترقيم الخط — حدّث وأنت متصل ثم اختر البرج من جديد (لم يُحفظ شيء)';
+}
+// قبول خريطة خط: تصاعدي بنسخة الطوبولوجيا، ترتيب الردود محفوظ؛ نسخة أعلى تُسقط هويات الأبراج المخزّنة بنسخة أقدم لذلك الخط
+function csLineIdentAccept(line, rev, towers, seq) {
+  rev = Number(rev) || 0; const sq = _csIdSeq[line] || (_csIdSeq[line] = { issued: 0, applied: 0 });
+  if (seq != null) { if (seq < sq.applied) return false; sq.applied = seq; }
+  const cur = _csLineId[line];
+  if (cur && Number(cur.rev) > rev) return false;                       // ردّ متأخر بنسخة أقدم: يُرفض
+  _csLineId[line] = { rev, towers: towers || {}, at: Date.now() };   // هويات الأغلفة الأقدم نسخةً لا تُحذف: csIdentSnap يحكم عليها «قديمة» فيمنع الحفظ منها حتى تُقرأ حيّةً
+  try { localStorage.setItem(CS_LINEID_KEY, JSON.stringify(_csLineId)); } catch (e) {}
+  return true;
+}
+async function csLineIdentLoad(line) {      // تحديث خريطة خط؛ عند الانقطاع تبقى آخر خريطة معروفة
+  if (!line || !navigator.onLine) return false;
+  const sq = _csIdSeq[line] || (_csIdSeq[line] = { issued: 0, applied: 0 }); const seq = ++sq.issued;
+  try {
+    const r = await csCall('app_line_identity', { p_line_name: line });
+    if (r && r.ok === true && r.towers) return csLineIdentAccept(line, r.topology_rev, r.towers, seq);
+  } catch (e) {}
+  return false;
+}
 // ---- استيعاب الغلاف: هندسة + معلومات حل + مفاتيح المعالجة ----
 function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
   const key = csKey(line, tower);
@@ -2558,6 +2609,10 @@ function csIngest(line, tower, env, source, asOf, cachedAt, ticket) {
     if ((_csApplied.get(key) || 0) > ticket) return false;
     _csApplied.set(key, ticket);
   } else if (_csApplied.has(key) && source === 'cache') return false;   // لقطة محفوظة لا تستبدل قراءة حيّة
+  if (env && env.tower_id) {   // N25-R4a: هوية الغلاف نفسه؛ لقطة محفوظة (cache) لا تُنزل نسخة أحدث عُرفت لهذا البرج
+    const _rv = Number(env.topology_rev) || 0, _pv = _csIdent.get(key);
+    if (source !== 'cache' || !_pv || _rv >= _pv.topology_rev) _csIdent.set(key, { tower_id: String(env.tower_id), topology_rev: _rv });
+  }
   if (source !== 'cache') csCardAccept(line, tower, env, ticket == null ? ++_csTicket : ticket);
   const meta = env.meta || {};
   const prevInfo = _csInfo.get(key);
@@ -5851,7 +5906,7 @@ const OPS_KINDS = ['observation', 'treatment', 'correction', 'void', 'annotate']
 const OPS_STATUS = ['pending', 'conflict', 'rejected'];
 
 // أكواد يعاد فيها الإرسال لاحقاً (مؤقتة) — أي كود آخر من الخادم يحوّل العملية إلى "مرفوضة" دائمة بانتظار قرار صريح
-const OPS_TRANSIENT = ['network', 'server_error', 'bad_response', 'timeout'];
+const OPS_TRANSIENT = ['network', 'server_error', 'bad_response', 'timeout', 'topology_busy'];   // N25-R4a: topology_busy = تغيير ترقيم جارٍ على الخادم؛ يُعاد لاحقاً بنفس المعرّف
 
 const OPS_AUTH_CODES = ['invalid_session', 'revoked', 'expired', 'inactive', 'locked'];
 
@@ -6060,7 +6115,8 @@ async function opsFetchEnv(line, tower) {
 // بناء العمليات
 // ---------------------------------------------------------------------------------------------------------
 function opsNewEntry(kind, payload, extra) {
-  const e = Object.assign({ v: 1, id: payload.op_id, seq: 0, kind, line: payload.line_name, tower: String(payload.tower_number),
+  // N25-R4a: الهوية تأتي من حمولة العملية نفسها (التقطها النموذج لحظة فتحه، أو سجلّ تاريخي يحمل tower_id) — لا تُحلّ هنا من الرقم ولا من كاش عام
+  const e = Object.assign({ v: 1, ident: { tower_id: payload && payload.tower_id || null, topology_rev: payload && payload.topology_rev != null ? payload.topology_rev : null }, id: payload.op_id, seq: 0, kind, line: payload.line_name, tower: String(payload.tower_number),
     uid: currentUser ? String(currentUser.id) : null, uname: currentUser ? currentUser.full_name : null, ts: Date.now(), status: 'pending', attempts: 0, err: null, payload }, extra || {});
   return e;
 }
@@ -6098,6 +6154,7 @@ const OPS_STATE_COLS = ['insulator_state', 'insulator_state_2', 'insulator_chain
 // ---- إلغاء (حذف) كشف/معالجة = عملية void مسجَّلة؛ الأصل لا يُحذف ولا يُعدَّل ----
 function opsVoidEntry(kindLabel, row, reason, items) {
   const p = { kind: 'void', op_id: genUUID(), line_name: row.line_name, tower_number: String(row.tower_number), target_source_id: row.id, reason };
+  if (row.tower_id) p.tower_id = row.tower_id;   // N25-R4a: هوية السجل نفسه، لا صاحب رقمه اليوم
   if (items && items.length) p.items = items;
   return opsNewEntry('void', p, { target_kind: kindLabel });
 }
@@ -6178,6 +6235,7 @@ async function opsSaveTreatmentEdit(t, edit) {
   if (Object.keys(meta).length) {
     if (!(currentUser.role === 'admin' || currentUser.role === 'supervisor')) { showToast('⛔ تعديل بيانات المعالجة من صلاحيات المدير أو المشرف', 'error'); return false; }
     entries.push(opsNewEntry('annotate', { kind: 'annotate', op_id: genUUID(), line_name: t.line_name, tower_number: String(t.tower_number), table: 'treatments', id: t.id, patch: meta, reason: 'تعديل بيانات وصفية للمعالجة' }, {}));
+    if (t.tower_id) entries[entries.length - 1].payload.tower_id = t.tower_id, entries[entries.length - 1].ident = { tower_id: t.tower_id, topology_rev: null };   // N25-R4a
   }
   for (const e of entries) {
     const why = opsBlockReason(e.line, e.tower, e.kind); if (why) { showToast(why, 'error'); return false; }
@@ -6229,9 +6287,21 @@ function opsActorMismatch(e) {
 }
 
 // تحضير حمولة تعتمد على حالة الخادم الحالية (ترحيل/رصد بلا قاعدة معروفة). يرجع {payload} أو {hold} أو {reject}
+// N25-R4: عنصر طابور قديم (مشتق من بيانات محلية) لا يُبنى أبداً من «صاحب الرقم اليوم»: الهوية المخزّنة يجب أن تطابق قراءة الخادم، ومن دون هوية لا يُقبل إن تغيّر ترقيم الخط
+function opsIdentGuard(e, env) {
+  const id = e.ident && e.ident.tower_id ? String(e.ident.tower_id) : (e.payload && e.payload.tower_id ? String(e.payload.tower_id) : null);
+  if (id) { if (env && env.tower_id && String(env.tower_id) !== id) return { reject: 'stale_topology_identity', detail: { current_tower_id: env.tower_id, topology_rev: env.topology_rev } }; return null; }
+  if (env && Number(env.topology_rev) > 0) return { reject: 'identity_required', detail: { topology_rev: env.topology_rev } };
+  return null;
+}
+function opsStampFromEntry(e, payload) {
+  if (payload && !payload.tower_id && e.ident && e.ident.tower_id) { payload.tower_id = e.ident.tower_id; payload.topology_rev = e.ident.topology_rev; }
+  return payload;
+}
 async function opsPrepare(e) {
   if (e.kind === 'treatment' && e.legacy) {
     const f = await opsFetchEnv(e.line, e.tower); if (!f.ok) return f.net ? { hold: 'network' } : { hold: 'read_failed:' + f.code };
+    { const ig = opsIdentGuard(e, f.env); if (ig) return ig; }
     const zc = e.legacy.zero_confirmed && Array.isArray(e.legacy.zero_confirmed.comps) ? e.legacy.zero_confirmed.comps : [];
     const dv = opsDeriveLegacyTreatment(e.legacy.item, e.legacy.patch || {}, f.env, opsReduceCtx(), { zeroConfirmed: zc });
     if (!dv.ok) return { reject: dv.code, detail: dv.detail };
@@ -6245,6 +6315,7 @@ async function opsPrepare(e) {
   }
   if (e.kind === 'correction' && e.base_mode === 'migrated_patch') {
     const f = await opsFetchEnv(e.line, e.tower); if (!f.ok) return f.net ? { hold: 'network' } : { hold: 'read_failed:' + f.code };
+    { const ig = opsIdentGuard(e, f.env); if (ig) return ig; }
     const env = f.env;
     if (!env.source || String(env.source.inspection_id) !== String(e.target_src)) return { reject: 'not_current_source', detail: { target: e.target_src, current: env.source ? env.source.inspection_id : null } };
     const cc = opsCompsFromRow(e.legacy.patch, { explicit: true, cycle: true });
@@ -6261,6 +6332,7 @@ async function opsPrepare(e) {
   }
   if (e.kind === 'observation' && (e.base_mode === 'unknown' || e.base_mode === 'migrated')) {
     const f = await opsFetchEnv(e.line, e.tower); if (!f.ok) return f.net ? { hold: 'network' } : { hold: 'read_failed:' + f.code };
+    { const ig = opsIdentGuard(e, f.env); if (ig) return ig; }
     const env = f.env, p = Object.assign({}, e.payload);
     const keys = Object.keys(p.comps || {}), base = {}, conf = [];
     keys.forEach(k => {
@@ -6324,7 +6396,7 @@ async function opsSyncOutbox() {
         if (prep.noop) { opsLog('noop_already_in_effect', e); opsRemove(e.id); continue; }
         if (prep.reject) { opsUpdate(e.id, x => { x.status = 'rejected'; x.err = prep.reject; x.detail = prep.detail || null; }); blocked.add(tk); res.rejected++; continue; }
         if (prep.conflict) { opsUpdate(e.id, x => { x.status = 'conflict'; x.conflict = prep.conflict; }); blocked.add(tk); res.conflicts++; continue; }
-        payload = prep.payload;
+        payload = opsStampFromEntry(e, prep.payload);
         // تثبيت الحمولة قبل الإرسال: إعادة الإرسال بعد ضياع الردّ يجب أن تكون بنفس الحمولة تماماً (idempotent)
         if (!opsUpdate(e.id, x => { x.payload = payload; x.prepared = true; })) { blocked.add(tk); continue; }
       }
@@ -6552,6 +6624,14 @@ const OPS_ERR_MSG = {
 
 OPS_ERR_MSG.cycle_confirmation_required = 'دورات المعالجة السابقة غير معروفة على السيرفر — لا تُفترض صفراً تلقائياً؛ يلزم تأكيدك الصريح لكل مكوّن أو الحذف بعد المراجعة';
 
+OPS_ERR_MSG.identity_required = 'تغيّر ترقيم أبراج هذا الخط بعد إنشاء هذه العملية، وهي محفوظة برقم البرج فقط (بلا هويته الدائمة) فلا يمكن معرفة أي برج عنته. لم يُكتب شيء. راجع العملية يدوياً مع السجل ثم أعد إدخالها على البرج الصحيح أو احذفها.';
+OPS_ERR_MSG.stale_topology_identity = 'الرقم المسجَّل في هذه العملية لم يعد يخص البرج الذي حُدِّدت له (تغيّر ترقيم الخط). لم تُكتب على أي برج آخر. راجع البرج الحالي ثم أعد الإدخال.';
+OPS_ERR_MSG.tower_retired = 'هذا البرج حُذف/أُخرج من الخدمة بتغيير ترقيم لاحق؛ لا تُكتب العملية على برج آخر. سجلّه التاريخي محفوظ بمعرّفه.';
+OPS_ERR_MSG.unknown_tower_id = 'هوية البرج المرفقة بالعملية غير معروفة للخادم — لم تُكتب. راجع العملية يدوياً.';
+OPS_ERR_MSG.future_topology_revision = 'نسخة ترقيم الخط في هذه العملية أحدث مما يعرفه الخادم — لم تُكتب. أعد المحاولة بعد المزامنة.';
+OPS_ERR_MSG.newer_observation = 'سُجّل كشف/تصحيح أحدث تاريخاً لنفس العنصر بعد تاريخ هذه المعالجة؛ لا تمحو معالجة أقدم ضررًا أحدث. لم يُكتب شيء. راجع الحالة الحالية.';
+OPS_ERR_MSG.topology_managed = 'تغيير أرقام الأبراج لا يتم من هذا المسار؛ يتم فقط عبر مسار تغيير الطوبولوجيا المُدار.';
+OPS_ERR_MSG.op_id_reused = 'معرّف العملية استُخدم سابقاً لبرج آخر — لم تُكتب.';
 OPS_ERR_MSG.legacy_state_invalid = 'مصفوفة حالة العوازل المحفوظة محلياً غير صالحة (قيم غير منطقية) — لا تُحوَّل؛ راجع الأصل ثم احذف أو أعد الإدخال';
 
 function opsErrText(e) {
@@ -7799,8 +7879,9 @@ async function syncThermalQueue() {
   const remaining = [];
   for (const rec of q) {
     if (!rec.client_uuid) rec.client_uuid = genUUID();
+    if (rec._conflict) { remaining.push(rec); continue; }   // N25-R4: محفوظ للمراجعة، لا إعادة إرسال تلقائية
     const toSend = { ...rec };
-    delete toSend._lastError;
+    delete toSend._lastError; delete toSend._conflict;
     try {
       const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
       if (res.ok) synced++;
@@ -7808,6 +7889,8 @@ async function syncThermalQueue() {
         let bodyText = '';
         try { bodyText = await res.text(); } catch(e) { console.warn('[tower-app] فشل قراءة تفاصيل خطأ مزامنة الكشف الحراري', e); }
         rec._lastError = `HTTP ${res.status}: ${bodyText.slice(0,200)}`;
+        const _ic = ['identity_required','stale_topology_identity','tower_retired','unknown_tower_id','future_topology_revision'].find(c => bodyText.indexOf(c) >= 0);   // N25-R4: رفض هوية = تعارض صريح؛ السجل كامل على الجهاز ولا يُعاد إرساله تلقائياً ولا يُنقل إلى برج آخر
+        if (_ic) rec._conflict = _ic;
         remaining.push(rec);
       }
     } catch(e) {

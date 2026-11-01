@@ -18,7 +18,7 @@
         </div>
         <div class="field">
           <label>رقم البرج *</label>
-          <select id="emg_tower" disabled>
+          <select id="emg_tower" disabled onchange="onEmgTowerChange()">
             <option value="">-- اختر الخط أولاً --</option>
           </select>
         </div>
@@ -72,8 +72,21 @@
 // حراسة الطلب: نفس الصفحة والجلسة، آخر طلب من نوعه، ولم يُبدَّل لسان المغادرات أثناء الجلب (لا رسم لبيانات قديمة ولا لسان مخفي)
 function emgReqOk(r) { return featEntryOk(r.tok) && r.depK === (_featSeq.dep || 0); }
 
+// N25-R4a: هوية البرج المختار تُلتقط لحظة اختياره وتبقى ثابتة حتى الحفظ (لا يُعاد تحميل الخريطة ولا حلّ الرقم عند الحفظ)
+let _emgPick = null, _emgPickSeq = 0;
+async function onEmgTowerChange() {
+  const my = ++_emgPickSeq; _emgPick = null;
+  const line = document.getElementById('emg_line').value, num = document.getElementById('emg_tower').value;
+  if (!line || !num) return;
+  let sn = csIdentSnap(line, String(num), { mapOnly: true });
+  if (!sn && navigator.onLine) { await csLineIdentLoad(line); sn = csIdentSnap(line, String(num), { mapOnly: true }); }
+  if (my !== _emgPickSeq) return;
+  _emgPick = { line, num: String(num), snap: sn };
+}
 function onEmgLineChange() {
+  _emgPickSeq++; _emgPick = null;
   const lineName = document.getElementById('emg_line').value;
+  try { csLineIdentLoad(lineName); } catch (e) {}
   const towerSel = document.getElementById('emg_tower');
   towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
   if (!lineName) { towerSel.disabled = true; return; }
@@ -93,6 +106,7 @@ function toggleEmgStatus() {
 }
 
 function clearEmgForm() {
+  _emgPickSeq++; _emgPick = null;
   document.getElementById('emg_line').value = '';
   document.getElementById('emg_tower').innerHTML = '<option value="">-- اختر الخط أولاً --</option>';
   document.getElementById('emg_tower').disabled = true;
@@ -126,10 +140,20 @@ async function saveEmergencyDeparture() {
     created_by: currentUser.full_name,
     client_uuid: genUUID()
   };
+  // N25-R4: المغادرة تُربط بالهوية الدائمة للبرج (الرقم يبقى لقطة)؛ تُحدَّث الخريطة قبل الحفظ عند الاتصال
+  { const pk = _emgPick;
+    if (pk && pk.line === lineName && pk.num === String(towerNum) && pk.snap) {
+      if (pk.snap.blocked) { showToast(csIdentBlockMsg(pk.snap.blocked), 'error'); return; }
+      rec.tower_id = pk.snap.tower_id; rec.topology_rev = pk.snap.topology_rev;
+    } }
 
   try {
     const res = await sbFetch('emergency_departures?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-    if (!res.ok) throw new Error();
+    if (!res.ok) {
+      let bt = ''; try { bt = await res.text(); } catch (e) {}
+      if (/identity_required|stale_topology_identity|tower_retired|unknown_tower_id|future_topology_revision/.test(bt)) { showToast('⚠️ تغيّر ترقيم هذا الخط أو لم يعد هذا البرج بهذا الرقم — حدّث الصفحة وأنت متصل ثم اختر البرج من جديد (لم يُحفظ شيء)', 'error'); return; }
+      throw new Error();
+    }
     showToast('✅ تم حفظ المغادرة الطارئة');
     clearEmgForm();
     renderEmergencyLog();

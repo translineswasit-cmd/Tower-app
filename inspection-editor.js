@@ -1174,7 +1174,7 @@ function opsCaptureBaseline(mode) {
   if (!line || !tower) { _opsBaseline = null; return; }
   const inh = {}; OPS_SECTIONS.forEach(s => { inh[s.id] = mode === 'blank' ? false : opsSectionHasData(s.id, line, tower); });
   _insHealthy = { 1: false, 2: false };
-  _opsBaseline = { line, tower, mode: mode === 'blank' ? 'blank' : 'inherit', vals: opsSectionVals(), inherited: inh };
+  _opsBaseline = { line, tower, mode: mode === 'blank' ? 'blank' : 'inherit', vals: opsSectionVals(), inherited: inh, ident: csIdentSnap(line, tower) };   // N25-R4a: هوية هذا البرج تُلتقط مع بيانات النموذج نفسها وتبقى ثابتة حتى الحفظ
   try { csInsHealthyRefresh(); } catch (e) { /* UI only */ }
 }
 
@@ -1278,10 +1278,17 @@ function opsBuildObservation(d) {
   if (err.length) return { ok: false, msg: err[0] };
   if (!Object.keys(comps).length) return { ok: false, msg: 'ℹ️ لم تُعدّل أي قسم — لا يوجد رصد جديد ليُحفظ. عدّل قسماً ثم احفظ' };
   const env = opsEnvKnown(line, tower);
+  // N25-R4a: الهوية من لقطة النموذج (لا من خريطة تغيّرت أثناء التحرير). بيانات قديمة/متعارضة = لا حفظ؛ كاش تبدّل إلى برج آخر أثناء التحرير = لا حفظ
+  let _ident = null;
+  { const bl = _opsBaseline; if (bl && bl.line === line && bl.tower === tower && bl.ident) {
+      if (bl.ident.blocked) return { ok: false, msg: csIdentBlockMsg(bl.ident.blocked) };
+      if (env && env.tower_id && String(env.tower_id) !== String(bl.ident.tower_id)) return { ok: false, msg: '⚠️ تغيّر ترقيم هذا الخط أثناء التحرير وأصبح هذا الرقم لبرج آخر — حقولك باقية؛ حدّث ثم اختر البرج من جديد ولا تحفظ على الرقم نفسه (لم يُحفظ شيء)' };
+      _ident = bl.ident; } }
   const payload = { kind: 'observation', op_id: genUUID(), line_name: line, tower_number: tower, business_date: d.inspection_date || opsToday(), comps, sev,
     row: { tower_type: d.tower_type || undefined, voltage: d.voltage || undefined, notes: _v('f_notes'), road_access_notes: _v('f_road_access_notes'), wires_circuit: _v('f_wires_circuit'),
            insulator_svg_r: d.insulator_svg_r, insulator_svg_s: d.insulator_svg_s, insulator_svg_t: d.insulator_svg_t } };
   Object.keys(payload.row).forEach(k => { if (payload.row[k] === undefined || payload.row[k] === '') delete payload.row[k]; });
+  if (_ident) { payload.tower_id = _ident.tower_id; payload.topology_rev = _ident.topology_rev; }
   if (isObs('road') && comps.road && comps.road.text === 'متاح' && !_v('f_road_access_notes') && _hRoadClr && _hRoadClr.base === _opsBaseline && _hRoadClr.line === line && _hRoadClr.tower === tower) payload.clear_road_notes = true;   // N21: مسح صريح مؤكَّد فقط
   const extra = { sections: observed, skipped_unknown: skippedUnknown, material_only: materialOnly };
   if (env) { payload.base = opsBaseFor(env, Object.keys(comps)); payload.base_src = env.source ? env.source.inspection_id : null; extra.base_mode = null; }
@@ -1352,10 +1359,13 @@ async function opsSaveEdit(d) {
     const sev = {}; ['sev_insulator', 'sev_iron', 'sev_foundation', 'sev_wires', 'sev_ground'].forEach(k => { if (cols.has(k) && d[k]) sev[k] = d[k]; });
     entries.push(opsNewEntry('correction', { kind: 'correction', op_id: genUUID(), line_name: d.line_name, tower_number: String(d.tower_number), business_date: opsToday(), comps, sev,
       base: opsBaseFor(env, Object.keys(comps)), base_src: env.source.inspection_id, reason, target_source_id: editId }, {}));
+    if (orig.tower_id && env.tower_id && String(env.tower_id) !== String(orig.tower_id)) { showToast('⛔ هذا السجل يخص برجاً غير صاحب هذا الرقم اليوم (تغيّر الترقيم) — لا يُصحَّح على رقمه (لم يُحفظ شيء)', 'error'); return false; }
+    if (orig.tower_id) entries[entries.length - 1].payload.tower_id = orig.tower_id, entries[entries.length - 1].ident = { tower_id: orig.tower_id, topology_rev: null };   // N25-R4a: هوية السجل نفسه
   }
   if (Object.keys(metaPatch).length) {
     const reason = 'تعديل بيانات وصفية من واجهة السجلات';
     entries.push(opsNewEntry('annotate', { kind: 'annotate', op_id: genUUID(), line_name: d.line_name, tower_number: String(d.tower_number), table: 'inspections', id: editId, patch: metaPatch, reason }, {}));
+    if (orig.tower_id) entries[entries.length - 1].payload.tower_id = orig.tower_id, entries[entries.length - 1].ident = { tower_id: orig.tower_id, topology_rev: null };
   }
   for (const e of entries) { const r = opsEnqueue(e); if (!r.ok) { showToast('❌ لم يُحفظ التعديل (' + (r.reason === 'storage' ? 'ذاكرة الجهاز ممتلئة' : 'قائمة المعلّقات غير قابلة للقراءة') + ') وحقولك باقية', 'error'); return false; } }
   // عرض محلي فوري لكل ما يُعرض من السجل نفسه (الأصل لا يتغيّر بالخادم إلا بالبيانات الوصفية)

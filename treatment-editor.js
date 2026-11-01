@@ -162,13 +162,14 @@ async function _treatLoadLineTowers(lineName, mySeq) {
 
 let _treatSelectSeq = 0;
 
+let currentTreatIdent = null;   // N25-R4a
 async function onTreatTowerChange() {
   const mySeq = ++_treatSelectSeq;
   const lineName = document.getElementById('treatLine').value;
   const towerNum = document.getElementById('treatTower').value;
   const card = document.getElementById('treatItemsCard');
   // لا يُستعمل سجل اختيار سابق: يُصفَّر قبل أي فحص أو جلب، وتُخفى البطاقة حتى يُقبل الاختيار الجديد
-  currentTreatRecord = null;
+  currentTreatRecord = null; currentTreatIdent = null;
   card.style.display = 'none';
   if (!lineName || !towerNum) return;
   // حارس قبل أي جلب: وجود كشف معلّق لنفس الخط والبرج (أي تاريخ) يمنع الجلب كي لا يستبدل loadFullTowerRecord كشفاً محلياً معلّقاً
@@ -185,6 +186,11 @@ async function onTreatTowerChange() {
   if (!r) return;
   const late = treatmentBlockReason(lineName, towerNum, r); // نفس الحراس مع معرّف السجل المجلوب (id صالح + لا عمليات معلّقة له)
   if (late) { showToast(late, 'error'); return; }
+  // N25-R4a: هوية هذا البرج تُلتقط مع السجل المعروض نفسه (لحظة قبول الاختيار) وتبقى ثابتة حتى الحفظ؛ سجل يخص برجاً غير صاحب الرقم اليوم = لا فتح
+  { const sn = csIdentSnap(lineName, towerNum);
+    if (sn && sn.blocked) { showToast(csIdentBlockMsg(sn.blocked), 'error'); return; }
+    if (sn && r.tower_id && String(r.tower_id) !== String(sn.tower_id)) { showToast('⚠️ السجل المعروض يخص برجاً آخر غير صاحب هذا الرقم اليوم (تغيّر ترقيم الخط) — حدّث وأنت متصل ثم اختر البرج من جديد (لم يُفتح شيء)', 'error'); return; }
+    currentTreatIdent = sn ? { tower_id: sn.tower_id, topology_rev: sn.topology_rev } : (r.tower_id ? { tower_id: String(r.tower_id), topology_rev: null } : null); }
   currentTreatRecord = r;
   otherDepTreatState = {};
   card.style.display = 'block';
@@ -783,6 +789,7 @@ async function saveTreatment() {
   const btn = document.querySelector('#treatItemsCard .btn-primary');
   if (btn) btn.disabled = true;
   try {
+    if (currentTreatIdent && currentTreatRecord === r) { built.payload.tower_id = currentTreatIdent.tower_id; if (currentTreatIdent.topology_rev != null) built.payload.topology_rev = currentTreatIdent.topology_rev; }   // N25-R4a: لقطة فتح النموذج، لا خريطة اللحظة
     const rr = opsEnqueue(opsNewEntry('treatment', built.payload, {}));
     if (!rr.ok) {
       showToast(rr.reason === 'storage'

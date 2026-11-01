@@ -182,6 +182,7 @@ function switchToThermalTab(lineName) {
   if (!sess) return;
   currentThermalLine = lineName;
   thermalSession = { line_name: lineName, inspection_date: sess.inspection_date, ambient_temp: sess.ambient_temp };
+  try { csLineIdentLoad(lineName); } catch (e) {}   // N25-R4: خريطة (رقم → tower_id) + نسخة الترقيم للخط؛ عند الانقطاع تبقى آخر خريطة معروفة
 
   document.getElementById('thSumLine').textContent = lineName;
   document.getElementById('thSumDate').textContent = sess.inspection_date;
@@ -232,8 +233,20 @@ function autoFillThermalBoxes(ids) {
     if (el) el.value = Math.round(ambient + 7 + Math.random() * 3);
   });
 }
+// N25-R4a: هوية البرج المختار تُلتقط لحظة الاختيار (مع قائمة النقاط التي جاء منها) وتبقى ثابتة حتى الحفظ؛ تحديث الخريطة أثناء التحرير لا يغيّرها،
+// واختيار جديد بعد التحديث يلتقط صاحب الرقم الحالي. لا يُعاد حلّ الرقم عند الحفظ.
+let _thPick = null, _thPickSeq = 0;
+async function thermalCapturePick(line, label) {
+  const my = ++_thPickSeq; _thPick = null;
+  const num = parseInt(label); if (!line || !Number.isFinite(num)) return;
+  let sn = csIdentSnap(line, String(num), { mapOnly: true });
+  if (!sn && navigator.onLine) { await csLineIdentLoad(line); sn = csIdentSnap(line, String(num), { mapOnly: true }); }
+  if (my !== _thPickSeq) return;                      // اختيار أحدث حلّ محلّه: ردّ متأخر يُهمل
+  _thPick = { line, num, snap: sn };
+}
 function onThermalPointChange() {
   const v = document.getElementById('th_point').value;
+  try { const [_k, _l] = v.split('::'); if (v && _k !== 'LINE_ENTRY' && thermalSession) thermalCapturePick(thermalSession.line_name, _l); else { _thPickSeq++; _thPick = null; } } catch (e) {}
   const isLineEntry = v.startsWith('LINE_ENTRY::');
   document.getElementById('thermalReadingsBox').style.display = (v && !isLineEntry) ? 'block' : 'none';
   document.getElementById('lineEntryReadingsBox').style.display = (v && isLineEntry) ? 'block' : 'none';
@@ -250,9 +263,16 @@ function resetThermalReadingInputs() {
   ['le_r_landing','le_r_wt_in','le_r_wt_out','le_r_busbar',
    'le_s_landing','le_s_wt_in','le_s_wt_out','le_s_busbar',
    'le_t_landing','le_t_wt_in','le_t_wt_out','le_t_busbar'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  document.getElementById('th_point').value = '';
+  document.getElementById('th_point').value = ''; _thPickSeq++; _thPick = null;
   document.getElementById('thermalReadingsBox').style.display = 'none';
   document.getElementById('lineEntryReadingsBox').style.display = 'none';
+}
+// N25-R4: رموز الهوية التي يرجعها الخادم لقياس حراري؛ لا إعادة إرسال تلقائي لها (القياس محفوظ للمراجعة، لا يُلصق برقم برج آخر)
+const THERMAL_IDENTITY_CODES = ['identity_required', 'stale_topology_identity', 'tower_retired', 'unknown_tower_id', 'future_topology_revision'];
+function thermalIdentityCode(bodyText) { for (const c of THERMAL_IDENTITY_CODES) if (String(bodyText || '').indexOf(c) >= 0) return c; return null; }
+function thermalIdentityMsg(c) {
+  return ({ identity_required: 'تغيّر ترقيم هذا الخط ولا تتوفر هوية البرج لهذا القياس (حدّث الصفحة وأنت متصل)', stale_topology_identity: 'رقم البرج لم يعد يخص هذا البرج بعد تغيير الترقيم',
+           tower_retired: 'هذا البرج أُخرج من الخدمة', unknown_tower_id: 'هوية البرج غير معروفة للخادم', future_topology_revision: 'نسخة ترقيم الخط أحدث من علم الخادم — أعد المحاولة بعد المزامنة' })[c] || c;
 }
 async function saveThermalPoint() {
   const ptVal = document.getElementById('th_point').value;
@@ -286,13 +306,24 @@ async function saveThermalPoint() {
     created_by_name: currentUser.full_name,
     client_uuid: genUUID(),
   };
+  // N25-R4: الهوية الدائمة والنسخة تُثبَّتان في السجل نفسه قبل أي إرسال/تخزين محلي؛ الرقم المسجَّل يبقى لقطة وقت الحدث
+  { const pk = _thPick;       // لقطة الاختيار؛ لا قراءة لخريطة قابلة للتغيّر عند الحفظ
+    if (pk && pk.line === rec.line_name && pk.num === rec.tower_number && pk.snap) {
+      if (pk.snap.blocked) { showToast(csIdentBlockMsg(pk.snap.blocked), 'error'); return; }
+      rec.tower_id = pk.snap.tower_id; rec.topology_rev = pk.snap.topology_rev;
+    } }
 
   const btn = document.getElementById('thSaveBtn');
   btn.disabled = true;
   try {
     const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
     if (res.ok) showToast('✅ تم حفظ القياس — ' + rec.point_label);
-    else throw new Error(`HTTP ${res.status}`);
+    else {
+      let bt = ''; try { bt = await res.text(); } catch (e) {}
+      const idc = thermalIdentityCode(bt);
+      if (idc) { rec._conflict = idc; addToThermalQueue(rec); showToast('⚠️ ' + thermalIdentityMsg(idc) + ' — حُفظ القياس على الجهاز ولم يُكتب على أي برج آخر', 'error'); btn.disabled = false; resetThermalReadingInputs(); return; }
+      throw new Error(`HTTP ${res.status}`);
+    }
   } catch {
     addToThermalQueue(rec);
     const msg = navigator.onLine ? '📦 خطأ بالإرسال، حُفظ محلياً' : '📦 حُفظ أوف لاين، سيُرسل تلقائياً';
