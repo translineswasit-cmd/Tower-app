@@ -2882,7 +2882,8 @@ function csProvenanceText(line, tower) {
   const g = _csGeom.get(csKey(line, tower));
   if (g && g.status === 'inferred') parts.push('الهندسة: مستنتجة من التخطيط المحفوظ (ليست تأكيداً فيزيائياً)');
   const ms = info.materialsStatus;
-  if (ms === 'legacy_interpretable') parts.push('المواد: زجاج افتراضي بحسب الاعتماد القديم (غير مرصود فعلياً) — البلاستيك/الخزف المسجّل محفوظ');
+  if (info.materials && info.materials.default_glass_applied) parts.push('المواد: زجاج — الافتراضي المعتمد للمشروع (قرار المالك)، غير مرصود ميدانياً؛ أي مادة تختارها تُحفظ وتُفضَّل عليه');
+  else if (ms === 'legacy_interpretable') parts.push('المواد: زجاج افتراضي بحسب الاعتماد القديم (غير مرصود فعلياً) — البلاستيك/الخزف المسجّل محفوظ');
   else if (ms === 'missing') parts.push('المواد: غير معروفة (لم تُحفظ) — لن يُكتب نوع مادة إلا إذا اخترته يدوياً بزر 🔄');
   else if (ms === 'incomplete' || ms === 'invalid') parts.push('المواد: غير مكتملة/غير صالحة في الكشف المحفوظ');
   return parts.join(' · ');
@@ -2961,7 +2962,11 @@ function csChainTypesForSave(ct, circuit) {
     ['R', 'S', 'T'].forEach(ph => { if (!Array.isArray(out[ph])) out[ph] = []; for (let i = 0; i < _csMatPerPhase; i++) if (!csChainChosen(out[ph][i])) out[ph][i] = 'glass'; });
     return JSON.stringify(out);
   }
-  return JSON.stringify(ct);
+  // N25-R4f: دائرة لا حالة «مجهولة» لها على الجهاز (برج بلا حالة محفوظة بعد، أو مصفوفة مختارة جزئياً): الخانات غير المختارة داخل مصفوفة بدأ فيها اختيار تُكمَّل زجاجاً (الافتراضي المعتمد) كي لا تُرسَل
+  // مصفوفة ناقصة يرفضها الخادم؛ ما اختاره الفني لا يتغيّر أبداً، والأطوار التي لم يُختَر فيها شيء لا تُرسَل.
+  const out2 = JSON.parse(JSON.stringify(ct || {}));
+  ['R', 'S', 'T'].forEach(ph => { const a = out2[ph]; if (Array.isArray(a) && a.some(csChainChosen) && a.length <= _csMatPerPhase) for (let i = 0; i < _csMatPerPhase; i++) if (!csChainChosen(a[i])) a[i] = 'glass'; });
+  return JSON.stringify(out2);
 }
 
 // يُستدعى من buildInsulatorUI: يحدّد أي دائرة ما زالت مادتها مجهولة (لم تُحفظ ولم تكتمل اختيارات الفني)
