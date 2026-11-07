@@ -148,6 +148,7 @@ async function linesFetchBaseline() {
 function linesPublishBaseline(rows, sess) {
   if (_csAuthGen !== sess) return;
   linesInfoCache = rows;
+  try { refreshInspectionLineSelect(); } catch (e) {}
   try { const v = document.getElementById('linesInfoView'); if (v && v.style.display !== 'none') renderLinesInfo(); } catch (e) {}
 }
 // استبدال الجدول كله بشرط نسخة الأساس؛ لا يلمس الكاش إلا بعد تأكيد الخادم
@@ -166,6 +167,7 @@ async function saveLinesInfoData(data, expectedVersion) {
   if (out.net) return { ok: false, code: 'network' };
   if (out.ok !== true) return { ok: false, code: out.code || 'failed' };
   linesInfoCache = data;   // مؤكَّد من الخادم فقط
+  try { refreshInspectionLineSelect(); } catch (e) {}   // N25-R6n: الخط الجديد يظهر في «إضافة كشف» فور الحفظ
   return { ok: true, version: out.version };
 }
 // ---- هوية العمليات: عملية كتابة واحدة بالمرة؛ لكل واحدة جيل نموذج وجيل جلسة
@@ -286,6 +288,7 @@ async function deleteLineImpl(idx) {
       delete lineTowersCache[target.name];
       delete lineSettingsCache[target.name];
       configGone = true;
+      try { refreshInspectionLineSelect(); } catch (e) {}
     }
     const res = await saveLinesInfoData(next, bl.version);
     if (!linesOpLive(op)) return;

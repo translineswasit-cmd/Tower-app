@@ -4198,7 +4198,7 @@ function onLineChange(skipModalClose, noGrid) {
     o.value = t.num; o.textContent = 'برج '+t.num+' — '+t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code||''; tSel.appendChild(o);
   });
   tSel.disabled = false;
-  const v = LINE_VOLTAGE[name];
+  const v = LINE_VOLTAGE[name] || lineVoltageByName(name) || '—';
   lineInfo.style.display = 'block';
   lineInfo.textContent = '📡 عدد الأبراج: '+towers.length+' برج | '+v+' ك.ف';
   currentVoltage = v;
@@ -8487,7 +8487,7 @@ let linesInfoCache = JSON.parse(JSON.stringify(LINES_INFO)); // احتياط أ�
 async function loadLinesInfoFromDB() {
   try {
     const rows = await fetchAllPages('lines_info?select=*&order=idx.asc');
-    if (Array.isArray(rows) && rows.length) linesInfoCache = rows;
+    if (Array.isArray(rows) && rows.length) { linesInfoCache = rows; try { refreshInspectionLineSelect(); } catch (e2) {} }
   } catch (e) {
     // فشل الاتصال: نبقى على القيم الاحتياطية الموجودة بالذاكرة (لا نكسر التطبيق أوف لاين)
   }
@@ -9223,6 +9223,7 @@ async function loadLineTowersCache() {
           lineSettingsCache[r.line_name] = { circuit_count: r.circuit_count, chain_mode: r.chain_mode };
         }
       });
+      try { refreshInspectionLineSelect(); } catch (e2) {}
     }
   } catch (e) { console.warn('[tower-app] فشل تحميل أبراج/إعدادات الخطوط:', e); }
 }
@@ -9242,6 +9243,36 @@ function getLineTowers(lineName) {
     if (LINES_DATA[n]) return LINES_DATA[n];
   }
   return [];
+}
+
+// N25-R6n: قائمة «الخط» في إضافة كشف = الخطوط المدمجة (LINES_DATA) + الخطوط المُهيَّأة من إدارة الخطوط (line_towers_custom).
+// كانت القائمة تُبنى مرة واحدة عند التشغيل من LINES_DATA فقط، فلا يظهر فيها أي خط جديد. الاكتشاف هنا من إعداد الخط نفسه لا من تاريخ الكشوفات.
+function _lineBareName(n) { return String(n || '').replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim(); }
+function _lineIsBuiltin(n) { const b = _lineBareName(n); return [n, b, b + ' 400 ك.ف', b + ' 132 ك.ف'].some(k => Object.prototype.hasOwnProperty.call(LINES_DATA, k)); }
+function configuredLineNames() {   // خطوط مُهيَّأة بأبراج وليست مدمجة (لا تتكرر مع خط مدمج حُفظ تعديله بصيغة اسم أخرى)
+  return Object.keys(lineTowersCache).filter(n => n && Array.isArray(lineTowersCache[n]) && lineTowersCache[n].length && !_lineIsBuiltin(n))
+    .sort((a, b) => a.localeCompare(b, 'ar'));
+}
+function registerConfiguredLineVoltages() {   // الجهد من «بيانات الخطوط» (lines_info) للخط المُهيَّأ؛ لا يُكتب فوق جهد مدمج
+  const info = (typeof linesInfoCache !== 'undefined' && Array.isArray(linesInfoCache)) ? linesInfoCache : [];
+  configuredLineNames().forEach(n => {
+    if (LINE_VOLTAGE[n]) return;
+    const row = info.find(r => r && (r.name === n || r.name === _lineBareName(n)));
+    const v = row ? Number(row.voltage) : 0;
+    const sfx = lineVoltageByName(n);
+    if (v === 132 || v === 400) LINE_VOLTAGE[n] = v; else if (sfx) LINE_VOLTAGE[n] = sfx;
+  });
+}
+function refreshInspectionLineSelect() {   // يُعيد بناء الخيارات فقط إن تغيّرت، ويحفظ الاختيار الحالي؛ لا يطلق change
+  const sel = document.getElementById('f_line_name'); if (!sel) return;
+  try { registerConfiguredLineVoltages(); } catch (e) {}
+  const want = Object.keys(LINES_DATA).concat(configuredLineNames());
+  const have = Array.prototype.map.call(sel.options, o => o.value).filter(v => v !== '');
+  if (have.length === want.length && have.every((v, i) => v === want[i])) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">-- اختر الخط --</option>';
+  want.forEach(name => { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); });
+  if (cur && want.indexOf(cur) >= 0) sel.value = cur;
 }
 
 // نوع العازل الافتراضي المحفوظ لبرج معيّن ('glass'|'plastic'|'ceramic') — يُقرأ عند فتح كشف جديد له
