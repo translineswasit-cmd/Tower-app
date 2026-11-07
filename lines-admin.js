@@ -301,7 +301,11 @@ async function deleteLineImpl(idx) {
 
 let _editingLineTowersList = [];
 
+// N25-R6: خطّ قائم له قائمة أبراج لا يُعاد ترقيمه من هنا: الحفظ بالرقم يفصل التاريخ عن هوية البرج (الخادم يرفضه بـ topology_managed). التغيير الوحيد المسموح هنا لقائمة قائمة: النوع/السلاسل/المادة (الأرقام ثابتة).
+function _lineNumberingLocked() { return !!(_lineFormOpen && _lineFormOpen.editIdx !== null && _editingLineTowersList.length > 0); }
+function _lineNumberingBlockedMsg() { showToast('⚠️ ترقيم أبراج خط قائم لا يتغير من هذه الشاشة (يفقد ربط التاريخ بهوية البرج). استخدم «🧭 إدارة ترقيم الأبراج» في صفحة بيانات الخطوط.', 'error'); }
 function generateLineTowersRange() {
+  if (_lineNumberingLocked()) { _lineNumberingBlockedMsg(); return; }
   const from = parseInt(document.getElementById('lm_tw_from').value);
   const to = parseInt(document.getElementById('lm_tw_to').value);
   if (!from || !to || to < from) { showToast('⚠️ أدخل نطاقاً صحيحاً (من ≤ إلى)', 'error'); return; }
@@ -316,6 +320,7 @@ const LINE_TOWER_TYPE_OPTIONS = ['برج تعليق', 'برج شد', 'برج ع�
 // يدرج برجاً جديداً مباشرة بعد رقم برج محدد، ويزيح كل الأبراج بعده رقماً واحداً — بدون هذا كانت
 // الطريقة الوحيدة "تصفير القائمة وإعادة توليدها" اللي تمسح كل التخصيصات (نوع/مادة/استثناء) الموجودة
 function insertLineTowerAndRenumber() {
+  if (_lineNumberingLocked()) { _lineNumberingBlockedMsg(); return; }
   const afterNum = parseInt(document.getElementById('lm_insert_after').value);
   const newType = document.getElementById('lm_insert_type').value;
   if (!afterNum) { showToast('⚠️ أدخل رقم البرج اللي يُدرَج بعده', 'error'); return; }

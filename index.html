@@ -898,6 +898,7 @@ tbody tr:hover { background: #F7FAFC; }
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" onclick="openPrintLinesModal()">🖨️ طباعة</button>
         <button id="btnAddLine" class="btn btn-primary btn-sm" onclick="openAddLineModal()" style="display:none">➕ إضافة خط</button>
+        <button id="btnTopo" class="btn btn-secondary btn-sm" onclick="openTopoAdmin()" style="display:none">🧭 إدارة ترقيم الأبراج</button>
       </div>
     </div>
     <div style="margin-bottom:10px">
@@ -6473,6 +6474,7 @@ const OPS_CODE_MSG = {
   offline: 'لا يوجد اتصال — تعديل إعدادات الخط يتطلب اتصالاً (يُحفظ على الخادم مباشرة بعملية واحدة)',
   forbidden: 'ليست لديك صلاحية لهذا الإجراء', invalid_session: 'انتهت الجلسة', mapping_required: 'يلزم قرار مراجعة لأبراج مُرحَّلة', config_refused: 'تعديل غير آمن على أبراج لها حالة مسجَّلة — رُفض',
   owner_confirmed_circuits: 'عدد دوائر هذا الخط مؤكَّد من المالك ولا يُغيَّر', circuits_conflict_registry: 'عدد الدوائر يخالف السجل المرجعي', circuit_count_change_blocked: 'لا يمكن تغيير عدد الدوائر لخط فيه أبراج لها حالة مسجَّلة',
+  topology_managed: 'تغيير أرقام الأبراج (إضافة/حذف/إعادة ترقيم) لا يتم من هذه الشاشة — استخدم «🧭 إدارة ترقيم الأبراج» في صفحة بيانات الخطوط',
   line_has_operation_state: 'لا يمكن حذف إعداد خط فيه أبراج لها حالة مسجَّلة', invalid: 'بيانات غير صالحة', op_id_reused: 'معرّف العملية استُخدم لطلب مختلف'
 };
 
@@ -9487,7 +9489,8 @@ function drawArabicTextPNG(items, widthCss, opts) {
 // treatment-log-export.js، departures-export.js، records-export.js. كل وحدة: Promise واحد مشترك، تنفيذ مرة واحدة، إعادة المحاولة بعد الفشل.
 const FEAT_MODULE_SRC = { svg: './tower-svg.js', insp: './inspection-editor.js', dep: './departures-list.js', treat: './treatment-editor.js',
   hist: './treatment-history.js', thist: './tower-history.js', lexp: './treatment-log-export.js', dexp: './departures-export.js', rexp: './records-export.js',
-  lpg: './lines-pages.js', ladm: './lines-admin.js', lprt: './lines-print.js', acct: './accounts.js', emg: './emergency-departures.js', tg: './work-telegram.js' };
+  lpg: './lines-pages.js', ladm: './lines-admin.js', lprt: './lines-print.js', acct: './accounts.js', emg: './emergency-departures.js', tg: './work-telegram.js',
+  topo: './topology-admin.js' };   // N25-R6: إدارة ترقيم الأبراج + مواصفات البرج
 
 const FEAT_MODULE_DEPS = { insp: ['svg'], treat: ['svg'], ladm: ['lpg'], lexp: ['hist'], thist: ['hist'] };   // v335-C6r24 (P02): سجل البرج يستخدم مُرقِّم المعالجات   // v335-C6r21 (P01-B1): التصدير يستخدم مُرقِّم السجل
 

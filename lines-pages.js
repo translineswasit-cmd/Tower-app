@@ -8,6 +8,7 @@ function showLinesInfoImpl() {
   document.getElementById('linesStatusView').style.display = 'none';
   const addBtn = document.getElementById('btnAddLine');
   if (addBtn) addBtn.style.display = currentUser && currentUser.role === 'admin' ? '' : 'none';
+  { const tb = document.getElementById('btnTopo'); if (tb) tb.style.display = currentUser && currentUser.role === 'admin' ? '' : 'none'; }   // N25-R6
   renderLinesInfo();
 }
 
@@ -369,6 +370,16 @@ function renderLineTowerList(lineName, held) {
 // صفحة تفاصيل برج واحد (مزيج الكشف + المعالجات)
 // ========================
 let _towerDetailCtx = null;   // v335-C6r9: { line, tower, live } of the last detail read (live = confirmed by the server in this open; false = held copy)
+// N25-R6: إدارة ترقيم الأبراج ومواصفات البرج (مدير فقط). التسجيل في FEAT_MODULE_SRC هنا أيضاً لأن هذه الوحدة قد تُحمَّل داخل صفحة index.html أقدم.
+function _topoReg() { try { if (typeof FEAT_MODULE_SRC === 'object' && !FEAT_MODULE_SRC.topo) FEAT_MODULE_SRC.topo = './topology-admin.js'; } catch (e) {} }
+function openTopoAdmin() {
+  if (!(currentUser && currentUser.role === 'admin')) { showToast('هذه الأداة للمدير فقط', 'error'); return; }
+  _topoReg(); return featRun(['topo'], () => topoOpenImpl(''), 'topo');
+}
+function openTowerSpec(lineName, towerNum) {
+  if (!(currentUser && currentUser.role === 'admin')) { showToast('تعديل المواصفات للمدير فقط', 'error'); return; }
+  _topoReg(); return featRun(['topo'], () => topoSpecOpenImpl(lineName, String(towerNum)), 'topo');
+}
 // v335-C6r24 (P02): سجل البرج — وحدة تُحمَّل عند الضغط فقط؛ للقراءة فقط
 function openTowerHistory(lineName, towerNum) {
   // v335-C6r25 (P02-F1): هذه الوحدة قد تُحمَّل من الكاش الجديد داخل صفحة مفتوحة من index.html قديم (skipWaiting + claim) فتغيب 'thist' عن خريطة الوحدات؛ نسجّلها هنا (تعديل في الذاكرة فقط) بدل الفشل
@@ -612,7 +623,8 @@ function renderTowerDetail(lineName, towerNum) {
     </div>
     <div style="font-size:0.85rem;color:#4A5568;margin-top:6px">نوع البرج: <strong>${_tdEsc(TOWER_TYPES[r.tower_type] || r.tower_type || 'غير معروف')}</strong> | الجهد: <strong>${vv != null ? _tdEsc(vv) + ' ك.ف' : 'غير معروف'}</strong></div>
   </div>`;
-  html += `<button class="btn btn-secondary" id="towerHistoryBtn" style="width:100%;margin-bottom:14px" onclick="openTowerHistory(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">📜 سجل البرج</button>`;   // v335-C6r24 (P02)
+  html += `<button class="btn btn-secondary" id="towerHistoryBtn" style="width:100%;margin-bottom:14px" onclick="openTowerHistory(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">📜 سجل البرج</button>`;
+  if (currentUser && currentUser.role === 'admin') html += `<button class="btn btn-secondary" id="towerSpecBtn" style="width:100%;margin-bottom:14px" onclick="openTowerSpec(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">⚙️ مواصفات البرج (تصحيح)</button>`;   // N25-R6   // v335-C6r24 (P02)
   const draws = [], geoGaps = [];
   model.circuits.forEach(c => {
     if (c.applicability === 'not_applicable') { html += '<div class="form-card" style="margin-bottom:14px;color:#718096;font-size:0.82rem">🔘 الدائرة الثانية: غير منطبقة على هذا البرج</div>'; return; }

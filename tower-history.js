@@ -392,6 +392,18 @@ function thOpenImpl(line, tower) {
   })();
   thRender();
 }
+// N25-R6: سجل برج مؤرشف (أُخرج من الخدمة) — يُفتح بالهوية الدائمة فقط، لا بالرقم: الرقم قد يحمله الآن برج آخر. للقراءة فقط.
+function towerHistOpenArchived(line, tid, retiredNum) {
+  if (!tid) return;
+  _thScrollY = window.scrollY;
+  pushLevel(towerHistBack);
+  const dv = document.getElementById('towerDetailView'); if (dv) dv.style.display = 'none';
+  const lv = document.getElementById('linesInfoView'); if (lv) lv.style.display = 'none';
+  document.getElementById('towerHistoryView').style.display = '';
+  document.getElementById('towerHistoryTitle').textContent = `📜 سجل برج مؤرشف — ${line} — كان برقم ${retiredNum || '؟'} (هوية ${String(tid).slice(0, 8)})`;
+  const st = thNewStore(line, retiredNum || '', 'all', { mode: 'id', tid: String(tid), rev: null, archived: true }); st.status = 'loading'; _thStore = st; window.scrollTo(0, 0);
+  thRender(); thLoad(st, true);
+}
 function thReopen() { const st = _thStore; if (st) thOpenImpl(st.line, st.tower); }
 function towerHistOpen(line, tower) { return thOpenImpl(line, tower); }
 function towerHistBack() {
