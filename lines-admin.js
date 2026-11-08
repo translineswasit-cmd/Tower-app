@@ -67,8 +67,10 @@
               <option>برج خاص</option>
             </select>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="insertLineTowerAndRenumber()">➕ إدراج وإعادة ترقيم</button>
+          <button id="lm_insert_btn" class="btn btn-secondary btn-sm" onclick="insertLineTowerAndRenumber()">➕ إدراج وإعادة ترقيم</button>
         </div>
+        <div id="lm_topo_note" role="alert" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;border-right:4px solid #DD6B20;background:#FFFAF0;color:#7B341E;font-size:0.8rem;line-height:1.7"></div>
+        <div id="lm_topo_row" style="display:none;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="openLineTopoPlanner()">🧭 إدارة ترقيم هذا الخط (معاينة إدراج / إخراج برج)</button></div>
       </div>
 
       <p id="lmTowersCount" style="font-size:0.8rem;color:#4a5568;margin-top:6px;font-weight:700"></p>
@@ -203,6 +205,7 @@ function openAddLineModalImpl() {
   document.getElementById('lm_chain_mode').value = 'double';
   _editingLineTowersList = [];
   renderLineTowersEditor();
+  lmTopoSync();
   document.getElementById('lineModal').style.display = '';
   { const sb = document.getElementById('lm_save_btn'); if (sb) sb.disabled = !!_linesOp; }
 }
@@ -233,7 +236,7 @@ function guessCircuitCountFromName(name) {
 
 function editLineImpl(idx) {
   const data = getLinesInfoData(); const l = data[idx]; if(!l) return;
-  editingLineIdx = idx; _lineFormSeq++; _lineFormOpen = { editIdx: l.idx, openSig: linesRowSig(l) };
+  editingLineIdx = idx; _lineFormSeq++; _lineFormOpen = { editIdx: l.idx, openSig: linesRowSig(l), name: l.name || '', voltage: Number(l.voltage) || null };
   document.getElementById('lineModalTitle').textContent = 'تعديل بيانات الخط';
   document.getElementById('lm_name').value = l.name||'';
   document.getElementById('lm_voltage').value = String(l.voltage||132);
@@ -256,6 +259,7 @@ function editLineImpl(idx) {
   document.getElementById('lm_tw_from').value = '';
   document.getElementById('lm_tw_to').value = '';
   renderLineTowersEditor();
+  lmTopoSync();
   document.getElementById('lineModal').style.display = '';
   { const sb = document.getElementById('lm_save_btn'); if (sb) sb.disabled = !!_linesOp; }
 }
@@ -306,7 +310,32 @@ let _editingLineTowersList = [];
 
 // N25-R6: خطّ قائم له قائمة أبراج لا يُعاد ترقيمه من هنا: الحفظ بالرقم يفصل التاريخ عن هوية البرج (الخادم يرفضه بـ topology_managed). التغيير الوحيد المسموح هنا لقائمة قائمة: النوع/السلاسل/المادة (الأرقام ثابتة).
 function _lineNumberingLocked() { return !!(_lineFormOpen && _lineFormOpen.editIdx !== null && _editingLineTowersList.length > 0); }
-function _lineNumberingBlockedMsg() { showToast('⚠️ ترقيم أبراج خط قائم لا يتغير من هذه الشاشة (يفقد ربط التاريخ بهوية البرج). استخدم «🧭 إدارة ترقيم الأبراج» في صفحة بيانات الخطوط.', 'error'); }
+function lmNote(msg) {   // N25-R6p: رسالة ظاهرة داخل النافذة نفسها (الإشعار العائم كان يظهر خلفها فيبدو الزر «لا يفعل شيئاً»)
+  const el = document.getElementById('lm_topo_note'); if (el) { el.textContent = msg; el.style.display = msg ? '' : 'none'; }
+  try { if (msg) showToast(msg, 'error'); } catch (e) {}
+}
+function _lineNumberingBlockedMsg() { lmNote('⚠️ ترقيم أبراج خط قائم لا يتغير من هذه الشاشة: الحفظ بالرقم يفصل السجل التاريخي عن هوية البرج الدائمة. استخدم «🧭 إدارة ترقيم هذا الخط» أدناه: تعاين الإدراج/الإخراج على الخادم (قراءة فقط) ولا يُعتمد إلا عند جاهزية بوابة التغيير.'); }
+// مفتاح الخط عند الخادم/المعاين: الاسم المجرّد للخط المُهيَّأ، أو «الاسم + الجهد ك.ف» للخط المدمج
+function _lmTopoKey() {
+  const nm = (_lineFormOpen && _lineFormOpen.name) || '', v = (_lineFormOpen && _lineFormOpen.voltage) || parseInt((document.getElementById('lm_voltage') || {}).value) || null;
+  if (!nm) return null;
+  const cands = [nm + ' ' + v + ' ك.ف', nm, nm.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim() + ' ' + v + ' ك.ف'];
+  return cands.find(n => (typeof LINES_DATA !== 'undefined' && LINES_DATA[n]) || (lineTowersCache[n] && lineTowersCache[n].length)) || nm;
+}
+function lmTopoSync() {   // يُظهر مسار الإدارة ويشرح الحارس فور فتح نافذة خط قائم؛ الزر القديم يتحوّل إلى «معاينة»
+  const row = document.getElementById('lm_topo_row'), btn = document.getElementById('lm_insert_btn'), note = document.getElementById('lm_topo_note');
+  const locked = _lineNumberingLocked();
+  if (row) row.style.display = locked ? '' : 'none';
+  if (btn) btn.textContent = locked ? '🧭 معاينة الإدراج (إدارة الترقيم)' : '➕ إدراج وإعادة ترقيم';
+  if (note) { note.style.display = locked ? '' : 'none'; note.textContent = locked ? 'ℹ️ هذا خط قائم: إدراج/إخراج برج يتم عبر إدارة الترقيم (بهوية البرج الدائمة). الزر أعلاه يفتح المعاينة بالبرج والنوع المدخلَين؛ الاعتماد يحتاج جاهزية البوابة.' : ''; }
+}
+function openLineTopoPlanner(intent) {
+  const key = _lmTopoKey(); if (!key) { lmNote('⚠️ تعذّر تحديد الخط — احفظ الخط أولاً أو أعد فتح النافذة.'); return; }
+  if (!(currentUser && currentUser.role === 'admin')) { lmNote('⚠️ هذه الأداة للمدير فقط.'); return; }
+  const opts = Object.assign({ volt: (_lineFormOpen && _lineFormOpen.voltage) || parseInt(document.getElementById('lm_voltage').value) || null }, intent || {});
+  try { if (typeof FEAT_MODULE_SRC === 'object' && !FEAT_MODULE_SRC.topo) FEAT_MODULE_SRC.topo = './topology-admin.js'; } catch (e) {}
+  return featRun(['topo'], () => topoOpenImpl(key, opts), 'topo');   // نافذة الخط تبقى مفتوحة بمدخلاتها تحت المعاين
+}
 function generateLineTowersRange() {
   if (_lineNumberingLocked()) { _lineNumberingBlockedMsg(); return; }
   const from = parseInt(document.getElementById('lm_tw_from').value);
@@ -323,9 +352,13 @@ const LINE_TOWER_TYPE_OPTIONS = ['برج تعليق', 'برج شد', 'برج ع�
 // يدرج برجاً جديداً مباشرة بعد رقم برج محدد، ويزيح كل الأبراج بعده رقماً واحداً — بدون هذا كانت
 // الطريقة الوحيدة "تصفير القائمة وإعادة توليدها" اللي تمسح كل التخصيصات (نوع/مادة/استثناء) الموجودة
 function insertLineTowerAndRenumber() {
-  if (_lineNumberingLocked()) { _lineNumberingBlockedMsg(); return; }
   const afterNum = parseInt(document.getElementById('lm_insert_after').value);
   const newType = document.getElementById('lm_insert_type').value;
+  if (_lineNumberingLocked()) {   // خط قائم: لا تعديل محلي بالأرقام — المدخلات تُنقل كما هي إلى معاين الترقيم المُدار (معاينة قراءة فقط)
+    if (!afterNum) { lmNote('⚠️ أدخل رقم البرج الذي يُدرَج بعده.'); return; }
+    if (!_editingLineTowersList.some(t => Number(t.num) === afterNum)) { lmNote('⚠️ لا يوجد برج رقم ' + afterNum + ' في قائمة هذا الخط (الأبراج ' + _editingLineTowersList[0].num + '–' + _editingLineTowersList[_editingLineTowersList.length - 1].num + ').'); return; }
+    lmNote(''); return openLineTopoPlanner({ afterNum: afterNum, type: newType });
+  }
   if (!afterNum) { showToast('⚠️ أدخل رقم البرج اللي يُدرَج بعده', 'error'); return; }
   const idx = _editingLineTowersList.findIndex(t => t.num === afterNum);
   if (idx === -1) { showToast(`⚠️ ما لقيت برج رقم ${afterNum} بالقائمة الحالية`, 'error'); return; }

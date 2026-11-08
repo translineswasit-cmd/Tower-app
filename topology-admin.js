@@ -147,7 +147,7 @@
   // الأنواع المقبولة = تلك التي يعرفها الخادم لجهد الخط (tower_cs.type_code في مرحلة 1B): لا أنواع جديدة. الجهد من اسم الخط كما يفعل الخادم (name_voltage).
   const T132 = ['برج تعليق', 'برج شد', 'برج عبور', 'برج عبور اسفل الخط', 'برج نهائي', 'برج خاص'], T400 = ['برج تعليق', 'برج عبور', 'برج شد', 'برج نهائي', 'برج تبادل أطوار'];
   const lineVolt = (line) => { const m = /(400|132)\s*ك\.ف\s*$/.exec(String(line || '')); return m ? Number(m[1]) : null; };
-  const TYPES = () => (S && lineVolt(S.line) === 400 ? T400 : T132);
+  const TYPES = () => (S && (S.volt || lineVolt(S.line)) === 400 ? T400 : T132);   // N25-R6p: خط مُهيَّأ باسمه المجرّد بلا لاحقة جهد: الجهد يأتي ممّن فتح الأداة (نافذة الخط / بيانات الخطوط)
 
   const MSG = {
     topology_gate_closed: 'بوابة تغيير الترقيم على الخادم مغلقة — لا يمكن الاعتماد الآن. المعاينة متاحة للقراءة فقط.',
@@ -216,19 +216,20 @@
 
   function mount() {
     if (document.getElementById('topoModal')) return;
-    document.body.insertAdjacentHTML('beforeend', '<div id="topoModal" class="modal-bg" role="dialog" aria-modal="true"><div id="topoBox" style="background:#fff;border-radius:14px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;padding:18px"></div></div>');
+    document.body.insertAdjacentHTML('beforeend', '<div id="topoModal" class="modal-bg" style="z-index:10000" role="dialog" aria-modal="true"><div id="topoBox" style="background:#fff;border-radius:14px;max-width:760px;width:100%;max-height:92vh;overflow-y:auto;padding:18px"></div></div>');
   }
   function open() { mount(); document.getElementById('topoModal').classList.add('show'); try { dlgScan(); } catch (e) {} }
   function close() { const m = document.getElementById('topoModal'); if (m) m.classList.remove('show'); S = null; _seq++; }
   const box = () => document.getElementById('topoBox');
-  const linesList = () => { try { return Object.keys(LINES_DATA || {}).sort((a, b) => a.localeCompare(b, 'ar')); } catch (e) { return []; } };
+  const linesList = () => { try { const set = new Set(Object.keys(LINES_DATA || {})); try { (configuredLineNames() || []).forEach(n => set.add(n)); } catch (e) {} if (S && S.line) set.add(S.line); return Array.from(set).sort((a, b) => a.localeCompare(b, 'ar')); } catch (e) { return []; } };   // N25-R6p: + الخطوط المُهيَّأة من إدارة الخطوط (باسمها المجرّد)
   const chip = (t, bg, fg) => '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.74rem;background:' + bg + ';color:' + fg + ';margin:2px">' + _te(t) + '</span>';
   const btn = (label, on, extra, dis) => '<button class="btn ' + (extra || 'btn-secondary') + ' btn-sm" ' + (dis ? 'disabled ' : '') + 'onclick="' + on + '" style="margin:3px">' + label + '</button>';
 
   // ----------------------------------------------------------------------- فتح إدارة الترقيم
-  function openTopo(line) {
+  // opts (N25-R6p، من نافذة تعديل الخط): { volt, afterNum, type } — يُبقي اختيار الخط ومدخلاته ويُجهّز إدراجاً مرحلياً ومعاينته (قراءة فقط) دون أي كتابة
+  function openTopo(line, opts) {
     open();
-    S = { mode: 'topo', line: line || '', prev: null, ops: [], res: null, settings: null, busy: false, reason: '', typed: '', tab: 'edit', archive: null, last: null, err: null, gen: sessGen(), note: '' };
+    S = { mode: 'topo', line: line || '', prev: null, ops: [], res: null, settings: null, busy: false, reason: '', typed: '', tab: 'edit', archive: null, last: null, err: null, gen: sessGen(), note: '', volt: (opts && Number(opts.volt)) || null, intent: (opts && opts.afterNum != null && opts.afterNum !== '') ? { afterNum: String(opts.afterNum), type: opts.type || '' } : null, prefill: null };
     if (S.line) loadLine(S.line); else render();
   }
 
@@ -241,6 +242,19 @@
     if (my !== _seq || !ok() || !sessOk(gen)) return;
     if (!r || r.ok !== true) { S.err = msgOf(r && r.code); render(); return; }
     S.prev = r; render();
+    if (S.intent) await consumeIntent();
+  }
+  // يحوّل مدخلات النافذة القديمة (بعد رقم + نوع) إلى عملية إدراج مرحلية بالهوية الدائمة، ثم يعاين الخطة على الخادم. أي رفض يظهر برسالة صريحة داخل نافذة المعاين.
+  async function consumeIntent() {
+    const it = S.intent; S.intent = null; if (!it || !S.prev) return;
+    const cur = curList(), anchor = cur.find(t => String(t.num) === String(it.afterNum));
+    if (!anchor) { S.err = 'البرج ' + it.afterNum + ' غير موجود في ترقيم الخادم الحالي لهذا الخط (الأبراج ' + (cur.length ? cur[0].num + '–' + cur[cur.length - 1].num : '—') + ') — اختر موضع الإدراج من النموذج أدناه.'; render(); return; }
+    const key = TopoPlan.keyOf(anchor);
+    if (!it.type || TYPES().indexOf(it.type) < 0) { S.prefill = { after: key, type: '' }; S.err = 'نوع البرج «' + (it.type || '—') + '» غير مقبول لجهد هذا الخط — اختر النوع من نموذج الإدراج ثم «أضف للخطة».'; render(); return; }
+    S.prefill = { after: key, type: it.type };
+    stage({ op: 'insert', after: key, count: 1, type: it.type });
+    S.note = 'جُهّز إدراج برج جديد بعد البرج ' + it.afterNum + ' (' + it.type + ') من نافذة الخط — جارٍ معاينة الأثر على الخادم (قراءة فقط).'; render();
+    await previewPlan();
   }
 
   function curList() {
@@ -410,9 +424,9 @@
     h += '<div style="max-height:240px;overflow-y:auto;border:1px solid #E2E8F0;border-radius:8px;margin:8px 0"><table style="width:100%;font-size:0.78rem;border-collapse:collapse"><tr style="background:#F7FAFC"><th>إخراج</th><th>الرقم</th><th>النوع</th><th>الهوية</th><th>كشف/معالجة/حراري</th></tr>' +
       cur.map(t => { const k = TopoPlan.keyOf(t), r = retSet.has(k); return '<tr style="border-top:1px solid #EDF2F7;' + (r ? 'background:#FFF5F5;text-decoration:line-through' : '') + '"><td style="text-align:center"><input type="checkbox" ' + (r ? 'checked ' : '') + 'aria-label="إخراج البرج ' + _te(t.num) + '" onchange="topoRetire(' + _te(JSON.stringify(k)) + ')"' + (seqOk.ok ? '' : ' disabled') + '></td><td><strong>' + _te(t.num) + '</strong></td><td>' + _te(t.type) + '</td><td dir="ltr">' + _te(short(t.tower_id)) + '</td><td>' + _te((t.inspections || 0) + ' / ' + (t.treatments || 0) + ' / ' + (t.thermal || 0)) + '</td></tr>'; }).join('') + '</table></div>';
     h += '<div class="form-card" style="margin:8px 0"><div style="font-weight:700;margin-bottom:6px">➕ إدراج أبراج جديدة</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">' +
-      '<div class="field" style="flex:1;min-width:120px"><label>بعد البرج</label><select id="topoAfter" style="padding:8px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit"><option value="__start">في بداية الخط</option>' + cur.map(t => '<option value="' + _te(TopoPlan.keyOf(t)) + '">' + _te(t.num) + '</option>').join('') + '</select></div>' +
+      '<div class="field" style="flex:1;min-width:120px"><label>بعد البرج</label><select id="topoAfter" style="padding:8px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit"><option value="__start">في بداية الخط</option>' + cur.map(t => '<option value="' + _te(TopoPlan.keyOf(t)) + '"' + (S.prefill && S.prefill.after === TopoPlan.keyOf(t) ? ' selected' : '') + '>' + _te(t.num) + '</option>').join('') + '</select></div>' +
       '<div class="field" style="width:80px"><label>العدد</label><input id="topoCount" type="number" min="1" max="200" value="1"></div>' +
-      '<div class="field" style="flex:1;min-width:130px"><label>نوع البرج *</label><select id="topoType" style="padding:8px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit"><option value="">— اختر —</option>' + TYPES().map(o => '<option>' + _te(o) + '</option>').join('') + '</select></div>' +
+      '<div class="field" style="flex:1;min-width:130px"><label>نوع البرج *</label><select id="topoType" style="padding:8px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit"><option value="">— اختر —</option>' + TYPES().map(o => '<option' + (S.prefill && S.prefill.type === o ? ' selected' : '') + '>' + _te(o) + '</option>').join('') + '</select></div>' +
       '<div class="field" style="flex:1;min-width:110px"><label>سلاسل (اختياري)</label><select id="topoChain" style="padding:8px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit"><option value="">افتراضي الخط</option><option value="single">مفرد</option><option value="double">مزدوج</option></select></div>' +
       '<div class="field" style="flex:1;min-width:110px"><label>مادة العازل</label><select id="topoMat" style="padding:8px;border-radius:8px;border:1px solid #ccc;width:100%;font-family:inherit"><option value="glass">زجاج (افتراضي)</option><option value="plastic">بلاستك</option><option value="ceramic">خزف</option></select></div>' +
       btn('أضف للخطة', 'topoAddInsert()', 'btn-secondary', !seqOk.ok) + '</div><div style="font-size:0.74rem;color:#718096;margin-top:4px">الأبراج الجديدة بهوية جديدة وبلا أي حالة أو تاريخ موروث (تظهر «غير مفحوص»، لا «سليم»).</div></div>';
@@ -437,6 +451,7 @@
       (l && l.summary ? chip('العدد بعد التغيير ' + l.summary.final_count, '#FEFCBF', '#744210') : '') + '</div>';
     if ((r.errors || []).length) {
       h += '<div style="color:#822727;font-size:0.82rem">' + r.errors.map(e => '• ' + _te(errText(e))).join('<br>') + '</div>';
+      if (r.errors.some(e => e.code === 'voltage_unresolved')) h += '<div role="alert" id="topoVoltNote" style="margin-top:6px;padding:8px 10px;border-radius:8px;background:#FFFAF0;border-right:4px solid #DD6B20;font-size:0.8rem;color:#7B341E">ℹ️ الخادم يستنتج جهد الخط من السجل المرجعي أو من لاحقة اسمه («… 132 ك.ف»). هذا الخط مُهيَّأ باسم مجرّد بلا لاحقة، فلا يقبل الخادم إدراج برج جديد عليه الآن — وهذا مستقل عن بوابة التغيير. الإخراج/المعاينة لا يتأثران. لم يُغيَّر شيء.</div>';
       if (r.errors.some(e => e.code === 'line_settings_required')) {
         h += '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><div class="field"><label>عدد الدوائر</label><select id="topoCirc" style="padding:8px;border-radius:8px;border:1px solid #ccc"><option value="">—</option><option value="1">دائرة واحدة</option><option value="2">دائرتان</option></select></div>' +
           '<div class="field"><label>نمط السلاسل</label><select id="topoChainMode" style="padding:8px;border-radius:8px;border:1px solid #ccc"><option value="">—</option><option value="single">مفرد</option><option value="double">مزدوج</option></select></div>' + btn('تأكيد وإعادة المعاينة', 'topoSetSettings()', 'btn-primary') + '</div>';
@@ -451,6 +466,7 @@
     }
     if (S.cross && !S.cross.ok) h += '<div style="color:#822727;font-size:0.82rem;margin-top:6px">⛔ اختلاف بين حساب الواجهة وردّ الخادم: ' + _te(JSON.stringify(S.cross.diffs).slice(0, 300)) + '</div>';
     const ca = canApply();
+    if (!((S.prev && S.prev.gate) || {}).open) h += '<div class="form-card" role="alert" id="topoGateNote" style="margin:8px 0;border-right:4px solid #DD6B20;background:#FFFAF0;font-size:0.84rem;color:#7B341E">🔒 هذه معاينة فقط: بوابة تغيير الترقيم على الخادم مغلقة، فلا يمكن اعتماد الإدراج/الإخراج الآن. لم يُغيَّر أي برج ولا رقم ولا سجل. يتطلب الاعتماد جاهزية البوابة (يفتحها المالك صراحةً بعد فحص الجاهزية).</div>';
     h += '<div style="margin-top:10px;border-top:1px dashed #CBD5E0;padding-top:8px"><div style="font-size:0.8rem;color:#718096">«الحذف» أرشفة: لا يُمسح أي كشف أو معالجة أو حراري. الأبراج المتبقية تحتفظ بهويتها وحالتها وتاريخها وتتغير أرقامها فقط.</div>';
     if (!ca.ok) h += '<div style="margin-top:6px;color:#822727;font-size:0.82rem" id="topoBlocked">⛔ الاعتماد غير متاح: ' + ca.reasons.map(_te).join(' • ') + '</div>';
     h += '<input id="topoReason" placeholder="سبب التغيير (إلزامي، 3 أحرف على الأقل)" value="' + _te(S.reason) + '" oninput="topoSetReason(this.value)" style="width:100%;padding:8px;border-radius:8px;border:1px solid #ccc;margin:8px 0 4px">' +

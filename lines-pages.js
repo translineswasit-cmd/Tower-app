@@ -140,7 +140,11 @@ function _lsCardHtml(l) {
   let html = '';
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
     const _n400 = l.name+' 400 ك.ف', _n132 = l.name+' 132 ك.ف';
-    const lineName = (LINES_DATA[_n400]||lineTowersCache[_n400]) ? _n400 : ((LINES_DATA[_n132]||lineTowersCache[_n132]) ? _n132 : null);
+    // N25-R6p: الخط المُهيَّأ من إدارة الخطوط (line_towers_custom) يُخزَّن باسمه المجرّد بلا لاحقة الجهد — كان البحث بلاحقة 400/132 فقط فيعود null و«لم يتم الكشف» رغم وجود حالة محفوظة.
+    //          يُقبل الاسم المجرّد فقط لخط له قائمة أبراج مُهيَّأة وجهده لا يخالف جهد صف «بيانات الخطوط» (لا يُربَط خط بخط آخر بالاسم نفسه).
+    try { registerConfiguredLineVoltages(); } catch (e) {}
+    const _plainOk = !!(lineTowersCache[l.name] && lineTowersCache[l.name].length) && (LINE_VOLTAGE[l.name] == null || Number(LINE_VOLTAGE[l.name]) === Number(l.voltage));
+    const lineName = (LINES_DATA[_n400]||lineTowersCache[_n400]) ? _n400 : ((LINES_DATA[_n132]||lineTowersCache[_n132]) ? _n132 : (_plainOk ? l.name : null));
     if (lineName && csLiveEnabled() && !loadedLineCacheAt[lineName]) {      // لم يُقرأ بعد: ليس «لم يتم الكشف» ولا «سليم»
       html += '<div class="form-card" data-ls-line="' + _lsAttr(lineName) + '" style="margin-bottom:12px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">' +
         '<div style="font-weight:700;font-size:14px;color:#1a5276">' + l.name + '</div>' +
