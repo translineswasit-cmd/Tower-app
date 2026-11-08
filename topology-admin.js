@@ -160,6 +160,7 @@
     tower_retired: 'هذا البرج مُخرَج من الخدمة (مؤرشف).', stale_topology_identity: 'هوية البرج لم تعد مرتبطة بهذا الخط. أعد فتح النافذة.', tower_not_in_config: 'البرج غير موجود في تهيئة الخط الحالية.', ambiguous_config: 'تهيئة الخط فيها رقم مكرر — لا تصحيح.', no_stored_configuration: 'الخط بلا تهيئة مخزَّنة.', config_refused: 'رفض الخادم التصحيح لهذا البرج.', geometry_change_not_correctable: 'هذا التغيير يغيّر هندسة العوازل ولهذا البرج حالة عوازل محفوظة: لا يُسمح به كتصحيح لأنه لا يحفظ الأضرار وروابط المعالجة بأمان. يلزم حدث «استبدال معدّات» مؤرَّخ (معلّق). لم يُحفظ شيء.', spec_correction_protected: 'مواصفات هذا البرج صُحِّحت سابقاً ولا تُستبدل بحفظ قديم. أعد فتح النافذة.',
     topology_busy: 'الخادم مشغول بعملية أخرى على هذا الخط. أعد المحاولة بعد قليل (لم يُغيَّر شيء).',
     topology_failed_rolled_back: 'فشلت العملية في الخادم وأُلغيت كلها (لم يُغيَّر شيء).',
+    line_edit_failed_rolled_back: 'تعذّر تحديث الأبراج وعددها معاً فأُلغي الحفظ كله على الخادم (لم يُغيَّر شيء).',
     op_id_reused: 'معرّف العملية استُخدم لطلب مختلف. ابدأ من معاينة جديدة.',
     invalid: 'بيانات غير صالحة (السبب مطلوب 3 أحرف على الأقل).', forbidden: 'ليست لديك صلاحية لهذا الإجراء (للمدير فقط).',
     invalid_session: 'انتهت الجلسة — سجّل الدخول من جديد.', session_changed: 'تغيّرت الجلسة أثناء الطلب — لم يُعتمد شيء.',
@@ -262,10 +263,10 @@
     return rows.map(t => ({ num: String(t.num), type: t.type, tower_id: t.tower_id || null, inspections: t.inspections, treatments: t.treatments, thermal: t.thermal }));
   }
 
-  function localQueueBlock() {
+  function localQueueBlock(line) {
     try {
       const rd = opsRead(); if (!rd.ok) return 'تعذّر قراءة طابور العمليات المحلي — لا يُعتمد تغيير ترقيم قبل التأكد منه';
-      const mine = rd.items.filter(e => e && e.line === S.line);
+      const ln = line || (S && S.line), mine = rd.items.filter(e => e && e.line === ln);
       const noId = mine.filter(e => !(e.ident && e.ident.tower_id) && !(e.payload && e.payload.tower_id));
       if (noId.length) return noId.length + ' عملية معلّقة على هذا الجهاز لهذا الخط بلا هوية برج — زامنها أو عالجها أولاً';
     } catch (e) {}
@@ -339,7 +340,7 @@
     const gen = sessGen();
     const r = rec.kind === 'recover'
       ? await csCall('app_topology_recover', { p_op_id: rec.opId, p_change_id: rec.changeId, p_reason: rec.reason })
-      : await csCall('app_topology_apply', { p_op_id: rec.opId, p_line_name: rec.line, p_expected_rev: rec.rev, p_plan_hash: rec.hash, p_plan: rec.plan, p_reason: rec.reason });
+      : await csCall(rec.info ? 'app_line_edit_apply' : 'app_topology_apply', Object.assign({ p_op_id: rec.opId, p_line_name: rec.line, p_expected_rev: rec.rev, p_plan_hash: rec.hash, p_plan: rec.plan, p_reason: rec.reason }, rec.info ? { p_info: rec.info } : {}));
     S.busy = false;
     if (!sessOk(gen)) { S.err = msgOf('session_changed') + ' (العملية المحفوظة محلياً تبقى لإعادة المحاولة)'; if (ok()) render(); return; }
     if (r && r.ok === true) {
@@ -363,6 +364,7 @@
     try { csPurgeUserData(); } catch (e) {}                 // حالة/أغلفة الأبراج المخزّنة مفاتيحها (خط+رقم): بعد إعادة الترقيم لا يُبقى أيٌّ منها
     try { await loadLineTowersCache(); } catch (e) {}
     try { await csDirLoad(line, 0); } catch (e) {}
+    try { if (typeof linesFetchBaseline === 'function') { const b = await linesFetchBaseline(); if (b && b.ok) linesPublishBaseline(b.rows, sessGen()); } } catch (e) {}   // N25-R6r: عدد الأبراج في جدول الخطوط يُحدَّث من الخادم بعد الحفظ
   }
   function startRecover() {
     if (!SERVER_VERIFIED.recover) { S.err = UNVERIFIED.recover; render(); return; }
@@ -561,6 +563,88 @@
   }
   async function openSpecKeep(line, num, note) { await openSpec(line, num); if (S) { S.note = note; render(); } }
 
+
+  // ======================================================================= N25-R6r: «حفظ مرة واحدة» من محرر الخط
+  // ctx: { line (مفتاح الخط عند الخادم), baseNums:[أرقام القائمة وقت فتح النافذة], rows:[{orig:'7'|null, type, chain_override?, material_default?, removed}], info:{idx, tension_towers|null}, circuit_count, chain_mode }
+  // لا حالة نافذة (S) هنا: كل شيء من ctx. القراءة (معاينتان) بلا كتابة؛ الكتابة الوحيدة نداء واحد app_line_edit_apply بمعرّف عملية محفوظ محلياً قبل الإرسال.
+  const LE_REASON = 'تعديل أبراج الخط من نافذة تعديل الخط (حفظ واحد)';
+  const leFail = (code, msg, extra) => Object.assign({ ok: false, code, msg: msg || msgOf(code) }, extra || {});
+  function leMsg(r) {
+    const code = r && r.code;
+    return msgOf(code) + (r && r.errors ? ' — ' + r.errors.map(errText).join('؛ ') : '') + (r && r.blockers ? ' — ' + r.blockers.map(b => blkText(b.code)).join('؛ ') : '') + (r && r.message && code === 'line_edit_failed_rolled_back' ? ' (' + r.message + ')' : '');
+  }
+  async function leSubmit(rec, gen) {
+    const r = await csCall('app_line_edit_apply', { p_op_id: rec.opId, p_line_name: rec.line, p_expected_rev: rec.rev, p_plan_hash: rec.hash, p_plan: rec.plan, p_reason: rec.reason, p_info: rec.info });
+    if (!sessOk(gen)) return leFail('session_changed', msgOf('session_changed') + ' (العملية المحفوظة محلياً تبقى لإعادة المحاولة)', { pending: true });
+    if (r && r.ok === true) { pendClear(); await refreshAfter(rec.line); return { ok: true, r, idempotent: !!r.idempotent }; }
+    const code = r && r.code;
+    if (DEFINITIVE_BAD.indexOf(code) < 0) pendClear();
+    else return leFail(code, leMsg(r), { pending: true });
+    return leFail(code, leMsg(r), { reply: r });
+  }
+  function leCounts(r0, retiredKeys) {
+    const by = new Map((r0.towers || []).map(t => [TopoPlan.keyOf({ tower_id: t.tower_id || null, num: String(t.num) }), t]));
+    return retiredKeys.map(k => { const t = by.get(k) || {}; return 'برج ' + (t.num != null ? t.num : '؟') + ' (' + (t.inspections || 0) + ' كشف، ' + (t.treatments || 0) + ' معالجة، ' + (t.thermal || 0) + ' حراري)'; });
+  }
+  async function saveFromEditor(ctx) {
+    const gen = sessGen(), line = ctx.line;
+    if (!SERVER_VERIFIED.apply) return leFail('disabled', UNVERIFIED.apply);
+    if (!navigator.onLine) return leFail('offline');
+    const pend = pendRead();
+    if (pend) {
+      if (pend.kind === 'line_edit' && pend.line === line && ctx.resume) return leSubmit(pend, gen);
+      return leFail('pending_other', 'توجد عملية ترقيم محفوظة محلياً لم يصل ردّها' + (pend.line ? ' (الخط ' + pend.line + ')' : '') + ' — اضغط «حفظ» لإكمالها بأمان (لا تتكرر) قبل أي تعديل جديد.', { pending: true, pendingRec: pend });
+    }
+    const r0 = await csCall('app_topology_preview', { p_line_name: line });
+    if (!sessOk(gen)) return leFail('session_changed');
+    if (!r0 || r0.ok !== true) return leFail((r0 && r0.code) || 'bad_response');
+    const srvNums = (r0.towers || []).map(t => String(t.num));
+    if (srvNums.join('|') !== (ctx.baseNums || []).map(String).join('|')) return leFail('base_changed', 'تغيّرت أبراج هذا الخط على الخادم منذ فتح النافذة (تعديل آخر). أغلق النافذة وأعد فتحها ثم أعد التعديل — لم يُحفظ شيء.');
+    const cur = (r0.towers || []).map(t => ({ num: String(t.num), type: t.type, tower_id: t.tower_id || null }));
+    const keyByNum = new Map(cur.map(t => [t.num, TopoPlan.keyOf(t)]));
+    const ops = [];
+    for (let i = ctx.rows.length - 1; i >= 0; i--) {    // الإدراج من الآخر للأول: صفّ جديدان متتاليان يبقيان بترتيبهما (كلٌّ بعد آخر برج قائم يسبقه)
+      const w = ctx.rows[i]; if (w.orig != null) continue;
+      if (w.removed) continue;                           // برج جديد أُلغي قبل الحفظ: لا أثر
+      let anchor = null;
+      for (let j = i - 1; j >= 0; j--) if (ctx.rows[j].orig != null) { anchor = keyByNum.get(String(ctx.rows[j].orig)); break; }
+      ops.push({ op: 'insert', after: anchor == null ? null : anchor, count: 1, type: w.type, chain_override: w.chain_override || undefined, material_default: (w.material_default && w.material_default !== 'glass') ? w.material_default : undefined });
+    }
+    const retiredKeys = [];
+    ctx.rows.forEach(w => { if (w.orig != null && w.removed) { const k = keyByNum.get(String(w.orig)); if (!k) return; ops.push({ op: 'retire', key: k }); retiredKeys.push(k); } });
+    if (!ops.length) return leFail('no_topology_change', 'لا تغيير في الإدراج/الإخراج.');
+    let b = TopoPlan.build(cur, ops, null);
+    if (!b.ok) return leFail('plan_local', 'الخطة غير صالحة: ' + b.errors.map(errText).join('؛ '));
+    let r1 = await csCall('app_topology_preview', { p_line_name: line, p_plan: b.plan });
+    if (!sessOk(gen)) return leFail('session_changed');
+    if (r1 && r1.ok === true && r1.plan_ok !== true && (r1.errors || []).some(e => e.code === 'line_settings_required') && ctx.circuit_count && ctx.chain_mode) {
+      b = TopoPlan.build(cur, ops, { circuit_count: ctx.circuit_count, chain_mode: ctx.chain_mode });
+      if (!b.ok) return leFail('plan_local', 'الخطة غير صالحة: ' + b.errors.map(errText).join('؛ '));
+      r1 = await csCall('app_topology_preview', { p_line_name: line, p_plan: b.plan });
+      if (!sessOk(gen)) return leFail('session_changed');
+    }
+    if (!r1 || r1.ok !== true) return leFail((r1 && r1.code) || 'bad_response');
+    if (r1.plan_ok !== true) return leFail('plan_invalid', 'الخطة مرفوضة من الخادم: ' + (r1.errors || []).map(errText).join('؛ ') + ' — لم يُحفظ شيء.');
+    const cc = TopoPlan.crossCheck(b.expected, r1.mapping);
+    if (!cc.ok) return leFail('cross_check', 'ما حسبته الواجهة يخالف ما أعاده الخادم — لم يُحفظ شيء.');
+    if (r1.can_apply !== true) {
+      const gateOpen = !r1.gate || r1.gate.open !== false;
+      if (!gateOpen) return leFail('topology_gate_closed', msgOf('topology_gate_closed') + ' لم يُحفظ شيء.');
+      return leFail('not_ready', 'لا يمكن حفظ تغيير الترقيم الآن: ' + (r1.apply_blocked_by || []).map(blkText).join('؛ ') + ' — لم يُحفظ شيء.');
+    }
+    const q = localQueueBlock(line); if (q) return leFail('local_queue', q + ' — لم يُحفظ شيء.');
+    const sm = b.summary, lines = ['سيُحفظ التغيير على الخادم دفعة واحدة (ذرّياً):'];
+    if (sm.insert) lines.push('• إدراج ' + sm.insert + ' برج جديد (مواصفات قياسية وسجل فارغ)');
+    if (sm.retire) lines.push('• إخراج ' + sm.retire + ' برج إلى الأرشيف بأرقامها وسجلاتها السابقة: ' + leCounts(r0, retiredKeys).join('، '));
+    if (sm.renumber) lines.push('• إعادة ترقيم ' + sm.renumber + ' برج (تحتفظ بهويتها وكل سجلاتها)');
+    lines.push('• العدد النهائي للأبراج: ' + sm.final_count, 'متابعة؟');
+    if (!confirm(lines.join('\n'))) return leFail('cancelled', 'أُلغي الحفظ — لم يُغيَّر شيء.', { cancelled: true });
+    const rec = { kind: 'line_edit', opId: uuid(), line, rev: Number(r1.topology_rev), hash: r1.plan_hash, plan: b.plan, reason: LE_REASON, info: ctx.info, uid: (typeof currentUser !== 'undefined' && currentUser) ? String(currentUser.id) : null, at: Date.now() };
+    if (!pendWrite(rec)) return leFail('no_storage', 'تعذّر حفظ معرّف العملية محلياً (تخزين الجهاز غير متاح) — لا حفظ دون حماية إعادة المحاولة.');
+    return leSubmit(rec, gen);
+  }
+  root.topoSaveFromEditor = saveFromEditor;
+  root.topoPendingLineEdit = () => { const p = pendRead(); return p || null; };
   // ======================================================================= ربط الواجهة العامة
   root.topoOpenImpl = openTopo;
   root.topoSpecOpenImpl = openSpec;

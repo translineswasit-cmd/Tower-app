@@ -52,6 +52,7 @@
       <p style="color:#a0aec0;font-size:0.76rem;margin-top:4px">التوليد يستبدل القائمة الحالية بالكامل. بعده حدد يدوياً فقط الأبراج الاستثنائية (شد/عبور/نهائي/خاص) من القائمة تحت.</p>
 
       <div style="margin-top:12px;padding:10px;background:#F7FAFC;border-radius:8px;border:1.5px dashed #CBD5E0">
+        <div id="lm_legacy_insert">
         <label style="font-weight:700;color:#1a2e4a;display:block;margin-bottom:6px;font-size:0.85rem">➕ إدراج برج جديد بمنتصف التسلسل</label>
         <p style="color:#a0aec0;font-size:0.74rem;margin-bottom:6px">يدرج البرج مباشرة بعد الرقم المحدد، ويعيد ترقيم كل الأبراج بعده تلقائياً (+1) — يستخدم لحالة "أضفنا برج فعلياً بين برجين موجودين".</p>
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
@@ -69,8 +70,9 @@
           </div>
           <button id="lm_insert_btn" class="btn btn-secondary btn-sm" onclick="insertLineTowerAndRenumber()">➕ إدراج وإعادة ترقيم</button>
         </div>
+        </div>
         <div id="lm_topo_note" role="alert" style="display:none;margin-top:8px;padding:8px 10px;border-radius:8px;border-right:4px solid #DD6B20;background:#FFFAF0;color:#7B341E;font-size:0.8rem;line-height:1.7"></div>
-        <div id="lm_topo_row" style="display:none;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="openLineTopoPlanner()">🧭 إدارة ترقيم هذا الخط (معاينة إدراج / إخراج برج)</button></div>
+        <div id="lm_topo_row" style="display:none;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="openLineTopoPlanner()">🗄️ أرشيف الأبراج المُخرَجة وسجل تغييرات الترقيم</button></div>
       </div>
 
       <p id="lmTowersCount" style="font-size:0.8rem;color:#4a5568;margin-top:6px;font-weight:700"></p>
@@ -195,7 +197,8 @@ function linesOpFormOpen(op) { const m = document.getElementById('lineModal'); r
 let editingLineIdx = null;
 
 function openAddLineModalImpl() {
-  editingLineIdx = null; _lineFormSeq++; _lineFormOpen = { editIdx: null, openSig: null };
+  editingLineIdx = null; _lineFormSeq++; _lineFormOpen = { editIdx: null, openSig: null }; _lineRows = null; _lineBaseNums = [];
+  { const t = document.getElementById('lm_towers'); if (t) t.readOnly = false; }
   document.getElementById('lineModalTitle').textContent = 'إضافة خط جديد';
   ['lm_name','lm_length','lm_towers','lm_tension','lm_capacity','lm_wire','lm_ground','lm_year','lm_notes','lm_tw_from','lm_tw_to'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
   document.getElementById('lm_voltage').value = '132';
@@ -258,6 +261,7 @@ function editLineImpl(idx) {
   _editingLineTowersList = JSON.parse(JSON.stringify(getLineTowers(l.name)));
   document.getElementById('lm_tw_from').value = '';
   document.getElementById('lm_tw_to').value = '';
+  lmRowsInit();
   renderLineTowersEditor();
   lmTopoSync();
   document.getElementById('lineModal').style.display = '';
@@ -307,6 +311,7 @@ async function deleteLineImpl(idx) {
 }
 
 let _editingLineTowersList = [];
+let _lineRows = null, _lineBaseNums = [];   // N25-R6r: صفوف المحرر لخط قائم (أصلي/جديد/مُخرَج) — الحفظ مرة واحدة
 
 // N25-R6: خطّ قائم له قائمة أبراج لا يُعاد ترقيمه من هنا: الحفظ بالرقم يفصل التاريخ عن هوية البرج (الخادم يرفضه بـ topology_managed). التغيير الوحيد المسموح هنا لقائمة قائمة: النوع/السلاسل/المادة (الأرقام ثابتة).
 function _lineNumberingLocked() { return !!(_lineFormOpen && _lineFormOpen.editIdx !== null && _editingLineTowersList.length > 0); }
@@ -322,12 +327,12 @@ function _lmTopoKey() {
   const cands = [nm + ' ' + v + ' ك.ف', nm, nm.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim() + ' ' + v + ' ك.ف'];
   return cands.find(n => (typeof LINES_DATA !== 'undefined' && LINES_DATA[n]) || (lineTowersCache[n] && lineTowersCache[n].length)) || nm;
 }
-function lmTopoSync() {   // يُظهر مسار الإدارة ويشرح الحارس فور فتح نافذة خط قائم؛ الزر القديم يتحوّل إلى «معاينة»
-  const row = document.getElementById('lm_topo_row'), btn = document.getElementById('lm_insert_btn'), note = document.getElementById('lm_topo_note');
+function lmTopoSync() {   // خط قائم: التحرير بالصفوف (➕ بعد البرج / 🗑 إخراج) والحفظ مرة واحدة؛ لا حقول إدراج قديمة
+  const row = document.getElementById('lm_topo_row'), legacy = document.getElementById('lm_legacy_insert'), note = document.getElementById('lm_topo_note');
   const locked = _lineNumberingLocked();
   if (row) row.style.display = locked ? '' : 'none';
-  if (btn) btn.textContent = locked ? '🧭 معاينة الإدراج (إدارة الترقيم)' : '➕ إدراج وإعادة ترقيم';
-  if (note) { note.style.display = locked ? '' : 'none'; note.textContent = locked ? 'ℹ️ هذا خط قائم: إدراج/إخراج برج يتم عبر إدارة الترقيم (بهوية البرج الدائمة). الزر أعلاه يفتح المعاينة بالبرج والنوع المدخلَين؛ الاعتماد يحتاج جاهزية البوابة.' : ''; }
+  if (legacy) legacy.style.display = locked ? 'none' : '';
+  if (note) { note.style.display = locked ? '' : 'none'; note.style.borderRightColor = '#3182CE'; note.style.background = '#EBF8FF'; note.style.color = '#2A4365'; note.textContent = locked ? 'ℹ️ لإضافة برج اضغط ➕ بجانب البرج الذي يسبقه، ولإخراج برج اضغط 🗑. التغييرات تظهر هنا بالأرقام الجديدة، ولا تُعتمد إلا عند الضغط على «حفظ» (مرة واحدة): يُحدَّث الترقيم وعدد الأبراج معاً وتبقى هوية كل برج وسجلاته.' : ''; }
 }
 function openLineTopoPlanner(intent) {
   const key = _lmTopoKey(); if (!key) { lmNote('⚠️ تعذّر تحديد الخط — احفظ الخط أولاً أو أعد فتح النافذة.'); return; }
@@ -372,39 +377,112 @@ function insertLineTowerAndRenumber() {
   showToast(`✅ انضاف برج ${afterNum + 1} — وانزاحت كل الأبراج بعده رقماً واحداً. اضغط "حفظ" حتى يثبت التغيير`);
 }
 
+// ---- N25-R6r: محرر الصفوف لخط قائم
+function lmRowsInit() {
+  if (!_lineNumberingLocked()) { _lineRows = null; _lineBaseNums = []; const t = document.getElementById('lm_towers'); if (t) t.readOnly = false; return; }
+  _lineRows = _editingLineTowersList.map(t => ({ orig: String(t.num), type: t.type, chain_override: t.chain_override, material_default: t.material_default, removed: false }));
+  _lineBaseNums = _lineRows.map(r => r.orig);
+}
+function lmSeq() {   // الترقيم الحالي تسلسلي؟ (شرط الترقيم التلقائي، كما يشترطه الخادم)
+  const n = _lineBaseNums.map(x => /^[0-9]{1,9}$/.test(x) ? parseInt(x, 10) : null);
+  if (!n.length || n.some(x => x === null)) return { ok: false };
+  for (let i = 1; i < n.length; i++) if (n[i] !== n[i - 1] + 1) return { ok: false };
+  return { ok: true, start: n[0] };
+}
+function lmProject() {   // الأرقام الجديدة للأبراج الباقية بالترتيب
+  const sq = lmSeq(); let k = 0; const live = [];
+  (_lineRows || []).forEach(r => { if (r.removed) r.proj = null; else { r.proj = sq.ok ? String(sq.start + k) : r.orig; k++; live.push(r); } });
+  return { sq, count: live.length, live };
+}
+function lmDesiredTowers() {   // القائمة النهائية المتوقعة (أرقام جديدة + مواصفات الصفوف)
+  const pr = lmProject(), base = new Map(_editingLineTowersList.map(t => [String(t.num), t]));
+  return pr.live.map(r => { const o = r.orig != null ? JSON.parse(JSON.stringify(base.get(r.orig) || {})) : {}; o.num = isNaN(Number(r.proj)) ? r.proj : Number(r.proj); o.type = r.type;
+    if (r.chain_override) o.chain_override = r.chain_override; else delete o.chain_override; if (r.material_default && r.material_default !== 'glass') o.material_default = r.material_default; else delete o.material_default; return o; });
+}
+function lmRowInsertAfter(i) {   // i = -1: في بداية الخط
+  if (!_lineRows || !lmSeq().ok) return;
+  _lineRows.splice(i + 1, 0, { orig: null, type: 'برج تعليق', removed: false }); renderLineTowersEditor();
+}
+function lmRowRemove(i) { const r = _lineRows && _lineRows[i]; if (!r || r.orig == null || !lmSeq().ok) return; r.removed = true; renderLineTowersEditor(); }
+function lmRowUndo(i) { const r = _lineRows && _lineRows[i]; if (r) { r.removed = false; renderLineTowersEditor(); } }
+function lmRowCancelNew(i) { const r = _lineRows && _lineRows[i]; if (r && r.orig == null) { _lineRows.splice(i, 1); renderLineTowersEditor(); } }
+function lmTopoDirty() { return !!(_lineRows && _lineRows.some(r => r.orig == null || r.removed)); }
+
 function renderLineTowersEditor() {
   const wrap = document.getElementById('lmTowersListWrap');
   const countEl = document.getElementById('lmTowersCount');
+  if (_lineRows) return renderLineRowsEditor(wrap, countEl);
   countEl.textContent = _editingLineTowersList.length ? `إجمالي الأبراج: ${_editingLineTowersList.length}` : 'ما فيه أبراج مولّدة بعد';
-  wrap.innerHTML = _editingLineTowersList.map((t, i) => `
-    <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5;flex-wrap:wrap">
-      <span style="min-width:56px;font-weight:700">برج ${t.num}</span>
-      <select onchange="updateLineTowerType(${i}, this.value)" style="flex:1.2;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
+  wrap.innerHTML = _editingLineTowersList.map((t, i) => lmSpecRowHtml(t, i, `<span style="min-width:56px;font-weight:700">برج ${t.num}</span>`, false, '')).join('') || '<div class="empty-state">ولّد نطاقاً أولاً</div>';
+}
+function lmSpecRowHtml(t, i, head, dis, tail) {
+  const d = dis ? ' disabled' : '';
+  return `
+    <div class="lm-row" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5;flex-wrap:wrap${dis ? ';opacity:0.5' : ''}">
+      ${head}
+      <select${d} onchange="updateLineTowerType(${i}, this.value)" style="flex:1.2;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
         ${LINE_TOWER_TYPE_OPTIONS.map(o => `<option ${o===t.type?'selected':''}>${o}</option>`).join('')}
       </select>
-      <select onchange="updateLineTowerChainOverride(${i}, this.value)" title="استثناء نوع العوازل لهذا البرج فقط (اختياري)" style="flex:1;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
+      <select${d} onchange="updateLineTowerChainOverride(${i}, this.value)" title="استثناء نوع العوازل لهذا البرج فقط (اختياري)" style="flex:1;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
         <option value="" ${!t.chain_override?'selected':''}>عوازل: افتراضي الخط</option>
         <option value="single" ${t.chain_override==='single'?'selected':''}>عوازل: مفرد</option>
         <option value="double" ${t.chain_override==='double'?'selected':''}>عوازل: مزدوج</option>
       </select>
-      <select onchange="updateLineTowerMaterial(${i}, this.value)" title="نوع العازل الافتراضي — يفتح عليه الكشف الجديد تلقائياً" style="flex:1;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
+      <select${d} onchange="updateLineTowerMaterial(${i}, this.value)" title="نوع العازل الافتراضي — يفتح عليه الكشف الجديد تلقائياً" style="flex:1;padding:5px 6px;border-radius:6px;border:1px solid #ccc;font-family:inherit;font-size:0.78rem">
         <option value="glass" ${!t.material_default||t.material_default==='glass'?'selected':''}>مادة: زجاج (افتراضي)</option>
         <option value="plastic" ${t.material_default==='plastic'?'selected':''}>مادة: بلاستك</option>
         <option value="ceramic" ${t.material_default==='ceramic'?'selected':''}>مادة: خزف</option>
-      </select>
-    </div>`).join('') || '<div class="empty-state">ولّد نطاقاً أولاً</div>';
+      </select>${tail}
+    </div>`;
+}
+function renderLineRowsEditor(wrap, countEl) {
+  const pr = lmProject(), nNew = _lineRows.filter(r => r.orig == null).length, nRem = _lineRows.filter(r => r.orig != null && r.removed).length, ok = pr.sq.ok;
+  countEl.textContent = `إجمالي الأبراج بعد الحفظ: ${pr.count}` + (nNew || nRem ? ` (إضافة ${nNew} • إخراج ${nRem} — لم يُحفظ بعد)` : '');
+  const tw = document.getElementById('lm_towers'); if (tw) { tw.value = String(pr.count); tw.readOnly = true; }
+  const b = 'border:1px solid #CBD5E0;background:#fff;border-radius:6px;padding:3px 8px;cursor:pointer;font-family:inherit;font-size:0.8rem';
+  let h = ok ? `<div style="padding:2px 0 6px"><button type="button" style="${b}" onclick="lmRowInsertAfter(-1)">➕ إضافة برج في بداية الخط</button></div>` : '<div style="color:#C05621;font-size:0.78rem;padding:4px 0">⚠️ أرقام هذا الخط غير متسلسلة: الإدراج/الإخراج التلقائي غير مدعوم (يلزم قرار المالك).</div>';
+  h += _lineRows.map((r, i) => {
+    const isNew = r.orig == null;
+    const label = r.removed ? `<span style="min-width:56px;font-weight:700;text-decoration:line-through">كان برج ${r.orig}</span><span style="font-size:0.72rem;color:#C53030">سيُخرَج للأرشيف</span>`
+      : `<span style="min-width:56px;font-weight:700">برج ${r.proj}</span>` + (isNew ? '<span style="background:#C6F6D5;color:#22543D;border-radius:10px;padding:1px 8px;font-size:0.72rem">جديد</span>' : (r.proj !== r.orig ? `<span style="font-size:0.72rem;color:#718096">كان ${r.orig}</span>` : ''));
+    let tail = '';
+    if (r.removed) tail = `<button type="button" style="${b}" onclick="lmRowUndo(${i})">↩ تراجع</button>`;
+    else { if (isNew) tail += `<button type="button" style="${b}" title="إلغاء هذا البرج الجديد" onclick="lmRowCancelNew(${i})">✖</button>`; else if (ok) tail += `<button type="button" style="${b}" title="إخراج هذا البرج من الخدمة (يُؤرشف بسجلاته)" onclick="lmRowRemove(${i})">🗑</button>`; if (ok) tail += `<button type="button" style="${b}" title="إضافة برج جديد بعد هذا البرج" onclick="lmRowInsertAfter(${i})">➕</button>`; }
+    return lmSpecRowHtml(r, i, label, r.removed, tail);
+  }).join('');
+  wrap.innerHTML = h;
 }
 
 function updateLineTowerType(i, val) {
-  if (_editingLineTowersList[i]) _editingLineTowersList[i].type = val;
+  const t = _lineRows ? _lineRows[i] : _editingLineTowersList[i]; if (t) t.type = val;
 }
 
 function updateLineTowerChainOverride(i, val) {
-  if (_editingLineTowersList[i]) _editingLineTowersList[i].chain_override = val || undefined;
+  const t = _lineRows ? _lineRows[i] : _editingLineTowersList[i]; if (t) t.chain_override = val || undefined;
 }
 
 function updateLineTowerMaterial(i, val) {
-  if (_editingLineTowersList[i]) _editingLineTowersList[i].material_default = (val && val !== 'glass') ? val : undefined;
+  const t = _lineRows ? _lineRows[i] : _editingLineTowersList[i]; if (t) t.material_default = (val && val !== 'glass') ? val : undefined;
+}
+
+
+function _lmSameList(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  const n = (t) => [String(t.num), t.type || '', t.chain_override || '', t.material_default || 'glass'].join('|');
+  return a.every((t, i) => n(t) === n(b[i]));
+}
+function _lmPendRead() { try { const o = JSON.parse(localStorage.getItem('topo_pending_v1') || 'null'); return o && o.opId ? o : null; } catch (e) { return null; } }
+function _lmDirtySnap(snap) { return !!(snap.rows && snap.rows.some(r => r.orig == null || r.removed)); }
+function lmTopoSave(snap, resume) {   // الإدراج/الإخراج + عدد الأبراج: نداء ذرّي واحد (app_line_edit_apply) عبر وحدة الترقيم
+  try { if (typeof FEAT_MODULE_SRC === 'object' && !FEAT_MODULE_SRC.topo) FEAT_MODULE_SRC.topo = './topology-admin.js'; } catch (e) {}
+  const ctx = { line: snap.topoKey, baseNums: snap.baseNums, rows: snap.rows, info: { idx: snap.editIdx, tension_towers: snap.meta.tension_towers == null ? null : snap.meta.tension_towers }, circuit_count: snap.circuitCount, chain_mode: snap.chainMode, resume: !!resume };
+  return Promise.resolve(featRun(['topo'], () => topoSaveFromEditor(ctx), 'topo')).then(r => r || { ok: false, msg: 'تعذّر تحميل أداة الترقيم — لم يُحفظ شيء.' });
+}
+function lmResyncAfterTopo(snap, freshRow) {   // بعد نجاح الحفظ الذرّي: المحرر يعكس حالة الخادم الجديدة (بلا تعديلات مرحلية)
+  if (snap.gen !== _lineFormSeq) return;
+  _editingLineTowersList = JSON.parse(JSON.stringify(snap.towers));
+  if (freshRow) { _lineFormOpen.openSig = linesRowSig(freshRow); }
+  lmRowsInit(); renderLineTowersEditor(); lmTopoSync();
 }
 
 // لقطة مدخلات النموذج وقت الضغط: ثابتة طوال الطلب (لا تتأثر بما يُكتب أو يُفتح بعده)
@@ -413,7 +491,8 @@ function lineFormSnapshot(name) {
   return {
     gen: _lineFormSeq, name, editIdx: _lineFormOpen.editIdx, openSig: _lineFormOpen.openSig,
     circuitCount: parseInt(g('lm_circuit_count').value) || 1, chainMode: g('lm_chain_mode').value || 'double',
-    towers: JSON.parse(JSON.stringify(_editingLineTowersList)),
+    towers: _lineRows ? lmDesiredTowers() : JSON.parse(JSON.stringify(_editingLineTowersList)),
+    rows: _lineRows ? JSON.parse(JSON.stringify(_lineRows)) : null, baseNums: _lineRows ? _lineBaseNums.slice() : null, topoKey: _lineRows ? _lmTopoKey() : null,
     meta: {
       voltage: parseInt(g('lm_voltage').value), name: name, phase_swap: null,
       length: parseFloat(g('lm_length').value) || null, towers: parseInt(g('lm_towers').value) || null,
@@ -426,7 +505,8 @@ function lineFormSnapshot(name) {
 function lineConfigChangedSnap(snap) {
   const st = lineSettingsCache[snap.name], tw = lineTowersCache[snap.name];
   if (!st || !tw) return true;
-  return JSON.stringify(tw) !== JSON.stringify(snap.towers) || Number(st.circuit_count) !== snap.circuitCount || st.chain_mode !== snap.chainMode;
+  const same = snap.rows ? _lmSameList(tw, snap.towers) : JSON.stringify(tw) === JSON.stringify(snap.towers);   // N25-R6r: خط قائم — مقارنة دلالية (رقم/نوع/استثناء/مادة) لا بالترتيب النصي
+  return !same || Number(st.circuit_count) !== snap.circuitCount || st.chain_mode !== snap.chainMode;
 }
 // v335-C4: الكتابة الوحيدة لإعدادات الخط/الأبراج هي RPC خادمي بجلسة موثّقة (يتطلب اتصالاً). v335-C5r11: الحمولة والكاش من لقطة الطلب نفسها لا من النموذج الحيّ
 async function saveLineTowersToServer(snap, op) {
@@ -487,6 +567,29 @@ async function saveLineModal() {
     if (pos >= 0) next[pos] = entry; else next.push(entry);
     const bad = validateLinesRows(next);
     if (bad) { report(linesSaveMsg(bad)); return; }
+    // N25-R6r: محرر الصفوف لخط قائم — أي إدراج/إخراج (أو عملية معلّقة سابقة) يُحفظ بنداء ذرّي واحد قبل بقية الحقول
+    let baseline = bl, nextRows = next;
+    if (snap.rows) {
+      const pend = _lmPendRead(), dirty = _lmDirtySnap(snap);
+      if (dirty || (pend && pend.kind === 'line_edit')) {
+        const res0 = await lmTopoSave(snap, !!pend);
+        if (!linesOpLive(op)) return;
+        if (!res0.ok) { if (res0.cancelled) { showToast(res0.msg); return; } lmNote('⚠️ ' + res0.msg); return; }
+        configSaved = true;     // الترقيم وعدد الأبراج محفوظان على الخادم
+        const fresh = await linesFetchBaseline();
+        if (!linesOpLive(op)) return;
+        const fpos = fresh.ok ? fresh.rows.findIndex(r => r && r.idx === snap.editIdx) : -1;
+        if (!fresh.ok || fpos < 0) { showToast('✅ حُفظ الترقيم وعدد الأبراج على الخادم، لكن تعذّر تحديث بقية البيانات — أعد فتح النافذة.', 'error'); closeLineModal(); return; }
+        linesPublishBaseline(fresh.rows, op.sess);
+        const srv = fresh.rows[fpos];
+        if (pend && !dirty) { /* إكمال عملية معلّقة فقط: لا تعديلات مرحلية حالية */ }
+        else if (pend && dirty) { lmResyncAfterTopo(snap, srv); lmNote('✅ اكتملت عملية الحفظ السابقة المعلّقة. ما أضفته/أخرجته الآن لم يُطبَّق (الأرقام تغيّرت) — أعد تنفيذه ثم احفظ.'); return; }
+        const entry2 = Object.assign({ idx: srv.idx }, snap.meta, { towers: srv.towers });
+        if (snap.meta.tension_towers == null) entry2.tension_towers = srv.tension_towers;
+        nextRows = fresh.rows.slice(); nextRows[fpos] = entry2; baseline = fresh;
+        lmResyncAfterTopo(snap, srv);
+      }
+    }
     // 3) إعدادات الدوائر/الأبراج (RPC منفصل) ثم بيانات الخط بشرط نسخة الأساس
     if (lineConfigChangedSnap(snap)) {
       if (!navigator.onLine) { showToast('⚠️ ' + OPS_CODE_MSG.offline, 'error'); return; }
@@ -495,7 +598,7 @@ async function saveLineModal() {
       if (!cr.ok) { showToast('⚠️ لم تُحفظ إعدادات الخط/الأبراج: ' + cr.msg, 'error'); return; }
       configSaved = true;
     }
-    const res = await saveLinesInfoData(next, bl.version);
+    const res = await saveLinesInfoData(nextRows, baseline.version);
     if (!linesOpLive(op)) return;
     if (!res.ok) {
       if (res.code === 'session_changed') return;   // ردّ متأخر لحساب سابق: لا يُعلَن شيء ولا يُكتب شيء
