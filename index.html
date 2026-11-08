@@ -6708,6 +6708,14 @@ function opsRetryVoid(id) {
   if (ok) { opsLog('retry_void', e); opsSyncSoon(); } try { renderPendingSyncPage(); } catch (x) {}
   return ok;
 }
+// retry of a rejected observation/treatment after the server-side geometry rule was fixed: same op id, same payload (server dedups by op_id + request hash)
+function opsRetryRejected(id) {
+  const rd = opsRead(); if (!rd.ok) return false;
+  const e = rd.items.find(x => x.id === id); if (!e || e.kind === 'void' || e.status !== 'rejected' || e.err !== 'geometry_unresolved') return false;
+  const ok = opsUpdate(id, x => { x.status = 'pending'; x.err = null; x.detail = null; x.attempts = (x.attempts || 0) + 1; });
+  if (ok) { opsLog('retry_rejected', e); opsSyncSoon(); } try { renderPendingSyncPage(); } catch (x) {}
+  return ok;
+}
 // withdrawing a cancellation REQUEST is local only: the stored record stays active on the server. Refused while the outcome of a sent request is unknown.
 function opsWithdrawVoid(id) {
   const rd = opsRead(); if (!rd.ok) return false;
@@ -6895,7 +6903,7 @@ function opsRenderPendingSection() {
         (e.kind === 'observation' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'supervisor') ? '<button class="btn btn-secondary btn-sm" onclick="opsKeepMineAsCorrection(\'' + e.id + '\')">✍️ أبقِ رصدي كتصحيح صريح</button>' : '') + '</div>';
     } else if (e.status === 'rejected') {
       body += '<div style="font-size:0.78rem;margin-top:6px;color:#922B21">' + _csEsc(opsErrText(e)) + '</div>' +
-        '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' + (e.err === 'cycle_confirmation_required' ? '<button class="btn btn-secondary btn-sm" onclick="opsConfirmZeroCycles(\'' + e.id + '\')">✔ أؤكد: لم تُعالَج هذه المواضع سابقاً (دورة 0)</button>' : '') + '<button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="opsDiscardRejected(\'' + e.id + '\')">🗑️ حذف بعد المراجعة</button></div>';
+        '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' + (e.err === 'geometry_unresolved' ? '<button class="btn btn-secondary btn-sm" onclick="opsRetryRejected(\''+e.id+'\')">🔄 إعادة المحاولة (نفس العملية)</button>' : '') + (e.err === 'cycle_confirmation_required' ? '<button class="btn btn-secondary btn-sm" onclick="opsConfirmZeroCycles(\'' + e.id + '\')">✔ أؤكد: لم تُعالَج هذه المواضع سابقاً (دورة 0)</button>' : '') + '<button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="opsDiscardRejected(\'' + e.id + '\')">🗑️ حذف بعد المراجعة</button></div>';
     } else {
       if (e.err) body += '<div style="font-size:0.72rem;color:#7B7B7B;margin-top:4px">آخر محاولة: ' + _csEsc(e.err) + '</div>';
       if (opsActorMismatch(e)) body += '<div style="font-size:0.78rem;color:#7C4A03;margin-top:6px">تخص: ' + _csEsc(e.uname || '—') + ' — سجّل الدخول بحسابه ليُرسلها، أو <button class="btn btn-secondary btn-sm" onclick="opsClaimEntry(\'' + e.id + '\')">أرسلها بحسابي</button></div>';
