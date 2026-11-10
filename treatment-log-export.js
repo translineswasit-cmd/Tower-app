@@ -52,8 +52,7 @@ let _lexpRun = null;
 
 function openDepLogExportModalImpl() {
   const sel = document.getElementById('depLogExportFilterLine');
-  const names = Object.keys(LINES_DATA || {}).sort((a, b) => a.localeCompare(b, 'ar'));   // v335-C6r21 (P01-B1): من LINES_DATA لا من جدول المعالجات
-  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' + names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+  fillLineSelect(sel, { placeholder: '-- كل الخطوط --' });   // N25-R6s3: الفهرس الموحّد
   // ينسخ فلتر الصفحة الحالي كقيمة مبدئية بنافذة التصدير
   sel.value = document.getElementById('depLogFilterLine')?.value || '';
   document.getElementById('depLogExportFilterFrom').value = document.getElementById('depLogFilterFrom')?.value || '';

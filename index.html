@@ -2747,7 +2747,7 @@ function csFilterNumber(r) {          // الرقم الذي يُقارَن بم
   return e && !e.r ? e.n : null;
 }
 async function csDirsEnsure(lines) {  // تحميل دليل الأبراج للخطوط (مخزَّن 15 ث، تزامن محدود)
-  const names = (lines && lines.length ? lines : Object.keys(typeof LINES_DATA === 'object' && LINES_DATA ? LINES_DATA : {})).slice();
+  const names = (lines && lines.length ? lines : (typeof lineCatalogNames === 'function' ? lineCatalogNames() : Object.keys(typeof LINES_DATA === 'object' && LINES_DATA ? LINES_DATA : {}))).slice();
   let i = 0; const w = async () => { while (i < names.length) { const n = names[i++]; try { await csDirLoad(n, 15000); } catch (e) {} } };
   await Promise.all([w(), w(), w(), w()]);
 }
@@ -3362,13 +3362,9 @@ const EXCLUDED_132_LINES = [
 ];
 
 // يفحص كل صيغ اسم الخط الممكنة (نفس منطق getLineTowers) لإيجاد إعدادات الدائرة/نوع السلسلة المعدَّلة
-function getLineSettingsOverride(lineName) {
+function getLineSettingsOverride(lineName) {   // N25-R6s4: نفس الخط بنفس الجهد فقط (lineAliasKeys)؛ إعدادات خط بجهد آخر لا تُستعار
   if (!lineName) return null;
-  const bare = lineName.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim();
-  const candidates = [lineName, bare, bare + ' 400 ك.ف', bare + ' 132 ك.ف'];
-  for (const n of candidates) {
-    if (lineSettingsCache[n]) return lineSettingsCache[n];
-  }
+  for (const n of lineAliasKeys(lineName)) { if (lineSettingsCache[n]) return lineSettingsCache[n]; }
   return null;
 }
 
@@ -3493,10 +3489,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // تحميل الكاش المحلي للسجلات فوراً (يفيد أوف لاين قبل زيارة صفحة السجلات)
   try { records = dayCompose(JSON.parse(localStorage.getItem(DB_KEY) || '[]')); } catch(e) { records = []; }
 
-  const sel = document.getElementById('f_line_name');
-  Object.keys(LINES_DATA).forEach(name => {
-    const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o);
-  });
+  fillLineSelect(document.getElementById('f_line_name'), { placeholder: '-- اختر الخط --' });
 
   loadLinesInfoFromDB(); // بدون await حتى لا نؤخر ظهور التطبيق؛ الشاشات تتحدّث فور اكتمال التحميل
 
@@ -4483,7 +4476,7 @@ function renderTowersGridFromCache(lineName) {
   section.style.display = '';
   titleEl.textContent = '🗼 أبراج خط: ' + lineName;
   try {
-    const towers = getLineTowers(lineName);
+    const towers = getLineTowers(lineName); _gridTowerSig[lineName] = _towerListSig(towers);   // N25-R6s3
     const cardLine = _csCardLines.get(lineName);
     const cardPending = _readPendingInspectionState();
     grid.innerHTML = csCardLineStrip(lineName, cardLine) + towers.map(t => {
@@ -7377,9 +7370,10 @@ function populateLineFilter() {
   const sel = document.getElementById('filterLine');
   if (!sel) return;
   const currentVal = sel.value;
-  const uniqueLines = [...new Set(records.map(r => r.line_name).filter(Boolean))].sort();
+  const uniqueLines = [...new Set(records.map(r => r.line_name).filter(Boolean))];  // N25-R6s: ترتيب الخطوط الموحّد
+  const _ul = sortLineNames(uniqueLines);
   sel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
-    uniqueLines.map(name => `<option value="${name}">${name}</option>`).join('');
+    _ul.map(name => `<option value="${name}">${name}</option>`).join('');
   if (uniqueLines.includes(currentVal)) sel.value = currentVal;
 }
 
@@ -9240,47 +9234,160 @@ async function loadLineTowersCache() {
 // "بيانات الخطوط" تخزّن الاسم بدون لاحقة الفولتية، بينما LINES_DATA الأصلية تستخدم لاحقة ("...132 ك.ف").
 // هذي الدالة تفحص كل الصيغ الممكنة للاسم، وتعطي الأولوية دائماً للبيانات المعدَّلة (الكاش المتزامن)
 // أياً كانت صيغة الاسم المستخدمة بالاستدعاء — قبل الرجوع للبيانات الأصلية المدمجة بالكود.
+// N25-R6s4: مفاتيح الاسم المقبولة لخط واحد، بترتيب الأسبقية — لا تضم إلا ما ثبت أنه نفس الخط بنفس الجهد:
+//  • الاسم نفسه دائماً أولاً.
+//  • اسم بلاحقة جهد (مثلاً «س 400 ك.ف»): يُقبل الاسم المجرّد «س» فقط إن ثبت بصف «بيانات الخطوط» أن جهده نفس الجهد (تعديل محفوظ لمدمج بنفس الجهد)؛ جهد مختلف أو ملتبس = خط آخر.
+//  • اسم مجرّد: جهده من صف «بيانات الخطوط» الوحيد الجهد فقط؛ ثم النسخة بلاحقة ذلك الجهد. جهد غير معروف: لا استعارة إلا إن لم يكن للاسم المجرّد وجود فعلي وكانت هناك نسخة مدمجة/محفوظة وحيدة.
+function _lineHasData(k) { return Object.prototype.hasOwnProperty.call(LINES_DATA, k) || (Array.isArray(lineTowersCache[k]) && lineTowersCache[k].length > 0) || !!lineSettingsCache[k]; }
+function lineAliasKeys(lineName) {
+  const n = String(lineName == null ? '' : lineName).trim(); if (!n) return [];
+  const b = _lineBareName(n), m = /(400|132)\s*ك\.ف\s*$/.exec(n), keys = [n];
+  if (m) {
+    const v = Number(m[1]);
+    if (b && b !== n && _configuredVoltage(b) === v && !/(400|132)\s*ك\.ف\s*$/.test(b)) keys.push(b);
+  } else {
+    const v = _configuredVoltage(n);
+    if (v) keys.push(n + ' ' + v + ' ك.ف');
+    else if (!_lineHasData(n)) { const vars = [400, 132].map(x => n + ' ' + x + ' ك.ف').filter(_lineHasData); if (vars.length === 1) keys.push(vars[0]); }
+  }
+  return keys;
+}
 function getLineTowers(lineName) {
   if (!lineName) return [];
-  const bare = lineName.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim();
-  const candidates = [lineName, bare, bare + ' 400 ك.ف', bare + ' 132 ك.ف'];
-  for (const n of candidates) {
-    if (lineTowersCache[n] && lineTowersCache[n].length) return lineTowersCache[n];
-  }
-  for (const n of candidates) {
-    if (LINES_DATA[n]) return LINES_DATA[n];
-  }
+  const keys = lineAliasKeys(lineName);
+  for (const n of keys) { if (lineTowersCache[n] && lineTowersCache[n].length) return lineTowersCache[n]; }
+  for (const n of keys) { if (LINES_DATA[n]) return LINES_DATA[n]; }
   return [];
 }
 
 // N25-R6n: قائمة «الخط» في إضافة كشف = الخطوط المدمجة (LINES_DATA) + الخطوط المُهيَّأة من إدارة الخطوط (line_towers_custom).
 // كانت القائمة تُبنى مرة واحدة عند التشغيل من LINES_DATA فقط، فلا يظهر فيها أي خط جديد. الاكتشاف هنا من إعداد الخط نفسه لا من تاريخ الكشوفات.
 function _lineBareName(n) { return String(n || '').replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim(); }
-function _lineIsBuiltin(n) { const b = _lineBareName(n); return [n, b, b + ' 400 ك.ف', b + ' 132 ك.ف'].some(k => Object.prototype.hasOwnProperty.call(LINES_DATA, k)); }
+function _lineIsBuiltin(n) {   // N25-R6s3: خط مُهيَّأ هو نفس المدمج فقط إن تطابق الاسم أو كان الاسم الأساسي + جهده المعروف يطابق مدمجاً؛ خط بجهد آخر (أو اسم أساسي ملتبس) يبقى خطاً مستقلاً ولا يُدمج
+  const has = k => Object.prototype.hasOwnProperty.call(LINES_DATA, k); n = String(n || '');
+  if (has(n)) return true;
+  const b = _lineBareName(n), v = (typeof _configuredVoltage === 'function') ? _configuredVoltage(n) : 0;
+  if (v) return has(b + ' ' + v + ' ك.ف');
+  const hit = [400, 132].filter(x => has(b + ' ' + x + ' ك.ف'));
+  return hit.length === 1;   // جهد غير معروف ونسخة مدمجة وحيدة = نفس الخط؛ نسختان = ملتبس فلا يُخفى خط مُهيَّأ بسببه
+}
 function configuredLineNames() {   // خطوط مُهيَّأة بأبراج وليست مدمجة (لا تتكرر مع خط مدمج حُفظ تعديله بصيغة اسم أخرى)
   return Object.keys(lineTowersCache).filter(n => n && Array.isArray(lineTowersCache[n]) && lineTowersCache[n].length && !_lineIsBuiltin(n))
     .sort((a, b) => a.localeCompare(b, 'ar'));
 }
-function registerConfiguredLineVoltages() {   // الجهد من «بيانات الخطوط» (lines_info) للخط المُهيَّأ؛ لا يُكتب فوق جهد مدمج
+
+// N25-R6s: ترتيب موحّد للخطوط في كل القوائم: 400 ك.ف أولاً، ثم 132 ك.ف، ثم الجهد غير المعروف أخيراً؛ داخل كل مجموعة بالاسم الأساسي (بلا لاحقة الجهد) أبجدياً بالتجميع العربي.
+// الجهد من المصادر القائمة بأسبقيتها: LINE_VOLTAGE (مدمج/مسجَّل من «بيانات الخطوط») ← لاحقة الاسم ← صف lines_info بنفس الاسم تماماً ← نسخة مدمجة وحيدة بنفس الاسم الأساسي. أي التباس (صفان بجهدين، أو نسختان مدمجتان) = غير معروف؛ لا تخمين.
+const _lineCollator = (() => { try { return new Intl.Collator('ar'); } catch (e) { return null; } })();
+function _lineTextCmp(a, b) { return _lineCollator ? _lineCollator.compare(a, b) : String(a).localeCompare(String(b), 'ar'); }
+const _lineVoltDerived = new Set();   // أسماء لها قيمة في LINE_VOLTAGE مشتقّة من «بيانات الخطوط» (لا المدمجة): تُحسب من جديد عند كل تحديث ولا تُصدَّق قديمة
+function _configuredVoltage(n) {   // جهد خط مُهيَّأ بالأسبقية القائمة: صف lines_info بنفس الاسم (أو الاسم الأساسي) إن كان وحيد الجهد ← لاحقة الاسم ← غير معروف. صفّان بجهدين مختلفين = التباس: لا يُؤخذ الأول ولا يُخمَّن.
+  const info = (typeof linesInfoCache !== 'undefined' && Array.isArray(linesInfoCache)) ? linesInfoCache : [], b = _lineBareName(n), vs = new Set();
+  info.forEach(r => { if (r && (r.name === n || r.name === b)) { const v = Number(r.voltage); if (v === 400 || v === 132) vs.add(v); } });
+  if (vs.size === 1) return Array.from(vs)[0];
+  if (vs.size === 2 && n === b) {   // N25-R6t: اسم مجرّد له صفّا جهدين (400 و132): جهد مملوك لخط بلاحقة موجود فعلاً (مدمج/محفوظ) ليس جهد الخط المجرّد؛ إن بقي جهد واحد فهو جهده، وإلا ملتبس
+    const rest = Array.from(vs).filter(v => !(Object.prototype.hasOwnProperty.call(LINES_DATA, b + ' ' + v + ' ك.ف') || (Array.isArray(lineTowersCache[b + ' ' + v + ' ك.ف']) && lineTowersCache[b + ' ' + v + ' ك.ف'].length)));
+    if (rest.length === 1) return rest[0];
+  }
+  const m = /(400|132)\s*ك\.ف\s*$/.exec(String(n || ''));
+  return m ? Number(m[1]) : 0;
+}
+function lineVoltageForOrder(name) {
+  const n = String(name == null ? '' : name).trim(); if (!n) return 0;
+  if (!_lineVoltDerived.has(n)) { const ex = Number(LINE_VOLTAGE[n]); if (ex === 400 || ex === 132) return ex; }   // مدمج ثابت
+  const m = /(400|132)\s*ك\.ف\s*$/.exec(n);
   const info = (typeof linesInfoCache !== 'undefined' && Array.isArray(linesInfoCache)) ? linesInfoCache : [];
+  if (info.some(r => r && r.name === n) || _lineVoltDerived.has(n) || m) { const v = _configuredVoltage(n); if (v) return v; if (!m) return 0; }
+  const hit = [400, 132].filter(v => Object.prototype.hasOwnProperty.call(LINES_DATA, n + ' ' + v + ' ك.ف'));
+  return hit.length === 1 ? hit[0] : 0;
+}
+function _lineGroupOf(v) { return v === 400 ? 0 : (v === 132 ? 1 : 2); }
+function lineOrderCmp(a, b, va, vb) {
+  const ga = _lineGroupOf(va != null ? Number(va) : lineVoltageForOrder(a)), gb = _lineGroupOf(vb != null ? Number(vb) : lineVoltageForOrder(b));
+  if (ga !== gb) return ga - gb;
+  return _lineTextCmp(_lineBareName(a), _lineBareName(b)) || _lineTextCmp(String(a), String(b));
+}
+function sortLineNames(names) {   // نسخة مرتبة؛ لا تغيّر القيم ولا تحذف شيئاً
+  const k = (names || []).map(n => ({ n, v: lineVoltageForOrder(n) }));
+  k.sort((x, y) => lineOrderCmp(x.n, y.n, x.v, y.v)); return k.map(x => x.n);
+}
+function sortLineRows(rows, nameOf, voltOf) {   // صفوف تحمل جهدها بنفسها (مثل lines_info): voltOf(row) يُستعمل إن كان 400/132، وإلا يُحسب من الاسم
+  const nf = nameOf || (r => r.name), vf = (r) => { const v = voltOf ? Number(voltOf(r)) : NaN; return (v === 400 || v === 132) ? v : lineVoltageForOrder(nf(r)); };
+  const k = (rows || []).map(r => ({ r, n: nf(r), v: vf(r) }));
+  k.sort((x, y) => lineOrderCmp(x.n, y.n, x.v, y.v)); return k.map(x => x.r);
+}
+function registerConfiguredLineVoltages() {   // الجهد من «بيانات الخطوط» للخط المُهيَّأ؛ لا يُكتب فوق جهد مدمج، ولا يُخزَّن جهد ملتبس، وتُمسح المشتقّات القديمة عند كل استدعاء
+  _lineVoltDerived.forEach(n => { delete LINE_VOLTAGE[n]; }); _lineVoltDerived.clear();
   configuredLineNames().forEach(n => {
     if (LINE_VOLTAGE[n]) return;
-    const row = info.find(r => r && (r.name === n || r.name === _lineBareName(n)));
-    const v = row ? Number(row.voltage) : 0;
-    const sfx = lineVoltageByName(n);
-    if (v === 132 || v === 400) LINE_VOLTAGE[n] = v; else if (sfx) LINE_VOLTAGE[n] = sfx;
+    const v = _configuredVoltage(n);
+    if (v === 132 || v === 400) { LINE_VOLTAGE[n] = v; _lineVoltDerived.add(n); }
   });
 }
-function refreshInspectionLineSelect() {   // يُعيد بناء الخيارات فقط إن تغيّرت، ويحفظ الاختيار الحالي؛ لا يطلق change
-  const sel = document.getElementById('f_line_name'); if (!sel) return;
-  try { registerConfiguredLineVoltages(); } catch (e) {}
-  const want = Object.keys(LINES_DATA).concat(configuredLineNames());
-  const have = Array.prototype.map.call(sel.options, o => o.value).filter(v => v !== '');
-  if (have.length === want.length && have.every((v, i) => v === want[i])) return;
+// N25-R6s3: فهرس موحّد للخطوط = المدمجة + المُهيَّأة المحفوظة (بلا دمج خطين مختلفين)، بترتيب 400 ثم 132 ثم المجهول، أبجدياً عربياً داخل المجموعة.
+// extra: أسماء من السجلات (للفلاتر التاريخية فقط). كل قوائم اختيار الخط في الشاشات التشغيلية تُبنى من هنا وتُحدَّث عبر registerLineSelector.
+function lineCatalogNames(extra) {
+  const set = new Set(Object.keys(LINES_DATA)); configuredLineNames().forEach(n => set.add(n));
+  (extra || []).forEach(n => { if (n) set.add(n); });
+  return sortLineNames(Array.from(set));
+}
+function fillLineSelect(sel, o) {   // يعيد البناء فقط إن تغيّر الفهرس؛ الاختيار يُحفظ بالاسم (هوية الخط) ويُفرَّغ فقط إن لم يعد الخط موجوداً. يرجع {changed, lost}
+  if (!sel) return { changed: false, lost: false };
+  o = o || {};
+  const names = o.names || lineCatalogNames(o.extra), grouped = !!o.grouped;
+  const sig = (grouped ? 'g' : 'p') + '|' + (o.placeholder || '') + '|' + names.map(n => n + '\u0001' + lineVoltageForOrder(n)).join('\u0002');
+  if (sel.dataset.lineSig === sig && sel.options.length > 1) return { changed: false, lost: false };
   const cur = sel.value;
-  sel.innerHTML = '<option value="">-- اختر الخط --</option>';
-  want.forEach(name => { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); });
-  if (cur && want.indexOf(cur) >= 0) sel.value = cur;
+  sel.innerHTML = '';
+  const ph = document.createElement('option'); ph.value = ''; ph.textContent = o.placeholder || '-- اختر الخط --'; sel.appendChild(ph);
+  if (grouped) {
+    const g = [[400, '400 ك.ف'], [132, '132 ك.ف'], [0, 'جهد غير محدد']].map(x => { const e = document.createElement('optgroup'); e.label = x[1]; e._v = x[0]; return e; });
+    names.forEach(name => { const op = document.createElement('option'); op.value = name; op.textContent = name; const v = lineVoltageForOrder(name); (v === 400 ? g[0] : (v === 132 ? g[1] : g[2])).appendChild(op); });
+    g.forEach((e, i) => { if (i < 2 || e.children.length) sel.appendChild(e); });
+  } else names.forEach(name => { const op = document.createElement('option'); op.value = name; op.textContent = name; sel.appendChild(op); });
+  sel.dataset.lineSig = sig;
+  const keep = !!cur && names.indexOf(cur) >= 0;
+  if (keep) sel.value = cur;
+  return { changed: true, lost: !!cur && !keep };
+}
+const _lineSelectorHooks = {};
+function registerLineSelector(key, fn) { _lineSelectorHooks[key] = fn; }   // الوحدات الكسولة تسجّل مُحدِّثها عند تحميلها
+function refreshLineSelectors() { Object.keys(_lineSelectorHooks).forEach(k => { try { _lineSelectorHooks[k](); } catch (e) { console.warn('[tower-app] line selector refresh failed:', k, e); } }); }
+const _gridTowerSig = {};
+function _towerListSig(towers) { return (towers || []).map(t => t.num + '|' + t.type).join(','); }
+// N25-R6s3: إضافة/إخراج برج من إعدادات الخط تظهر فوراً في «إضافة كشف» (قائمة الأبراج + الشبكة) دون مسح ما أدخله المستخدم؛ البرج المختار يبقى فقط إن بقي رقمه
+function refreshInspectionTowerViews() {
+  try {
+    const name = (document.getElementById('f_line_name') || {}).value, tSel = document.getElementById('f_tower_number');
+    if (name && tSel && tSel.options.length > 1 || (name && tSel && tSel.options.length === 1 && tSel.disabled === false)) {
+      const towers = getLineTowers(name), cur = tSel.value;
+      const have = Array.prototype.map.call(tSel.options, o => o.value + '|' + o.textContent).slice(1).join(','), want = towers.map(t => t.num + '|' + 'برج ' + t.num + ' — ' + t.type).join(',');
+      if (have !== want) {
+        tSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
+        towers.forEach(t => { const o = document.createElement('option'); o.value = t.num; o.textContent = 'برج ' + t.num + ' — ' + t.type; o.dataset.type = t.type; o.dataset.typeCode = t.type_code || ''; tSel.appendChild(o); });
+        tSel.disabled = false;
+        if (cur && towers.some(t => String(t.num) === String(cur))) {
+          tSel.value = cur;
+          let prevId = null; try { prevId = ((typeof _opsBaseline !== 'undefined' && _opsBaseline && _opsBaseline.line === name && String(_opsBaseline.tower) === String(cur) && _opsBaseline.ident) || csIdentSnap(name, String(cur), { mapOnly: true }) || {}).tower_id || null; } catch (e) {}
+          if (prevId) (async () => {   // الرقم قد يشير الآن لبرج آخر بعد إعادة الترقيم: يبقى الاختيار فقط إن بقيت هويته الدائمة
+            let nowId = null; try { if (navigator.onLine !== false) await csLineIdentLoad(name); nowId = ((csIdentSnap(name, String(cur), { mapOnly: true }) || {}).tower_id) || null; } catch (e) {}
+            if (nowId && nowId !== prevId && tSel.value === cur && document.getElementById('f_line_name').value === name) { tSel.value = ''; showToast('⚠️ تغيّر ترقيم هذا الخط: الرقم ' + cur + ' صار لبرج آخر — اختر البرج من جديد', 'error'); }
+          })();
+        }
+        else if (cur) showToast('⚠️ البرج المختار لم يعد ضمن الخط بعد تحديث الترقيم — اختر البرج من جديد', 'error');
+        const li = document.getElementById('lineInfoStrip'); if (li && li.style.display !== 'none') li.textContent = '📡 عدد الأبراج: ' + towers.length + ' برج | ' + (LINE_VOLTAGE[name] || lineVoltageByName(name) || '—') + ' ك.ف';
+      }
+    }
+    const g = currentGridLine;
+    if (g && _gridTowerSig[g] !== undefined && _gridTowerSig[g] !== _towerListSig(getLineTowers(g))) renderTowersGridFromCache(g);
+  } catch (e) { console.warn('[tower-app] refreshInspectionTowerViews', e); }
+}
+registerLineSelector('inspectionTowers', refreshInspectionTowerViews);
+function refreshInspectionLineSelect() {   // يُعيد بناء الخيارات فقط إن تغيّرت، ويحفظ الاختيار الحالي؛ لا يطلق change
+  try { registerConfiguredLineVoltages(); } catch (e) {}
+  const sel = document.getElementById('f_line_name');
+  if (sel) fillLineSelect(sel, { placeholder: '-- اختر الخط --' });
+  refreshLineSelectors();   // N25-R6s3: كل القوائم التشغيلية المُسجَّلة (كشف حراري، استمارة، أوامر عمل، برقيات، طارئ، معالجات، تقارير…) تتبع نفس الفهرس
 }
 
 // نوع العازل الافتراضي المحفوظ لبرج معيّن ('glass'|'plastic'|'ceramic') — يُقرأ عند فتح كشف جديد له

@@ -32,7 +32,7 @@ function renderLinesInfo() {
   const filter = document.getElementById('linesInfoFilter').value;
   const body = document.getElementById('linesInfoBody');
   const data = getLinesInfoData();
-  const filtered = data.filter(l => filter === 'all' || String(l.voltage) === filter);
+  const filtered = sortLineRows(data.filter(l => filter === 'all' || String(l.voltage) === filter), l => l.name, l => l.voltage);   // N25-R6s: idx الأصلي يبقى للتعديل/الحذف
   const isAdmin = currentUser && currentUser.role === 'admin';
   if (!filtered.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>'; return; }
   let html = '';
@@ -119,7 +119,7 @@ function _lsLayoutSig(filter, filtered) {
 function _lsPatchCards() {
   const fe = document.getElementById('linesStatusFilter'), body = document.getElementById('linesStatusBody');
   if (!fe || !body || !_ls.html || body.dataset.lsSig == null) return false;
-  const filter = fe.value, filtered = getLinesInfoData().filter(l => filter === 'all' || String(l.voltage) === filter);
+  const filter = fe.value, filtered = sortLineRows(getLinesInfoData().filter(l => filter === 'all' || String(l.voltage) === filter), l => l.name, l => l.voltage);
   if (body.dataset.lsSig !== _lsLayoutSig(filter, filtered) || _ls.html.length !== filtered.length) return false;
   const nodes = Array.prototype.filter.call(body.children, e => e.hasAttribute && e.hasAttribute('data-ls-line'));
   if (nodes.length !== filtered.length) return false;
@@ -139,12 +139,11 @@ function _lsAttr(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').r
 function _lsCardHtml(l) {
   let html = '';
     const vc = l.voltage === 400 ? '#c0392b' : '#1a5276';
-    const _n400 = l.name+' 400 ك.ف', _n132 = l.name+' 132 ك.ف';
-    // N25-R6p: الخط المُهيَّأ من إدارة الخطوط (line_towers_custom) يُخزَّن باسمه المجرّد بلا لاحقة الجهد — كان البحث بلاحقة 400/132 فقط فيعود null و«لم يتم الكشف» رغم وجود حالة محفوظة.
-    //          يُقبل الاسم المجرّد فقط لخط له قائمة أبراج مُهيَّأة وجهده لا يخالف جهد صف «بيانات الخطوط» (لا يُربَط خط بخط آخر بالاسم نفسه).
+    // N25-R6s4: صف «بيانات الخطوط» يُربَط بخطه بنفس جهده فقط: «الاسم + جهد الصف ك.ف» (مدمج أو محفوظ)، ثم الاسم المجرّد لخط مُهيَّأ جهده لا يخالف جهد الصف؛ خط بجهد آخر باسم أساسي مشابه لا يُستعار.
     try { registerConfiguredLineVoltages(); } catch (e) {}
+    const _nv = l.name + ' ' + Number(l.voltage) + ' ك.ف';
     const _plainOk = !!(lineTowersCache[l.name] && lineTowersCache[l.name].length) && (LINE_VOLTAGE[l.name] == null || Number(LINE_VOLTAGE[l.name]) === Number(l.voltage));
-    const lineName = (LINES_DATA[_n400]||lineTowersCache[_n400]) ? _n400 : ((LINES_DATA[_n132]||lineTowersCache[_n132]) ? _n132 : (_plainOk ? l.name : null));
+    const lineName = (LINES_DATA[_nv] || (lineTowersCache[_nv] && lineTowersCache[_nv].length)) ? _nv : (_plainOk ? l.name : null);
     if (lineName && csLiveEnabled() && !loadedLineCacheAt[lineName]) {      // لم يُقرأ بعد: ليس «لم يتم الكشف» ولا «سليم»
       html += '<div class="form-card" data-ls-line="' + _lsAttr(lineName) + '" style="margin-bottom:12px;padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">' +
         '<div style="font-weight:700;font-size:14px;color:#1a5276">' + l.name + '</div>' +
@@ -204,7 +203,7 @@ function renderLinesStatus() {
   const filter = document.getElementById('linesStatusFilter').value;
   const body = document.getElementById('linesStatusBody');
   const data = getLinesInfoData();
-  const filtered = data.filter(l => filter === 'all' || String(l.voltage) === filter);
+  const filtered = sortLineRows(data.filter(l => filter === 'all' || String(l.voltage) === filter), l => l.name, l => l.voltage);
   let html = '';
   const cardHtml = filtered.map(l => _lsCardHtml(l));
   html = cardHtml.join('');

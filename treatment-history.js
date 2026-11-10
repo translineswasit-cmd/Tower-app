@@ -174,12 +174,11 @@ function histReadFilters() {
   return { line: g('depLogFilterLine'), tower: _digitsAscii(g('depLogFilterTower')), from: g('depLogFilterFrom'), to: g('depLogFilterTo') };
 }
 
-function histPopulateLines() {
+function histPopulateLines() {   // N25-R6s3: الفهرس الموحّد؛ خط جديد بلا سجل يظهر وتكون نتيجته فارغة
   const sel = document.getElementById('depLogFilterLine'); if (!sel) return;
-  if (sel.options.length > 1) return;
-  const names = Object.keys(LINES_DATA || {}).sort((a, b) => a.localeCompare(b, 'ar'));
-  sel.innerHTML = '<option value="">-- كل الخطوط --</option>' + names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+  fillLineSelect(sel, { placeholder: '-- كل الخطوط --' });
 }
+try { registerLineSelector('treatHistory', () => { const e = document.getElementById('depLogFilterLine'); if (e && e.options.length > 1) histPopulateLines(); }); } catch (e) {}
 
 function histCardHtml(t) {
 

@@ -105,8 +105,9 @@ async function openReportsPage() {
 
   const lineSet = new Set();
   (fullRecordsCache||[]).forEach(r => { if (r.line_name) lineSet.add(r.line_name); });
-  if (csLiveEnabled()) { _reportLineNames.forEach(n => lineSet.add(n)); Object.keys(LINES_DATA || {}).forEach(n => lineSet.add(n)); }
-  const uniqueLines = [...lineSet].sort((a,b) => a.localeCompare(b, 'ar'));
+  if (csLiveEnabled()) { _reportLineNames.forEach(n => lineSet.add(n)); }
+  lineCatalogNames().forEach(n => lineSet.add(n));   // N25-R6s3: الفهرس الموحّد دائماً (خط جديد بلا سجل يظهر ونتيجته فارغة)
+  const uniqueLines = sortLineNames([...lineSet]);   // N25-R6s
   const linesWrap = document.getElementById('repLinesWrap');
   linesWrap.innerHTML = uniqueLines.map(n => `
     <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
@@ -157,6 +158,20 @@ function onReportLinesAllToggle() {
   if (allChecked) document.querySelectorAll('.repLineChk').forEach(cb => cb.checked = false);
   onReportFilterChange();
 }
+// N25-R6s3: عند تغيّر إعدادات الخطوط والصفحة مفتوحة: يُضاف الخط الجديد لقائمة الخطوط ويبقى ما اختاره المستخدم
+function refreshReportLineChecks() {
+  const wrap = document.getElementById('repLinesWrap'); if (!wrap || !wrap.children.length) return;
+  const boxes = Array.prototype.slice.call(wrap.querySelectorAll('.repLineChk')), have = boxes.map(b => b.value), checked = new Set(boxes.filter(b => b.checked).map(b => b.value));
+  const want = sortLineNames(Array.from(new Set(have.concat(lineCatalogNames()))));
+  if (want.length === have.length && want.every(n => have.indexOf(n) >= 0)) return;
+  wrap.innerHTML = want.map(n => `
+    <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
+      <input type="checkbox" class="repLineChk" value="${n.replace(/"/g,'&quot;')}"${checked.has(n) ? ' checked' : ''} onchange="onReportLinesPick()">
+      <span>${n}</span>
+    </label>`).join('');
+}
+try { registerLineSelector('reports', refreshReportLineChecks); } catch (e) {}
+try { registerLineSelector('hubTreatLines', () => { const v = document.getElementById('hubLinesView'); if (v && v.style.display !== 'none' && typeof hubBrowseType !== 'undefined' && hubBrowseType === 'treat' && !(typeof _hubTreat !== 'undefined' && _hubTreat && _hubTreat.line)) hubTreatRenderLines(); }); } catch (e) {}
 function onReportLinesPick() {
   const anyChecked = Array.from(document.querySelectorAll('.repLineChk')).some(cb => cb.checked);
   document.getElementById('repLinesAll').checked = !anyChecked;
@@ -713,7 +728,7 @@ async function _updateReportResultCountNow() {
   }
   try {   // N25-R5(r2): مرشّح الأبراج بالرقم على خط ترقيمه غير معروف = غير متاح صراحةً (لا مطابقة بالرقم)
     const m = document.querySelector('input[name="repTowersMode"]:checked');
-    if (m && m.value !== 'all') { const ul = csIdentUnavailableLines(getReportSelectedLines() || Object.keys(LINES_DATA || {})); if (ul.length) parts.push('⚠️ ' + CS_IDENT_UNAVAILABLE_TEXT + ' (' + ul.length + ' خط) — لا تطابق أرقام الأبراج هذه الخطوط'); }
+    if (m && m.value !== 'all') { const ul = csIdentUnavailableLines(getReportSelectedLines() || lineCatalogNames()); if (ul.length) parts.push('⚠️ ' + CS_IDENT_UNAVAILABLE_TEXT + ' (' + ul.length + ' خط) — لا تطابق أرقام الأبراج هذه الخطوط'); }
   } catch (e) {}
   if (!mine()) return;
   el.textContent = parts.length ? parts.join(' | ') : 'اختر نوع بيانات واحد على الأقل';
@@ -1301,7 +1316,7 @@ function renderHubLines() {
   if (hubBrowseType === 'treat') return hubTreatRenderLines();
   if (hubBrowseType === 'visual' && _hubV.mode === 'remote') _hubV.lines.forEach(l => { if (l.dates > 0) perLine.set(l.line_name, l.dates); });
   else [...getHubGroups(hubBrowseType).values()].forEach(g => { perLine.set(g.line_name, (perLine.get(g.line_name)||0) + 1); });
-  const lines = [...perLine.keys()].sort((a,b) => a.localeCompare(b, 'ar'));
+  const lines = sortLineNames([...perLine.keys()]);   // N25-R6s
   const list = document.getElementById('hubLinesList');
   if (!lines.length) { list.innerHTML = `<div class="empty-state">لا توجد بيانات ${HUB_TYPE_LABELS[hubBrowseType]} بعد</div>`; return; }
   list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${HUB_TYPE_LABELS[hubBrowseType]} — اختر الخط</div>` +
@@ -1386,7 +1401,7 @@ async function hubTreatOpen() {
 }
 
 function hubTreatRenderLines() {
-  const lines = Object.keys(LINES_DATA || {}).sort((a, b) => a.localeCompare(b, 'ar'));
+  const lines = lineCatalogNames();   // N25-R6s3
   const list = document.getElementById('hubLinesList');
   list.innerHTML = `<div class="page-title" style="grid-column:1/-1;font-size:1.05rem">${HUB_TYPE_LABELS.treat} — اختر الخط</div>` +
     lines.map(line => `<div class="card" onclick="openHubDates('${line.replace(/'/g, "\\'")}')"><span class="icon">⚡</span><span class="label">${escapeHtml(line)}</span><span class="sublabel">عرض تواريخ المعالجات</span></div>`).join('');

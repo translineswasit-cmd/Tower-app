@@ -222,7 +222,7 @@
   function open() { mount(); document.getElementById('topoModal').classList.add('show'); try { dlgScan(); } catch (e) {} }
   function close() { const m = document.getElementById('topoModal'); if (m) m.classList.remove('show'); S = null; _seq++; }
   const box = () => document.getElementById('topoBox');
-  const linesList = () => { try { const set = new Set(Object.keys(LINES_DATA || {})); try { (configuredLineNames() || []).forEach(n => set.add(n)); } catch (e) {} if (S && S.line) set.add(S.line); return Array.from(set).sort((a, b) => a.localeCompare(b, 'ar')); } catch (e) { return []; } };   // N25-R6p: + الخطوط المُهيَّأة من إدارة الخطوط (باسمها المجرّد)
+  const linesList = () => { try { return lineCatalogNames(S && S.line ? [S.line] : []); } catch (e) { return []; } };   // N25-R6s3: الفهرس الموحّد
   const chip = (t, bg, fg) => '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.74rem;background:' + bg + ';color:' + fg + ';margin:2px">' + _te(t) + '</span>';
   const btn = (label, on, extra, dis) => '<button class="btn ' + (extra || 'btn-secondary') + ' btn-sm" ' + (dis ? 'disabled ' : '') + 'onclick="' + on + '" style="margin:3px">' + label + '</button>';
 

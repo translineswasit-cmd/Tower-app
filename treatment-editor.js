@@ -94,26 +94,34 @@ function _treatPreResult(x, line, tower) {
 function populateTreatLines() {
   const sel = document.getElementById('treatLine');
   const _prevTreatLine = sel.value; // v335: نحافظ على الخط المختار إن بقي ضمن القائمة
+  if (csLiveEnabled()) {   // N25-R6s3: الحالة الحيّة = الفهرس الموحّد (مدمجة + مُهيَّأة + ما في الفهرس المحلي)؛ يُعاد البناء فقط إن تغيّر ويُحفظ الاختيار بالاسم
+    const r = fillLineSelect(sel, { placeholder: '-- اختر الخط --', grouped: true, extra: Object.keys(latestRecordsIndex || {}) });
+    if (r.lost) onTreatLineChange();
+    return;
+  }
   sel.innerHTML = '<option value="">-- اختر الخط --</option>';
   const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
   const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
+  const gUnk = document.createElement('optgroup'); gUnk.label = 'جهد غير محدد';
   // نستخدم فهرس "آخر سجل لكل برج" بدل مسح كل التاريخ — أسرع بكثير (لا يكبر مع تراكم الكشوفات
   // القديمة) وأدق أيضاً (يعكس الحالة الحالية فقط، مو كشف قديم انصلح لاحقاً)
   // v335-C6r7: الحالة الحيّة = أسماء كل خطوط التطبيق فوراً دون أي قراءة (لا يُعرف أي خط فيه مغادرات قبل قراءته)؛ الخط المختار يُقرأ وحده في onTreatLineChange
   const linesWithDeps = csLiveEnabled()
-    ? Array.from(new Set(Object.keys(LINES_DATA || {}).concat(Object.keys(latestRecordsIndex)))).sort()
+    ? lineCatalogNames(Object.keys(latestRecordsIndex))   // N25-R6s: ترتيب موحّد
     : Object.keys(latestRecordsIndex).filter(lineName =>
         Object.values(latestRecordsIndex[lineName]).some(r => extractDepsFromRecord(r).some(d => !isTreatedInDB(r.id, d.key, r)))
-      ).sort();
-  linesWithDeps.forEach(name => {
+      );
+  sortLineNames(linesWithDeps).forEach(name => {
     const opt = document.createElement('option');
     opt.value = name; opt.textContent = name;
-    if (name.includes('400')) g400.appendChild(opt); else g132.appendChild(opt);
+    const _v = lineVoltageForOrder(name);   // N25-R6s: لا تخمين — الجهد غير المعروف في مجموعته الأخيرة
+    (_v === 400 ? g400 : (_v === 132 ? g132 : gUnk)).appendChild(opt);
   });
-  sel.appendChild(g400); sel.appendChild(g132);
+  sel.appendChild(g400); sel.appendChild(g132); if (gUnk.children.length) sel.appendChild(gUnk);
   if (_prevTreatLine && [...sel.options].some(o => o.value === _prevTreatLine)) sel.value = _prevTreatLine;
 }
 
+try { registerLineSelector('treatment', () => { const e = document.getElementById('treatLine'); if (e && e.options.length > 1) populateTreatLines(); }); } catch (e) {}
 function onTreatLineChange() {
   _treatPre = null;
   // تغيير الخط يُبطل أي اختيار برج جارٍ جلبه: يُصفَّر السجل وتُخفى البطاقة قبل أي خروج، وتسلسل الاختيار يتقدّم فيُرفض الطلب القديم عند عودته

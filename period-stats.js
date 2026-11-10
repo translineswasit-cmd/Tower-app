@@ -388,7 +388,7 @@
 
   // ----- inspection -----
   function inspSection(d) {
-    const ins = d.insp, lines = ins.by_line || [], mx = Math.max.apply(null, lines.map(l => l.tower_days).concat([1]));
+    const ins = d.insp, lines = (ins.by_line = sortLineRows(ins.by_line || [], l => l.line)), mx = Math.max.apply(null, lines.map(l => l.tower_days).concat([1]));
     const shown = lines.slice(0, S.shownLines);
     const rows = shown.map((l, i) => `<button class="ps-row" data-act="insp-line" data-i="${i}">
 <div class="ps-rt"><span class="nm">${esc(l.line)}${variantBadge(l)}</span><span class="vl">${fmt(l.tower_days)} <small>كشف يومي</small></span></div>
@@ -442,14 +442,14 @@ ${tr.records ? `<button class="ps-more" data-act="treat-all">كل سجلات ا�
     const all = mergedLines(d);
     if (all.length < 2) return '';
     const k = S.sortBy;
-    all.sort((a, b) => (b[k] - a[k]) || (b.insp - a.insp) || String(a.line).localeCompare(String(b.line)));
+    all.sort((a, b) => lineOrderCmp(String(a.line == null ? '' : a.line), String(b.line == null ? '' : b.line)));   // N25-R6s2: ترتيب الخطوط الموحّد (لا ترتيب بالعدد)
     S._cmp = all;
     const mxs = { insp: Math.max.apply(null, all.map(x => x.insp).concat([1])), treat: Math.max.apply(null, all.map(x => x.treat).concat([1])), emg: Math.max.apply(null, all.map(x => x.emg).concat([1])) };
     const shown = all.slice(0, S.shownCmp || 8);
     const bar = (v, mx, c, t) => `<div><div class="t"><span>${t}</span><b>${fmt(v)}</b></div><div class="ps-track"><div class="ps-fill" style="--c:${c};width:${v ? (100 * v / mx).toFixed(1) : 0}%;${v ? '' : 'min-width:0'}"></div></div></div>`;
     const rows = shown.map((l, i) => `<button class="ps-row" data-act="cmp-line" data-i="${i}"><div class="ps-rt"><span class="nm">${esc(l.line || 'غير محدد')}${l.variant ? ' <span class="ps-vb" title="' + esc(l.variant.join(' | ')) + '">⚠ اسم مشابه</span>' : ''}</span></div>
 <div class="ps-tri">${bar(l.insp, mxs.insp, COL.insp, 'كشف')}${bar(l.treat, mxs.treat, COL.treat, 'معالجة')}${bar(l.emg, mxs.emg, COL.emg, 'طارئ')}</div></button>`).join('');
-    const sb = [['insp', 'الكشف'], ['treat', 'المعالجات'], ['emg', 'الطارئ']].map(x => `<button class="${k === x[0] ? 'on' : ''}" data-act="sort" data-k="${x[0]}">ترتيب: ${x[1]}</button>`).join('');
+    const sb = ''; void [['insp', 'الكشف'], ['treat', 'المعالجات'], ['emg', 'الطارئ']].map(x => `<button class="${k === x[0] ? 'on' : ''}" data-act="sort" data-k="${x[0]}">ترتيب: ${x[1]}</button>`).join('');
     return `<div class="ps-sec"><div class="ps-h" style="--c:#2E4057"><i></i><h3>مقارنة الخطوط</h3></div>
 <p class="ps-sub">لكل خط: الكشوفات اليومية والمعالجات والمغادرات الطارئة جنباً إلى جنب (كل عمود مقيس على أعلى خط في عموده). اضغط خطاً لتفاصيله.</p>
 <div class="ps-sortbar">${sb}</div>${rows}${all.length > shown.length ? `<button class="ps-more" data-act="more-cmp">عرض كل الخطوط (${all.length})</button>` : ''}</div>`;
@@ -570,7 +570,7 @@ ${iss.telegrams_ok === false ? '<div class="ps-note"><b>تعذّر قراءة ا
   function openTreatType(d, t) {
     const m = tmeta(t.type), rows = [];
     (d.treat.by_line || []).forEach(l => { const x = (l.types || []).find(y => y.type === t.type); if (x) rows.push({ line: l.line, records: x.records, q: qo(x), variant: l.variant_of }); });
-    rows.sort((a, b) => b.records - a.records || String(a.line).localeCompare(String(b.line)));
+    rows.sort((a, b) => lineOrderCmp(String(a.line), String(b.line)));
     openView({ kind: 'local', title: m.n, sub: fmt(t.records) + ' سجل — الخطوط التي نُفِّذ فيها (اضغط خطاً لأبراجه)', local: rows.map(r => ({
       head: r.line + (r.variant && r.variant.length ? '  ⚠ اسم مشابه' : ''), val: fmt(r.records) + ' سجل', note: qtyPlain(r.q), go: () => treatTowersView(r.line, t.type) })), next: null });
   }

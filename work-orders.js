@@ -37,12 +37,12 @@ function onWoDriverSelectChange() {
   const v = document.getElementById('wo_driver_select').value;
   document.getElementById('wo_driver_custom').style.display = (v === '__custom__') ? 'block' : 'none';
 }
-function populateWoLineDropdown(selectId, withAllOption) {
-  const sel = document.getElementById(selectId);
-  const names = Object.keys(LINES_DATA).sort((a,b) => a.localeCompare(b, 'ar'));
-  sel.innerHTML = (withAllOption ? '<option value="">-- كل الخطوط --</option>' : '<option value="">-- اختر الخط --</option>') +
-    names.map(n => `<option value="${n.replace(/"/g,'&quot;')}">${n}</option>`).join('');
+function populateWoLineDropdown(selectId, withAllOption) {   // N25-R6s3: الفهرس الموحّد؛ الاختيار يُحفظ بالاسم
+  const sel = document.getElementById(selectId); if (!sel) return;
+  fillLineSelect(sel, { placeholder: withAllOption ? '-- كل الخطوط --' : '-- اختر الخط --' });
 }
+function refreshWoLineSelects() { populateWoLineDropdown('wo_line'); populateWoLineDropdown('wo_search_line', true); }
+try { registerLineSelector('workOrders', refreshWoLineSelects); } catch (e) {}
 
 function switchWorkOrderTab(tab) {
   document.getElementById('woTabNewBtn').classList.toggle('active', tab === 'new');

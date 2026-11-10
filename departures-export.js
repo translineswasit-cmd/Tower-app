@@ -260,7 +260,7 @@ async function depxOpenLegacy(wrap) {
   wrap.innerHTML = '<div class="empty-state">⏳ جاري تحميل بيانات المغادرات...</div>';
   try { await Promise.all([loadFullRecordsCache(), loadTreatments()]); } catch (e) { console.warn('[tower-app] فشل تحديث بيانات المغادرات قبل التصدير', e); }
   if (!depxScopeOk(sc)) return;
-  const uniqueLines = [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ar'));
+  const uniqueLines = sortLineNames([...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))]);   // N25-R6s
   const linesWithOpenDeps = uniqueLines.filter(name => getActiveDepartureTowers(name).length > 0);
   if (!linesWithOpenDeps.length) wrap.innerHTML = '<div class="empty-state">✅ لا توجد مغادرات مفتوحة</div>';
   else wrap.innerHTML = linesWithOpenDeps.map(name => `

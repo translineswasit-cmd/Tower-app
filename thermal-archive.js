@@ -182,7 +182,7 @@ thermalArchiveUI = {
   },
   ready() {
     const lineSel = document.getElementById('thFilterLine');
-    const uniqueLines = [...new Set(thermalRecords.map(r => r.line_name).filter(Boolean))].sort();
+    const uniqueLines = sortLineNames([...new Set(thermalRecords.map(r => r.line_name).filter(Boolean))]);   // N25-R6s
     const currentVal = lineSel.value;
     lineSel.innerHTML = '<option value="">-- كل الخطوط --</option>' + uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
     if (uniqueLines.includes(currentVal)) lineSel.value = currentVal;

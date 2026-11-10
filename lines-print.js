@@ -7,7 +7,7 @@
 let _printLinesDataSnapshot = [];
 
 function openPrintLinesModalImpl() {
-  const data = getLinesInfoData();
+  const data = sortLineRows(getLinesInfoData(), l => l.name, l => l.voltage);   // N25-R6s
   _printLinesDataSnapshot = data; // لقطة ثابتة تضمن تطابق data-idx حتى لو تغيّرت البيانات أثناء فتح النافذة
   const wrap = document.getElementById('printLinesWrap');
   if (!data.length) {

@@ -236,24 +236,45 @@ async function renderEmergencyLog() {
     // تحديث فلتر الخطوط
     const lineFilterSel = document.getElementById('emgFilterLine');
     const currentLine = lineFilterSel.value;
-    const uniqueLines = [...new Set(data.map(r => r.line_name).filter(Boolean))].sort();
+    const uniqueLines = sortLineNames([...new Set(data.map(r => r.line_name).filter(Boolean))]);   // N25-R6s
     lineFilterSel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
       uniqueLines.map(n => `<option value="${n}" ${n===currentLine?'selected':''}>${n}</option>`).join('');
 
   } catch { if (emgReqOk(rq)) body.innerHTML = '<div class="empty-state">⚠️ تعذر التحميل</div>'; }
 }
 
-function populateEmgLines() {
-  const sel = document.getElementById('emg_line');
-  sel.innerHTML = '<option value="">-- اختر الخط --</option>';
-  const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
-  const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
-  Object.keys(LINES_DATA).forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name; opt.textContent = name;
-    if (name.includes('400')) g400.appendChild(opt); else g132.appendChild(opt);
-  });
-  sel.appendChild(g400); sel.appendChild(g132);
+function populateEmgLines() {   // N25-R6s3: الفهرس الموحّد؛ الاختيار يُحفظ بالاسم، وبعد تغيّر الإعدادات تُحدَّث أبراج الخط المختار بهويتها
+  const sel = document.getElementById('emg_line'); if (!sel) return;
+  const r = fillLineSelect(sel, { placeholder: '-- اختر الخط --', grouped: true });
+  if (r.lost) { onEmgLineChange(); return; }
+  emgRefreshTowerOptions();
 }
+// أبراج الخط المختار من المصدر الحالي. البرج المختار يبقى فقط إن بقي رقمه وبقيت هويته الدائمة كما التُقطت؛ وإلا يُفرَّغ اختيار البرج ويُنبَّه المستخدم (بقية الحقول تبقى)
+function emgRefreshTowerOptions() {
+  const line = (document.getElementById('emg_line') || {}).value, towerSel = document.getElementById('emg_tower');
+  if (!line || !towerSel) return;
+  const cur = towerSel.value, towers = getLineTowers(line), want = towers.map(t => String(t.num));
+  const have = Array.prototype.map.call(towerSel.options, o => o.value).filter(v => v !== '');
+  if (have.length !== want.length || have.some((v, i) => v !== want[i])) {
+    towerSel.innerHTML = '<option value="">-- اختر رقم البرج --</option>';
+    towers.forEach(t => { const opt = document.createElement('option'); opt.value = t.num; opt.textContent = 'برج ' + t.num; towerSel.appendChild(opt); });
+    towerSel.disabled = false;
+    if (cur && want.indexOf(cur) >= 0) towerSel.value = cur;
+  }
+  if (!cur) return;
+  if (towerSel.value !== cur) { _emgPickSeq++; _emgPick = null; showToast('⚠️ البرج الذي اخترته لم يعد ضمن الخط بعد تحديث الترقيم — اختر البرج من جديد', 'error'); return; }
+  const prev = _emgPick, my = ++_emgPickSeq;   // إعادة التحقق من هوية البرج المختار بعد تحديث الترقيم
+  (async () => {
+    let sn = null;
+    try { if (navigator.onLine !== false) await csLineIdentLoad(line); sn = csIdentSnap(line, String(cur), { mapOnly: true }); } catch (e) {}
+    if (my !== _emgPickSeq) return;
+    if (prev && prev.snap && sn && prev.snap.tower_id && sn.tower_id && prev.snap.tower_id !== sn.tower_id) {
+      _emgPick = null; towerSel.value = '';
+      showToast('⚠️ تغيّر ترقيم هذا الخط: الرقم ' + cur + ' صار لبرج آخر — اختر البرج من جديد قبل الحفظ', 'error'); return;
+    }
+    _emgPick = { line, num: String(cur), snap: sn || (prev && prev.snap) || null };
+  })();
+}
+try { registerLineSelector('emergency', () => { if (document.getElementById('emg_line')) populateEmgLines(); }); } catch (e) {}
 
 (window.__featModules = window.__featModules || {}).emg = true;

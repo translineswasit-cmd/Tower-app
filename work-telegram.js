@@ -96,18 +96,10 @@ function tgReqOk(r) { return featEntryOk(r.tok) && r.depK === (_featSeq.dep || 0
 // ========================
 // WORK TELEGRAM (برقية العمل)
 // ========================
-function populateTelegramLines() {
-  const sel = document.getElementById('tg_line');
-  sel.innerHTML = '<option value="">-- اختر الخط --</option>';
-  const g400 = document.createElement('optgroup'); g400.label = '400 ك.ف';
-  const g132 = document.createElement('optgroup'); g132.label = '132 ك.ف';
-  Object.keys(LINES_DATA).forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name; opt.textContent = name;
-    if (name.includes('400')) g400.appendChild(opt); else g132.appendChild(opt);
-  });
-  sel.appendChild(g400); sel.appendChild(g132);
+function populateTelegramLines() {   // N25-R6s3: الفهرس الموحّد (مجموعات 400/132/غير محدد)؛ الاختيار يُحفظ بالاسم
+  fillLineSelect(document.getElementById('tg_line'), { placeholder: '-- اختر الخط --', grouped: true });
 }
+try { registerLineSelector('telegram', () => { if (document.getElementById('tg_line')) populateTelegramLines(); }); } catch (e) {}
 
 function switchTelegramSubTab(tab, btn) {
   document.querySelectorAll('#depTelegramView .dep-tab').forEach(b => b.classList.remove('active'));
@@ -290,7 +282,7 @@ async function renderTelegramLog() {
 
     const lineFilterSel = document.getElementById('tgFilterLine');
     const currentLine = lineFilterSel.value;
-    const uniqueLines = [...new Set(data.map(r => r.line_name).filter(Boolean))].sort();
+    const uniqueLines = sortLineNames([...new Set(data.map(r => r.line_name).filter(Boolean))]);   // N25-R6s
     lineFilterSel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
       uniqueLines.map(n => `<option value="${n}" ${n===currentLine?'selected':''}>${n}</option>`).join('');
 

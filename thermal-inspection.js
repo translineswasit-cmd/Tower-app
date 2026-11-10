@@ -103,11 +103,61 @@
   </div>
 `);
   document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
-  const thSel = document.getElementById('th_line_name');
-  Object.keys(LINES_DATA).forEach(name => {
-    const o = document.createElement('option'); o.value = name; o.textContent = name; thSel.appendChild(o);
-  });
+  refreshThermalLineSelect();
 })();
+
+// N25-R6s: قائمة خط «كشف حراري جديد» = الخطوط المدمجة + الخطوط المُهيَّأة (line_towers_custom / lines_info) بنفس اكتشاف قائمة الكشف، بلا اشتراط تاريخ حراري سابق ولا لاحقة جهد.
+// السبب الجذري: القائمة كانت تُبنى مرة واحدة عند تحميل هذه الوحدة من LINES_DATA الثابتة فقط، بلا اكتشاف للخطوط المُهيَّأة ولا إعادة بناء بعد وصول الإعدادات.
+function refreshThermalLineSelect() {   // N25-R6s3: الفهرس الموحّد (lineCatalogNames) + تسجيل في مُحدِّثات القوائم
+  const sel = document.getElementById('th_line_name'); if (!sel) return;
+  try { registerConfiguredLineVoltages(); } catch (e) {}
+  fillLineSelect(sel, { placeholder: '-- اختر الخط --' });
+  try { refreshThermalPointOptions(); } catch (e) {}
+}
+try { registerLineSelector('thermal', refreshThermalLineSelect); } catch (e) {}
+// أبراج الخط الجاري بعد وصول إعدادات جديدة (إعادة ترقيم/إدراج/إخراج): تُبنى الخيارات من الأبراج الحالية دون مسّ ما كُتب.
+// N25-R6s2: النقطة المختارة وهويتها الملتقطة وقراءاتها تبقى كما هي إن بقيت هويتها وأهليتها ووصفها كما هي. وإن تغيّر شيء منها (حُذف، لم يعد برج شد، تغيّر وصفه، أو صار الرقم لبرج آخر بهوية دائمة مختلفة):
+// تُحفظ القراءات المكتوبة، ويُفرَّغ الاختيار، وتظهر رسالة مراجعة، ويُمنع الحفظ حتى يختار المستخدم النقطة صراحةً من القائمة.
+let _thReview = null, _thChk = null, _thChkSeq = 0;
+function thermalReviewShow(msg) {
+  const ptSel = document.getElementById('th_point'); if (!ptSel) return;
+  let el = document.getElementById('thPickReviewNote');
+  if (!el) { el = document.createElement('div'); el.id = 'thPickReviewNote'; el.setAttribute('role', 'alert'); el.style.cssText = 'margin:8px 0;padding:10px 12px;background:#FFFAF0;border:1.5px solid #F6AD55;border-radius:8px;font-size:0.82rem;color:#7B341E;line-height:1.7'; ptSel.parentNode.insertBefore(el, ptSel.nextSibling); }
+  el.textContent = msg; el.style.display = msg ? 'block' : 'none';
+}
+function thermalReviewSet(num, why) {
+  _thReview = { num, why };
+  const ptSel = document.getElementById('th_point'); if (ptSel) ptSel.value = '';
+  _thPickSeq++; _thPick = null;
+  thermalReviewShow('⚠️ راجع اختيار البرج: القياسات التي كتبتَها لـ «برج ' + num + '» ما زالت محفوظة هنا، لكن ' + why + '. اختر النقطة الصحيحة من القائمة صراحةً (القياسات لن تُمسح) ثم احفظ — لا يُحفظ القياس على برج آخر دون اختيارك.');
+}
+function thermalReviewClear() { _thReview = null; thermalReviewShow(''); }
+function refreshThermalPointOptions() {
+  const ptSel = document.getElementById('th_point'); if (!ptSel || !currentThermalLine || !activeThermalSessions[currentThermalLine]) return;
+  const form = document.getElementById('thermalPointForm'); if (!form || form.style.display === 'none') return;
+  const opts = buildThermalPointOptions(currentThermalLine);
+  const have = Array.prototype.map.call(ptSel.options, o => o.value + '|' + o.textContent).filter(v => v.indexOf('|') > 0 && v[0] !== '|');
+  const want = opts.map(o => o.value + '|' + o.label);
+  if (have.length === want.length && have.every((v, i) => v === want[i])) return;
+  const prevVal = ptSel.value, prevTxt = ptSel.selectedIndex > 0 ? ptSel.options[ptSel.selectedIndex].textContent : '';
+  ptSel.innerHTML = '<option value="">-- اختر --</option>' + opts.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+  if (_thReview) return;                                  // مراجعة قائمة أصلاً: لا شيء مختار
+  if (!prevVal) return;                                   // لا نقطة مختارة: لا شيء يُحمى
+  const same = opts.find(o => o.value === prevVal), [kind, lab] = prevVal.split('::'), num = parseInt(lab), line = currentThermalLine;
+  if (same) ptSel.value = prevVal;                        // الاختيار يبقى (بلا حدث change، فلا يُعاد تعبئة القراءات)
+  if (kind === 'LINE_ENTRY') { if (!same) thermalReviewSet(lab, 'مدخل الخط هذا لم يعد في قائمة النقاط'); return; }
+  if (!same) { thermalReviewSet(num, 'هذا البرج لم يعد ضمن نقاط الكشف الحراري لهذا الخط (حُذف أو لم يعد برج شد)'); return; }
+  if (same.label !== prevTxt) { thermalReviewSet(num, 'تغيّر وصف/نوع هذا البرج في إعداد الخط'); return; }
+  const pk = _thPick, my = ++_thChkSeq;                   // تغيّر الرقم لبرج آخر؟ تُحدَّث خريطة الهويات ثم تُقارَن الهوية الملتقطة بصاحب الرقم الآن
+  const chk = (async () => {
+    if (navigator.onLine) { try { await csLineIdentLoad(line); } catch (e) {} }
+    if (my !== _thChkSeq || currentThermalLine !== line || document.getElementById('th_point').value !== prevVal) return;
+    const cur = csIdentSnap(line, String(num), { mapOnly: true }), had = pk && pk.line === line && pk.num === num && pk.snap && pk.snap.tower_id;
+    if (had) { if (!cur || cur.blocked || cur.tower_id !== pk.snap.tower_id) thermalReviewSet(num, 'رقم ' + num + ' صار الآن لبرج آخر (هوية دائمة مختلفة) أو تعذّر التحقق منه بعد تحديث الترقيم'); }
+    else if (cur && cur.tower_id && !cur.blocked) thermalReviewSet(num, 'ترقيم الخط تغيّر (لم تكن هوية البرج ملتقطة وقت الاختيار)');
+  })();
+  _thChk = chk.finally(() => { if (_thChk === chkP) _thChk = null; }); const chkP = _thChk;
+}
 
 let thermalSession = null;   // { line_name, inspection_date, ambient_temp } -- derived from current active line
 let activeThermalSessions = {};  // { line_name: { inspection_date, ambient_temp } }
@@ -115,6 +165,7 @@ let currentThermalLine = null;
 try { activeThermalSessions = JSON.parse(localStorage.getItem('active_thermal_sessions') || '{}'); } catch { activeThermalSessions = {}; }
 
 function showThermalNewImpl() {
+  try { refreshThermalLineSelect(); } catch (e) {}
   pushLevel(showThermalHome);
   thermalShowView('thermalNewView');
   renderActiveThermalTabs();
@@ -138,6 +189,7 @@ function isSingleEntryLine(lineName) {
   return SINGLE_ENTRY_LINES.some(name => lineName && lineName.startsWith(name));
 }
 function buildThermalPointOptions(lineName) {
+  try { registerConfiguredLineVoltages(); } catch (e) {}   // N25-R6s: جهد الخط المُهيَّأ من «بيانات الخطوط» قبل تصفية أبراج الشد
   const towers = getLineTowers(lineName);
   const voltage = LINE_VOLTAGE[lineName];
   const [stA, stB] = lineEndpoints(lineName);
@@ -246,11 +298,13 @@ async function thermalCapturePick(line, label) {
 }
 function onThermalPointChange() {
   const v = document.getElementById('th_point').value;
+  const hadReview = !!_thReview; if (v && hadReview) thermalReviewClear();   // اختيار صريح بعد رسالة المراجعة: يلتقط صاحب الرقم الحالي، والقراءات المكتوبة تبقى
   try { const [_k, _l] = v.split('::'); if (v && _k !== 'LINE_ENTRY' && thermalSession) thermalCapturePick(thermalSession.line_name, _l); else { _thPickSeq++; _thPick = null; } } catch (e) {}
   const isLineEntry = v.startsWith('LINE_ENTRY::');
   document.getElementById('thermalReadingsBox').style.display = (v && !isLineEntry) ? 'block' : 'none';
   document.getElementById('lineEntryReadingsBox').style.display = (v && isLineEntry) ? 'block' : 'none';
-  if (v && !isLineEntry) {
+  if (hadReview) { /* مسودة القراءات محفوظة: لا تعبئة تلقائية فوقها */ }
+  else if (v && !isLineEntry) {
     autoFillThermalBoxes(['th_r1','th_r2','th_s1','th_s2','th_t1','th_t2']);
   } else if (v && isLineEntry) {
     autoFillThermalBoxes(['le_r_landing','le_r_wt_in','le_r_wt_out','le_r_busbar',
@@ -263,7 +317,7 @@ function resetThermalReadingInputs() {
   ['le_r_landing','le_r_wt_in','le_r_wt_out','le_r_busbar',
    'le_s_landing','le_s_wt_in','le_s_wt_out','le_s_busbar',
    'le_t_landing','le_t_wt_in','le_t_wt_out','le_t_busbar'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  document.getElementById('th_point').value = ''; _thPickSeq++; _thPick = null;
+  document.getElementById('th_point').value = ''; _thPickSeq++; _thPick = null; _thChkSeq++; thermalReviewClear();
   document.getElementById('thermalReadingsBox').style.display = 'none';
   document.getElementById('lineEntryReadingsBox').style.display = 'none';
 }
@@ -275,6 +329,8 @@ function thermalIdentityMsg(c) {
            tower_retired: 'هذا البرج أُخرج من الخدمة', unknown_tower_id: 'هوية البرج غير معروفة للخادم', future_topology_revision: 'نسخة ترقيم الخط أحدث من علم الخادم — أعد المحاولة بعد المزامنة' })[c] || c;
 }
 async function saveThermalPoint() {
+  if (_thChk) { try { await _thChk; } catch (e) {} }   // فحص هوية معلّق بعد تحديث الترقيم يُنهى قبل أي حفظ
+  if (_thReview) { showToast('⚠️ راجع اختيار البرج أولاً: اختر النقطة صراحةً من القائمة (القراءات محفوظة)', 'error'); return; }
   const ptVal = document.getElementById('th_point').value;
   if (!ptVal) { showToast('⚠️ اختر البرج أو المحطة أولاً', 'error'); return; }
 

@@ -49,7 +49,7 @@
 // ========================
 function openExportModalImpl() {
   const sel = document.getElementById('exportFilterLine');
-  const uniqueLines = [...new Set(records.map(r => r.line_name).filter(Boolean))].sort();
+  const uniqueLines = sortLineNames([...new Set(records.map(r => r.line_name).filter(Boolean))]);   // N25-R6s
   sel.innerHTML = '<option value="">-- كل الخطوط --</option>' +
     uniqueLines.map(n => `<option value="${n}">${n}</option>`).join('');
 

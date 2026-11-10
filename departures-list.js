@@ -44,11 +44,13 @@ function showDepLinesList() {
 // A failed / offline attempt SETTLES (error shown, last index kept as unverified) and waits for an explicit retry or the next deliberate entry - rendering never starts a request while an error is set.
 let _depIdx = { data: null, at: null, wgen: -1, tried: -2, last: 0, req: 0, loading: false, error: null };
 function depIndexReset() { _depIdx = { data: null, at: null, wgen: -1, tried: -2, last: 0, req: (_depIdx.req || 0) + 1, loading: false, error: null }; }   // req keeps growing: an in-flight reply of the old account is ignored
-function depResolveLine(name) {
-  if (typeof LINES_DATA === 'undefined' || !name) return null;
-  if (LINES_DATA[name]) return name;
+function depResolveLine(name) {   // N25-R6s3: الفهرس الموحّد (مدمجة + مُهيَّأة)؛ الملتبس أو المجهول لا يُخمَّن
+  if (!name) return null;
+  const cat = (typeof lineCatalogNames === 'function') ? lineCatalogNames() : (typeof LINES_DATA !== 'undefined' ? Object.keys(LINES_DATA) : []);
+  if (cat.indexOf(name) >= 0) return name;
   const volt = n => { const m = String(n).match(/\b(400|132)\s*ك\.ف\s*$/); return m ? m[1] : null; }, bare = n => String(n).replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim();
-  const hits = Object.keys(LINES_DATA).filter(k => bare(k) === bare(name) && (!volt(name) || volt(k) === volt(name)));
+  const kv = k => volt(k) || (typeof lineVoltageForOrder === 'function' && lineVoltageForOrder(k) ? String(lineVoltageForOrder(k)) : null);
+  const hits = cat.filter(k => bare(k) === bare(name) && (!volt(name) || kv(k) === volt(name)));
   return hits.length === 1 ? hits[0] : null;   // ambiguous or unknown: never guess a line
 }
 // merge server rows that resolve to the same application line; rows that resolve to none are kept (shown, not clickable)
@@ -100,8 +102,8 @@ function renderDepLanding() {
   if (_depIdx.error) html += `<div style="margin-bottom:10px;padding:8px 12px;background:#FFF5F5;border:1px solid #FC8181;border-radius:8px;font-size:0.78rem;color:#822727">${_depIdx.error === 'offline' ? '📴 دون اتصال' : '⚠️ تعذّر تحديث فهرس المغادرات'}${d ? ' — المعروض آخر فهرس مقروء' : ' — لا يوجد فهرس مقروء بعد'}</div>`;
   if (!d) { body.innerHTML = html + (_depIdx.error ? '' : '<div class="empty-state">⏳ جارٍ قراءة فهرس المغادرات…</div>'); return; }
   const rows = depIndexRows(d);
-  const dep = rows.filter(r => r.towers > 0).sort((a, b) => b.towers - a.towers || a.line.localeCompare(b.line, 'ar'));
-  const unkOnly = rows.filter(r => r.towers === 0 && r.uninitialised > 0).sort((a, b) => b.uninitialised - a.uninitialised || a.line.localeCompare(b.line, 'ar'));
+  const dep = rows.filter(r => r.towers > 0).sort((a, b) => lineOrderCmp(a.line, b.line));   // N25-R6s2: ترتيب الخطوط الموحّد؛ العدد يبقى معروضاً
+  const unkOnly = rows.filter(r => r.towers === 0 && r.uninitialised > 0).sort((a, b) => lineOrderCmp(a.line, b.line));
   const tot = d.totals || {}, unkTot = Number(tot.uninitialised_towers) || 0, incTot = Number(tot.incomplete_towers) || 0;
   const open = (r) => r.known ? ` onclick="openDepLineTowers(${JSON.stringify(r.line).replace(/"/g, '&quot;')})" style="cursor:pointer"` : '';
   const chip = (txt, bg, fg) => `<span style="background:${bg};color:${fg};padding:2px 9px;border-radius:20px;font-size:0.72rem;font-weight:700">${txt}</span>`;
@@ -129,7 +131,7 @@ function renderDepLinesList(preliminary) {
   const body = document.getElementById('depLinesListBody');
   if (preliminary) {
     // عرض فوري بأسماء الخطوط من البيانات المحلية (بدون شبكة) — رسالة مؤقتة لحد ما تكتمل الأعداد الحقيقية
-    const names = Object.keys(LINES_DATA).sort((a,b) => a.localeCompare(b, 'ar'));
+    const names = lineCatalogNames();   // N25-R6s3
     body.innerHTML = names.map(lineName => `
       <div class="form-card" style="margin-bottom:10px;padding:14px;border-right:4px solid #CBD5E0">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -142,7 +144,7 @@ function renderDepLinesList(preliminary) {
   const live = csLiveEnabled();
   // الحالة الحيّة: كل خطوط التطبيق تظهر؛ الخط غير المقروء بعد يُعرض «لم يُقرأ» لا «سليم»
   const allRead = live && !!fullRecordsCacheLoadedAt && fullRecordsCache.length > 0;   // an explicit all-lines read has completed (and no later write invalidated it)
-  const uniqueLines = (live && !allRead) ? Object.keys(LINES_DATA).sort() : [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))].sort();
+  const uniqueLines = sortLineNames((live && !allRead) ? lineCatalogNames() : [...new Set(fullRecordsCache.map(r => r.line_name).filter(Boolean))]);   // N25-R6s3
 
   if (!uniqueLines.length) { body.innerHTML = '<div class="empty-state">لا توجد بيانات</div>'; return; }
   const isLoaded = (ln) => !live || allRead || !!loadedLineCacheAt[ln];
@@ -161,8 +163,8 @@ function renderDepLinesList(preliminary) {
     return { lineName, count: activeTowers.length, elCount, mCount, fireCount, washCount, unk: live ? csUnknownCount(((_csLineCov[lineName] || {}).sum || {}).coverage) : 0 };
   });
 
-  // الخطوط اللي فيها مغادرات تظهر أول، مرتبة تنازلياً، والسليمة بالأسفل
-  rows.sort((a,b) => b.count - a.count || a.lineName.localeCompare(b.lineName,'ar'));
+  // N25-R6s2: ترتيب الخطوط الموحّد (400 ثم 132 ثم غير المعروف، أبجدياً داخل كل مجموعة)؛ العدّادات تبقى معروضة بكل بطاقة
+  rows.sort((a,b) => lineOrderCmp(a.lineName, b.lineName));
 
   const allBtn = false ? `<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-secondary btn-sm" onclick="loadAllDepartureLines()" id="depAllLinesBtn">📊 قراءة أعداد كل الخطوط</button><span style="font-size:0.74rem;color:#718096">اضغط خطاً لقراءته وحده، أو اقرأ الكل بطلب صريح.</span></div>` : '';
   body.innerHTML = allBtn + rows.map(({lineName, count, elCount, mCount, fireCount, washCount, notLoaded, unk}) => {

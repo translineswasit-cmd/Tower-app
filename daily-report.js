@@ -339,7 +339,7 @@ function populateAddLineSelect() {
     .map(([key, g]) => `<option value="${key}">📦 ${g.label} (${g.lines.length} خطوط)</option>`).join('');
   sel.innerHTML = '<option value="">-- اختر خط أو مجموعة لإضافتها --</option>' +
     `<optgroup label="إضافة جماعية">${bulkOptions}</optgroup>` +
-    `<optgroup label="خط منفرد">${linesInfoCache.map(l => `<option value="${l.name}">${l.name} (${l.voltage} ك.ف)</option>`).join('')}</optgroup>`;
+    `<optgroup label="خط منفرد">${sortLineRows(linesInfoCache, l => l.name, l => l.voltage).map(l => `<option value="${l.name}">${l.name} (${l.voltage} ك.ف)</option>`).join('')}</optgroup>`;
 }
 
 function addBulkDailyReportLines(key) {

@@ -83,10 +83,7 @@
     </div>
   </div>
 `);
-  const tfSel = document.getElementById('tf_line_name');
-  Object.keys(LINES_DATA).forEach(name => {
-    const o = document.createElement('option'); o.value = name; o.textContent = name; tfSel.appendChild(o);
-  });
+  refreshTfLineSelect();
 })();
 
 // ========================
@@ -106,8 +103,17 @@ function showThermalOfficialFormNewImpl() {
   padOfficialFormRowsToMinimum();
 }
 
+// N25-R6s3: قائمة الخط من الفهرس الموحّد (مدمجة + مُهيَّأة)؛ الاختيار يُحفظ بالاسم، وأبراج الشد المتاحة تُعاد من المصدر الحالي دون المساس بصفوف استمارة قيد التحرير
+function refreshTfLineSelect() {
+  const sel = document.getElementById('tf_line_name'); if (!sel) return;
+  const r = fillLineSelect(sel, { placeholder: '-- اختر الخط --' });
+  const line = sel.value;
+  try { if (r.lost) tfTensionTowerOptions = []; else if (line) tfTensionTowerOptions = getTensionTowersForLine(line); } catch (e) {}
+}
+try { registerLineSelector('officialForm', refreshTfLineSelect); } catch (e) {}
 function getWireTypeForLine(lineName) {
-  const li = linesInfoCache.find(l => lineName.startsWith(l.name));
+  const _b = (typeof _lineBareName === 'function') ? _lineBareName(lineName) : lineName;   // N25-R6s3: الاسم نفسه أولاً ثم الأساسي؛ لا مطابقة ببادئة خط آخر
+  const li = linesInfoCache.find(l => l.name === lineName) || linesInfoCache.find(l => l.name === _b && (typeof lineVoltageForOrder !== 'function' || !lineVoltageForOrder(lineName) || Number(l.voltage) === lineVoltageForOrder(lineName))) || linesInfoCache.find(l => lineName.startsWith(l.name));
   return li ? (li.wire_type || '') : '';
 }
 // نفس منطق "الأبراج التي تستحق فحص حراري" المستخدم بالكشف العادي (أبراج الشد فقط)

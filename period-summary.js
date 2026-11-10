@@ -55,7 +55,7 @@ async function generatePeriodSummaryReport() {
       });
     });
 
-    periodSummaryData = Object.values(byLine).sort((a,b) => a.line_name.localeCompare(b.line_name, 'ar'));
+    periodSummaryData = Object.values(byLine).sort((a,b) => lineOrderCmp(a.line_name, b.line_name));
     renderPeriodSummary();
     document.getElementById('drpResultCount').textContent = `📅 عدد التقارير اليومية المشمولة: ${days.length} | عدد الخطوط المطابقة: ${periodSummaryData.length}`;
     document.getElementById('drPeriodActions').style.display = periodSummaryData.length ? 'flex' : 'none';

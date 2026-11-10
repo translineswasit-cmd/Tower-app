@@ -40,10 +40,10 @@ function thVisible() { const v = document.getElementById('towerHistoryView'); re
 function thLive(st) { return !!st && st === _thStore && _thSessOk(st.sess) && thVisible(); }
 
 // صيغ اسم الخط التي يعتبرها الخادم هوية واحدة (tower_cs.line_candidates): الاسم، بدون «400/132 ك.ف»، ومع كل منهما — مرتّبة بلا تكرار
-function thLineCands(name) {
+function thLineCands(name) {   // N25-R6s4: الاسم نفسه + الصيغ المثبتة أنها نفس الخط بنفس الجهد فقط (lineAliasKeys)؛ لا صيغة جهد آخر
   const t = String(name == null ? '' : name); if (!t) return [];
-  const bare = t.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim();
-  const out = []; [t, bare, bare + ' 400 ك.ف', bare + ' 132 ك.ف'].forEach(x => { if (x && out.indexOf(x) < 0) out.push(x); });
+  const keys = (typeof lineAliasKeys === 'function') ? lineAliasKeys(t) : [t], out = [];
+  keys.forEach(x => { if (x && out.indexOf(x) < 0) out.push(x); });
   return out;
 }
 
