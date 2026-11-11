@@ -268,46 +268,69 @@ function editLineImpl(idx) {
   { const sb = document.getElementById('lm_save_btn'); if (sb) sb.disabled = !!_linesOp; }
 }
 
+// N25-R6u: حذف خط = أرشفته على الخادم بعملية ذرّية واحدة (الأبراج بهوياتها وتاريخها وأرقامها السابقة تبقى بالأرشيف؛ إعداد الخط وصفّه يغادران القوائم التشغيلية في المعاملة نفسها).
+// قبل التأكيد: معاينة الأثر من الخادم. تأكيد واحد + سبب. الانقطاع يُبقي النافذة والسبب؛ إعادة المحاولة تستعمل المعرّف نفسه فلا يتكرر الحذف.
+const LINE_DEL_MSG = {
+  line_voltage_mismatch: 'صف الخط المطلوب بجهدٍ آخر غير جهد هذا الخط (132/400) — لم يتغيّر شيء، حدّث قائمة الخطوط وأعد المحاولة', line_voltage_ambiguous: 'تعذّر إثبات جهد هذا الخط على الخادم (اسم مشترك بين 132 و400 ك.ف) — لم يتغيّر شيء', builtin_line_not_deletable: 'الخطوط المدمجة في التطبيق غير مدعومة بالحذف — لا يُحذف إلا خط أُضيف من التطبيق وله قائمة أبراج محفوظة',
+  topology_gate_closed: 'بوابة تغيير الأبراج مغلقة على الخادم — لا يمكن حذف الخط الآن', line_not_found: 'الخط غير موجود على الخادم', line_info_mismatch: 'صف الخط تغيّر على الخادم — حدّث قائمة الخطوط ثم أعد المحاولة',
+  impact_changed: 'تغيّر أثر الحذف منذ المعاينة — لم يُحذف شيء؛ أعد الحذف ليُعاد عرض الأثر', topology_busy: 'تغيير ترقيم جارٍ على الخادم — أعد المحاولة بعد قليل', line_delete_failed_rolled_back: 'تعذّر الحذف وأُلغيت العملية كاملة — لم يتغيّر شيء',
+  op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', forbidden: 'الحذف من صلاحيات المدير فقط', invalid_session: 'انتهت الجلسة — سجّل الدخول ثم أعد المحاولة', invalid: 'بيانات غير صالحة'
+};
+function _topoKeyFor(nm, v) {   // مفتاح الخط عند الخادم: الاسم المجرّد للخط المُهيَّأ، أو «الاسم + الجهد ك.ف» للخط المدمج
+  if (!nm) return null;
+  const cands = [nm + ' ' + v + ' ك.ف', nm, nm.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim() + ' ' + v + ' ك.ف'];
+  return cands.find(n => (typeof LINES_DATA !== 'undefined' && LINES_DATA[n]) || (lineTowersCache[n] && lineTowersCache[n].length)) || nm;
+}
+const _lineDelOps = {};   // معرّف عملية ثابت لكل (خط، أثر): إعادة المحاولة بعد انقطاع لا تكرر الحذف
 async function deleteLineImpl(idx) {
   if (currentUser.role !== 'admin') { showToast('⛔ الحذف من صلاحيات المدير فقط', 'error'); return; }
-  if (_linesOp) { showToast('⏳ عملية حفظ/حذف جارية — انتظر انتهاءها', 'error'); return; }
+  if (_linesOp || _atomicBusy) { showToast('⏳ عملية حفظ/حذف جارية — انتظر انتهاءها', 'error'); return; }
   const line = getLinesInfoData()[idx];
   if (!line) return;
-  if (!confirm(`حذف الخط "${line.name}"؟\nسيُحذف معه قائمة أبراجه وإعداداته الفنية.\nملاحظة: الكشوفات والمغادرات المسجّلة سابقاً لا تُحذف.`)) return;
-  const target = { idx: line.idx, name: line.name };
-  const op = linesOpBegin('delete'); if (!op) return;
-  let configGone = false;
-  const fail = (code) => showToast('⚠️ لم يُحذف الخط «' + target.name + '»: ' + linesSaveMsg(code) + (configGone ? ' — حُذفت إعدادات الخط/أبراجه فقط، أعد المحاولة لإكمال الحذف' : ''), 'error');
-  try {
-    // خط الأساس الموثوق أولاً (قبل أي حذف لإعداد الخط): فشل قراءته = لا شيء يُرسل
-    const bl = await linesFetchBaseline();
-    if (!linesOpLive(op)) return;
-    if (!bl.ok) { fail(bl.code); return; }
-    const pos = bl.rows.findIndex(r => r && r.idx === target.idx && r.name === target.name);
-    if (pos < 0) { linesPublishBaseline(bl.rows, op.sess); fail('row_missing'); return; }
-    const next = bl.rows.filter((_, i) => i !== pos);
-    const bad = validateLinesRows(next);
-    if (bad) { fail(bad); return; }
-    // v335-C4: إعداد الخط الخادمي يُحذف أولاً بـRPC (يُرفض إن كان لأبراجه حالة مسجَّلة)؛ فشله يوقف الحذف كله
-    if (lineTowersCache[target.name] !== undefined || lineSettingsCache[target.name] !== undefined) {
-      const r = await opsDeleteLineConfig(target.name);
-      if (!linesOpLive(op)) return;
-      if (!(r && r.ok === true)) { showToast('⚠️ لم يُحذف الخط «' + target.name + '»: ' + (OPS_CODE_MSG[r && r.code] || (r && r.code) || 'خطأ'), 'error'); return; }
-      delete lineTowersCache[target.name];
-      delete lineSettingsCache[target.name];
-      configGone = true;
+  const target = { idx: line.idx, name: line.name, voltage: Number(line.voltage) || null };
+  const key = _topoKeyFor(target.name, target.voltage);
+  if (typeof LINES_DATA !== 'undefined' && (LINES_DATA[target.name] || LINES_DATA[target.name + ' ' + target.voltage + ' ك.ف'])) {
+    showToast('⛔ «' + target.name + '» خط مدمج في التطبيق: لا يُحذف من القوائم (يمكن تعديل بياناته فقط). الحذف للخطوط المُضافة من شاشة «إضافة خط».', 'error'); return;
+  }
+  const fail = (msg) => showToast('⚠️ لم يُحذف الخط «' + target.name + '»: ' + msg, 'error');
+  if (!navigator.onLine || !csLiveEnabled()) { fail('حذف الخط يُنفَّذ على الخادم بعملية واحدة ويحتاج اتصالاً — لم يتغيّر شيء'); return; }
+  const info = { idx: target.idx };
+  let prev;
+  { const op = linesOpBegin('delete'); if (!op) return;
+    try { prev = await csCall('app_line_delete_preview', { p_line_name: key, p_info: info }); } finally { linesOpEnd(op); } }
+  if (!prev || prev.stale) return;
+  if (prev.net || prev.code === 'network') { fail('لا يوجد اتصال بالخادم لمعاينة الأثر — لم يتغيّر شيء'); return; }
+  if (!prev.facts) { fail(LINE_DEL_MSG[prev.code] || ('رفض الخادم (' + (prev.code || 'خطأ') + ')')); return; }
+  const f = prev.facts, esc = _atEsc;
+  if (prev.ok !== true) { opsAtomicModal({ title: '⛔ لا يمكن حذف هذا الخط الآن', bodyHtml: '<div style="color:#C53030">' + esc(LINE_DEL_MSG[prev.code] || prev.code) + '</div><p style="font-size:0.8rem;color:#4A5568;margin-top:8px">لم يتغيّر شيء.</p>', noConfirm: true }); return; }
+  const body = '<p style="margin:0 0 8px">الخط: <b>' + esc(target.name) + '</b>' + (target.voltage ? ' — ' + target.voltage + ' ك.ف' : '') + '</p>' +
+    '<div style="font-weight:700">الأثر على البيانات المرتبطة (يُنفَّذ بعملية واحدة أو لا شيء):</div><div style="font-size:0.85rem">' +
+    '• الأبراج: ' + f.tower_count + (f.towers_with_state ? ' (منها ' + f.towers_with_state + ' لها حالة مسجَّلة)' : '') + ' — تُؤرشف بهوياتها الدائمة وأرقامها السابقة تحت «~retired~»؛ لا تُحذف<br>' +
+    '• الكشف البصري: ' + f.inspections + ' سجل (' + f.inspection_days + ' يوم كشف)' + (f.unlinked_inspections ? ' + ' + f.unlinked_inspections + ' سجل قديم غير مربوط بهوية' : '') + ' — تبقى محفوظة<br>' +
+    '• المعالجات: ' + f.treatments + ' — الكشف الحراري: ' + f.thermal + ' — المغادرات الطارئة: ' + f.departures + (f.telegrams ? ' — برقيات العمل: ' + f.telegrams : '') + ' — تبقى كلها محفوظة<br>' +
+    '• إعداد الخط وقائمة أبراجه يُحذفان من القوائم التشغيلية، ويختفي الخط من كل قوائم الاختيار فور تأكيد الخادم</div>' +
+    '<div style="font-size:0.8rem;color:#718096;margin-top:6px">سياسة الاعتماد: الحذف من صلاحيات المدير فقط ويُسجَّل باسمه وسببه. السجلات التاريخية لا تُحذف ولا تتغيّر.</div>';
+  const mapKey = key + '|' + prev.hash;
+  opsAtomicModal({ title: '🗑️ تأكيد حذف الخط', bodyHtml: body, confirmLabel: 'نعم، احذف الخط', reasonDefault: 'حذف خط من القوائم التشغيلية',
+    run: async (reason) => {
+      const opId = _lineDelOps[mapKey] || (_lineDelOps[mapKey] = genUUID());
+      const op = linesOpBegin('delete'); if (!op) return { ok: false, msg: '⏳ عملية حفظ/حذف أخرى جارية' };
+      let r;
+      try { r = await csCall('app_line_delete', { p_op_id: opId, p_line_name: key, p_reason: reason, p_expected_hash: prev.hash, p_info: info }, { keepalive: false, timeout: 120000 }); }
+      catch (e) { r = { ok: false, net: true }; }
+      finally { linesOpEnd(op); }
+      if (r && r.stale) return { ok: false, close: true };
+      if (!r || r.net || r.code === 'network') return { ok: false, msg: '⚠️ انقطع الاتصال قبل وصول ردّ الخادم — لا يُعرف إن نُفّذ الحذف. اضغط التأكيد مرة أخرى: المعرّف ثابت فلا يتكرر الحذف، وسببك محفوظ هنا' };
+      if (r.ok !== true) { if (r.code !== 'topology_busy') delete _lineDelOps[mapKey]; return { ok: false, msg: '⚠️ رفض الخادم الحذف ولم يتغيّر شيء: ' + (LINE_DEL_MSG[r.code] || r.code || 'خطأ') }; }
+      delete _lineDelOps[mapKey];
+      [key, target.name, target.name + ' ' + target.voltage + ' ك.ف'].forEach(n => { delete lineTowersCache[n]; delete lineSettingsCache[n]; });
+      const bl = await linesFetchBaseline();
+      if (bl.ok) linesPublishBaseline(bl.rows, op.sess); else { linesInfoCache = (linesInfoCache || []).filter(l => !(l && l.idx === target.idx && l.name === target.name)); }
       try { refreshInspectionLineSelect(); } catch (e) {}
-    }
-    const res = await saveLinesInfoData(next, bl.version);
-    if (!linesOpLive(op)) return;
-    if (!res.ok) {
-      if (res.code === 'session_changed') return;
-      if (res.code === 'conflict') { const fresh = await linesFetchBaseline(); if (fresh.ok) linesPublishBaseline(fresh.rows, op.sess); }
-      fail(res.code); return;
-    }
-    renderLinesInfo();
-    showToast('🗑️ تم حذف الخط «' + target.name + '»');
-  } finally { linesOpEnd(op); }
+      try { renderLinesInfo(); } catch (e) {}
+      showToast('🗑️ حُذف الخط «' + target.name + '» (أُرشف ' + (r.archived_towers || 0) + ' برج — السجلات محفوظة)');
+      return { ok: true };
+    } });
 }
 
 let _editingLineTowersList = [];
@@ -323,9 +346,7 @@ function _lineNumberingBlockedMsg() { lmNote('⚠️ ترقيم أبراج خط 
 // مفتاح الخط عند الخادم/المعاين: الاسم المجرّد للخط المُهيَّأ، أو «الاسم + الجهد ك.ف» للخط المدمج
 function _lmTopoKey() {
   const nm = (_lineFormOpen && _lineFormOpen.name) || '', v = (_lineFormOpen && _lineFormOpen.voltage) || parseInt((document.getElementById('lm_voltage') || {}).value) || null;
-  if (!nm) return null;
-  const cands = [nm + ' ' + v + ' ك.ف', nm, nm.replace(/\s*(400|132)\s*ك\.ف\s*$/, '').trim() + ' ' + v + ' ك.ف'];
-  return cands.find(n => (typeof LINES_DATA !== 'undefined' && LINES_DATA[n]) || (lineTowersCache[n] && lineTowersCache[n].length)) || nm;
+  return _topoKeyFor(nm, v);
 }
 function lmTopoSync() {   // خط قائم: التحرير بالصفوف (➕ بعد البرج / 🗑 إخراج) والحفظ مرة واحدة؛ لا حقول إدراج قديمة
   const row = document.getElementById('lm_topo_row'), legacy = document.getElementById('lm_legacy_insert'), note = document.getElementById('lm_topo_note');

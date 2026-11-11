@@ -1572,16 +1572,14 @@ function renderHubDetail() {
 
 async function hubDeleteSingleInspection(id) {
   if (!(currentUser.role === 'admin')) { showToast('⚠️ الحذف من صلاحيات المدير فقط', 'error'); return; }
-  if (!confirm('🗑️ إلغاء كشف هذا البرج؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد الحالة من السجل المتبقّي.' + (function () { try { const r0 = records.find(x => x.id === id) || (fullRecordsCache || []).find(x => x.id === id); return opsLinkedNote(r0 ? dayMemberRows(r0) : [{ id: id }]); } catch (e) { return ''; } })())) return;   // v335-C6r16 (N05)
   try {
     if (_hubV.mode === 'remote') {   // v335-C6r11: opsDeleteInspection يبحث في records؛ نجلب الصف الكامل عند الحاجة فقط وبحراسة التنقّل/الجلسة
       const snap = _hubActionSnap(); const row = await hubFetchFull(id, snap);
       if (!snap.ok()) return;
       if (!row) { showToast('⚠️ تعذّر إيجاد السجل', 'error'); return; }
     }
-    await opsDeleteInspection(id);   // v335-C4: عملية void مسجَّلة (لا DELETE مباشر)؛ يُخفى السجل بعد تأكيد السيرفر (v335-C6r14: لكل صفوف الكشف اليومي)
-    renderHubDetail();
-  } catch (e) { showToast('❌ تعذّر تسجيل الإلغاء', 'error'); }
+    await opsDeleteInspection(id);   // N25-R6u: نافذة تأكيد واحدة (الأثر + السبب)، ثم إلغاء كامل لكل صفوف الكشف اليومي بمعاملة واحدة؛ الشاشة تتحدّث بعد تأكيد الخادم
+  } catch (e) { showToast('❌ تعذّر بدء الإلغاء', 'error'); }
 }
 async function hubDeleteSingleTreatment(id) {
   await deleteTreatmentRecord(id); // نفس الدالة المستخدمة بشاشة المغادرات — يضمن التزامن بكل مكان
@@ -1612,7 +1610,8 @@ async function deleteWholeHubDate() {
   if (!g) return;
   const n = g.items.length;
   const _dayRows = hubBrowseType === 'visual' ? g.items.flatMap(dayMemberRows) : g.items.slice();   // v335-C6r14 (N20): إلغاء التاريخ يطال كل صفوف كل كشف يومي
-  if (!confirm(`🗑️ تأكيد إلغاء كل بيانات ${hubSelectedLine} بتاريخ ${hubSelectedDate} (${n} سجل)؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُعاد حالة كل برج من السجل المتبقّي.` + (hubBrowseType === 'visual' ? opsLinkedNote(_dayRows) : ''))) return;   // v335-C6r16 (N05)
+  if (hubBrowseType === 'visual') { await opsCancelInspectionUnit(_dayRows, { reasonDefault: 'إلغاء كشف ' + hubSelectedLine + ' بتاريخ ' + hubSelectedDate, onDone: () => { try { showHubView('hubDatesView'); renderHubDates(); } catch (e) {} } }); return; }   // N25-R6u: كل صفوف التاريخ كوحدة واحدة (أبراج عدة): معاينة الأثر + تأكيد واحد
+  if (!confirm(`🗑️ تأكيد إلغاء كل بيانات ${hubSelectedLine} بتاريخ ${hubSelectedDate} (${n} سجل)؟ لا يُحذف الأصل: يُسجَّل إلغاء بسبب ويُخفى من السجلات.`)) return;
   if (hubBrowseType === 'visual' || hubBrowseType === 'treat') {   // v335-C4: عمليات void مسجَّلة بدل DELETE مباشر
     const rows = _dayRows;
     const done = hubBrowseType === 'visual' ? await opsDeleteInspections(rows) : await opsDeleteTreatments(rows);

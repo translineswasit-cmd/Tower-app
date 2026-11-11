@@ -6395,18 +6395,134 @@ function opsAskReason(defaultText) {
   return r || null;
 }
 
-async function opsDeleteInspection(id) {
-  const row = records.find(x => x.id === id) || (fullRecordsCache || []).find(x => x.id === id);
-  if (!row) { showToast('⚠️ تعذّر إيجاد السجل', 'error'); return; }
-  const reason = opsAskReason('حذف سجل كشف من واجهة السجلات'); if (!reason) { showToast('⚠️ لم يُسجَّل الإلغاء: السبب إلزامي', 'error'); return; }
-  const n = await opsVoidMany('inspection', dayMemberRows(row), reason);   // v335-C6r14 (N20): إلغاء الكشف اليومي = كل صفوفه
-  if (n) showToast('📦 سُجّل إلغاء السجل وسيُرسل — الأصل لا يُحذف ويُخفى بعد التأكيد');
+// =========================================================================================================
+// N25-R6u: نافذة تأكيد واحدة لعمليات الخادم الذرية (إلغاء كشف كامل، حذف خط): تعرض الأثر ثم سبباً إلزامياً، وتعرض نتيجة الخادم الحقيقية.
+// الرفض/الانقطاع يُبقي النافذة والسبب المكتوب (المسودة)؛ نقرة ثانية أثناء التنفيذ لا ترسل شيئاً.
+// =========================================================================================================
+function _atEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+let _atomicBusy = false;
+function opsAtomicModal(cfg) {
+  const old = document.getElementById('atomicModal'); if (old) old.remove();
+  const m = document.createElement('div'); m.className = 'modal-bg show'; m.id = 'atomicModal';
+  m.innerHTML = '<div class="modal-box" style="max-width:430px;text-align:right;padding:20px">' +
+    '<h3 style="text-align:center">' + _atEsc(cfg.title) + '</h3>' +
+    '<div id="atomicBody" style="font-size:0.88rem;line-height:1.7;color:#2D3748;margin-bottom:10px">' + cfg.bodyHtml + '</div>' +
+    (cfg.noConfirm ? '' : '<label style="font-size:0.82rem;font-weight:700">سبب العملية (إلزامي — يُسجَّل بالتدقيق)</label><textarea id="atomicReason" rows="2" style="width:100%;margin:4px 0 8px;padding:8px;border:1px solid #CBD5E0;border-radius:8px;font-family:inherit"></textarea>') +
+    '<div id="atomicStatus" style="font-size:0.84rem;font-weight:700;margin:6px 0 10px;display:none;white-space:pre-line"></div>' +
+    '<div class="modal-actions">' + (cfg.noConfirm ? '' : '<button class="btn btn-del btn-sm" id="atomicOk" style="padding:10px 22px">' + _atEsc(cfg.confirmLabel || 'تأكيد') + '</button>') +
+    '<button class="btn btn-secondary" id="atomicCancel">' + (cfg.noConfirm ? 'إغلاق' : 'تراجع') + '</button></div></div>';
+  document.body.appendChild(m);
+  const $ = id => document.getElementById(id);
+  const setStatus = (msg, kind) => { const s = $('atomicStatus'); if (!s) return; s.style.display = msg ? '' : 'none'; s.textContent = msg || ''; s.style.color = kind === 'error' ? '#C53030' : '#744210'; };
+  const close = () => { const e = $('atomicModal'); if (e) e.remove(); };
+  $('atomicCancel').onclick = () => { if (_atomicBusy) return; close(); };
+  if (!cfg.noConfirm) {
+    $('atomicReason').value = cfg.reasonDefault || '';
+    $('atomicOk').onclick = async () => {
+      if (_atomicBusy) return;                                        // نقرة ثانية/إعادة محاولة أثناء التنفيذ
+      const reason = ($('atomicReason').value || '').trim();
+      if (reason.length < 3) { setStatus('⚠️ السبب إلزامي (٣ أحرف على الأقل)', 'error'); return; }
+      _atomicBusy = true; $('atomicOk').disabled = true; $('atomicCancel').disabled = true; setStatus('⏳ بانتظار ردّ الخادم…');
+      let r; try { r = await cfg.run(reason); } catch (e) { r = { ok: false, msg: '⚠️ تعذّر إكمال العملية (' + ((e && e.message) || 'خطأ') + ') — لم يُؤكَّد شيء' }; }
+      _atomicBusy = false;
+      if (r && (r.ok || r.close)) { close(); return; }
+      if ($('atomicOk')) { $('atomicOk').disabled = false; $('atomicCancel').disabled = false; setStatus((r && r.msg) || '⚠️ رُفضت العملية', 'error'); }
+    };
+  }
+  return m;
 }
 
-async function opsDeleteInspections(rows) {
-  const reason = opsAskReason('حذف جماعي لسجلات كشف'); if (!reason) { showToast('⚠️ لم يُسجَّل الإلغاء: السبب إلزامي', 'error'); return 0; }
-  return opsVoidMany('inspection', rows, reason);
+// ---- إلغاء كشف كامل كوحدة واحدة: كل صفوفه (قد تشمل عدة أبراج) في معاملة واحدة على الخادم؛ الهوية تُحلّ من السجل الأصلي لا من صاحب الرقم اليوم ----
+const OPS_UNIT_CODE_MSG = {
+  identity_unresolved: 'تعذّر إثبات هوية البرج من السجل الأصلي (لا tower_id مخزَّن ولا رابط مؤكَّد على الخادم، والخط أُعيد ترقيمه) — لا تُستنتج من صاحب الرقم اليوم',
+  identity_ambiguous: 'السجل مرتبط بأكثر من برج على الخادم — لا يُحسم', identity_conflict: 'هوية السجل المخزَّنة تخالف رابطه المسجَّل على الخادم',
+  tower_retired: 'البرج مُخرَج إلى الأرشيف', unknown_tower: 'البرج غير معروف على الخادم', unknown_inspection: 'السجل غير موجود على الخادم',
+  tower_not_initialised: 'حالة هذا البرج غير مهيّأة على الخادم (يلزم تهيئة قبل الإلغاء)', later_ops: 'توجد عمليات لاحقة على الأقسام نفسها تمنع الإلغاء (ألغِها أولاً)',
+  no_before_value: 'تعذّر إثبات الحالة السابقة لأحد الأقسام', reason_required: 'السبب إلزامي', topology_busy: 'تغيير ترقيم جارٍ على الخادم — أعد المحاولة بعد قليل',
+  identity_changed: 'تغيّرت هوية الأبراج أثناء التنفيذ — لم يُلغَ شيء، أعد المحاولة', impact_changed: 'تغيّر أثر الإلغاء منذ المعاينة — لم يُلغَ شيء؛ أعد الإلغاء ليُعاد عرض الأثر',
+  op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', invalid: 'بيانات غير صالحة', forbidden: 'الإلغاء من صلاحيات المدير فقط', server_error: 'خطأ في الخادم — لم يُلغَ شيء', already_voided: 'مُلغى سابقاً'
+};
+const _cuResults = {};
+function _cuRowLabel(x) { return (x && x.line_name ? x.line_name : '') + ' — برج ' + (x && x.tower_number != null ? x.tower_number : '') + (x && x.date ? ' — ' + x.date : ''); }
+function _cuFailLines(res) {
+  const fl = (res && Array.isArray(res.failures) && res.failures.length) ? res.failures : (res && res.failed ? [res.failed] : []);
+  return fl.slice(0, 6).map(f => '• ' + _cuRowLabel(f) + ': ' + (OPS_UNIT_CODE_MSG[f.code] || ('رفض الخادم (' + f.code + ')'))).join('\n') + (fl.length > 6 ? '\n… و' + (fl.length - 6) + ' سجل آخر' : '');
 }
+function _cuRefusalMsg(res) {
+  if (!res) return '⚠️ لم يصل ردّ الخادم';
+  const code = res.code;
+  if (code === 'cancel_refused') return '⚠️ رُفض الإلغاء الكامل — لم يُلغَ أي سجل ولم يتغيّر شيء:\n' + _cuFailLines(res);
+  return '⚠️ رُفض الإلغاء — لم يتغيّر شيء: ' + (OPS_UNIT_CODE_MSG[code] || (OPS_CODE_MSG[code] || code || 'خطأ'));
+}
+function _cuBody(prev, list, online) {
+  const rows = (prev && prev.ok === true && Array.isArray(prev.rows)) ? prev.rows : null;
+  let h = '<p style="margin:0 0 8px;color:#2D3748">سيُلغى الكشف <b>كاملاً</b> (' + list.length + ' سجل) بعملية واحدة: إمّا أن تنجح كلها أو لا يتغيّر شيء. الأصل لا يُحذف ولا يُعدَّل؛ يُخفى ويُسجَّل الإلغاء بسبب.</p>';
+  if (!rows) {
+    h += '<div style="background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;padding:8px;margin-bottom:8px">⚠️ ' + (online ? 'تعذّرت معاينة الأثر الآن' : 'لا يوجد اتصال — لا يمكن عرض الأثر الآن') +
+         '. يمكنك حفظ طلب الإلغاء على الجهاز ليُرسل عند الاتصال؛ يتحقق الخادم من هوية كل سجل ويرفض الكل إن تعذّر أيٌّ منها (لن يُلغى شيء جزئياً).</div>';
+    h += '<div style="font-size:0.82rem;color:#4A5568">' + list.slice(0, 6).map(r => '• ' + _atEsc(_cuRowLabel({ line_name: r.line_name, tower_number: r.tower_number, date: r.inspection_date }))).join('<br>') + (list.length > 6 ? '<br>… و' + (list.length - 6) + ' سجل آخر' : '') + '</div>';
+    return h;
+  }
+  const byT = new Map(); rows.forEach(r => { const k = r.tower_id; if (!byT.has(k)) byT.set(k, { line: r.cur_line, num: r.cur_number, dates: new Set(), n: 0, basis: r.basis, retired: !!r.retired, rline: r.line_name, rnum: r.tower_number }); const g = byT.get(k); g.n++; if (r.date) g.dates.add(r.date); });
+  h += '<div style="font-weight:700;margin:4px 0">الأبراج المتأثرة (' + byT.size + '):</div><div style="font-size:0.84rem">' +
+       Array.from(byT.values()).slice(0, 8).map(g => '• ' + (g.retired ? _atEsc(g.rline) + ' — برج ' + _atEsc(g.rnum) + ' <span style="color:#B7791F">(برج مُخرَج إلى الأرشيف — يبقى في الأرشيف بهويته)</span>' : _atEsc(g.line) + ' — برج ' + _atEsc(g.num)) + ' — ' + g.n + ' سجل (' + Array.from(g.dates).join('، ') + ')').join('<br>') + (byT.size > 8 ? '<br>… و' + (byT.size - 8) + ' برج آخر' : '') + '</div>';
+  const trt = []; rows.forEach(r => (r.treatments || []).forEach(t => { if (!t.cancelled) trt.push(t); }));
+  const corr = rows.reduce((a, r) => a + (Number(r.corrections) || 0), 0);
+  h += '<div style="font-weight:700;margin:8px 0 2px">الأثر على المعالجات المرتبطة بهذا الكشف:</div>';
+  h += trt.length ? '<div style="font-size:0.84rem">ستُلغى معه ' + trt.length + ' معالجة مرتبطة (' + trt.slice(0, 5).map(t => _atEsc(t.date || '')).join('، ') + (trt.length > 5 ? '، …' : '') + ')، وتُعاد حالة كل برج من السجلات الفعّالة المتبقية.</div>'
+                   : '<div style="font-size:0.84rem">لا توجد معالجات مرتبطة بهذا الكشف على الخادم. المعالجات المرتبطة بكشوف أخرى لا تُمَسّ.</div>';
+  if (corr) h += '<div style="font-size:0.84rem">وتُلغى ' + corr + ' تصحيح(ات) مرتبطة بهذا الكشف.</div>';
+  const dry = (prev.dry && prev.dry.results) || [];
+  const rv = dry.some(x => x && (x.review_required || (x.cascade && Array.isArray(x.cascade.uncertain) && x.cascade.uncertain.length)));
+  if (rv) h += '<div style="background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;padding:8px;margin-top:6px;font-size:0.84rem">⚠️ بعض الأقسام ستصبح «غير معروفة» لتعذّر إثبات حالتها من السجل المتبقّي، وتحتاج كشفاً جديداً.</div>';
+  if (dry.some(x => x && x.no_prior_state)) h += '<div style="font-size:0.84rem;margin-top:4px">بعض الأبراج ستعود «لم يُكشف» (لا كشف سابق).</div>';
+  h += '<div style="font-size:0.8rem;color:#718096;margin-top:6px">سياسة الاعتماد: الإلغاء من صلاحيات المدير فقط ويُسجَّل باسمه وبسببه.</div>';
+  return h;
+}
+async function _cuRun(list, opId, hash, reason) {
+  const first = list[0], ids = list.map(r => String(r.id));
+  const q = opsEnqueue(opsNewEntry('void', { kind: 'void_unit', op_id: opId, line_name: first.line_name, tower_number: String(first.tower_number), ids, reason, expected_hash: hash || null }, { target_kind: 'inspection_unit' }));
+  if (!q.ok) return { ok: false, msg: '❌ لم يُحفظ طلب الإلغاء على الجهاز (' + (q.reason === 'storage' ? 'ذاكرة الجهاز ممتلئة' : q.reason) + ') — لم يتغيّر شيء، وسببك محفوظ هنا' };
+  if (!(navigator.onLine && csLiveEnabled())) { showToast('⏳ حُفظ طلب الإلغاء على الجهاز — لم يُلغَ شيء بعد، ويُرسل تلقائياً عند الاتصال'); opsSyncSoon(); return { ok: true, close: true, pending: true }; }
+  for (let i = 0; i < 60 && _opsSyncBusy; i++) await new Promise(r => setTimeout(r, 200));
+  delete _cuResults[opId];
+  await opsSyncOutbox();
+  const res = _cuResults[opId];
+  if (res) return res.ok === true ? { ok: true, result: res } : { ok: false, msg: _cuRefusalMsg(res), result: res };
+  const rd = opsRead();
+  if (rd.ok && rd.items.some(x => x.id === opId)) { showToast('⏳ لم يصل ردّ الخادم بعد — الطلب محفوظ على الجهاز بنفس المعرّف ويُرسل تلقائياً ولا يتكرر'); return { ok: true, close: true, pending: true }; }
+  return { ok: false, msg: '⚠️ لم يُعرف مصير الطلب — افتح «العناصر المعلّقة» وراجع السجل' };
+}
+async function opsCancelInspectionUnit(rows, opt) {
+  opt = opt || {};
+  if (!(currentUser && currentUser.role === 'admin')) { showToast('⛔ الإلغاء من صلاحيات المدير فقط', 'error'); return 0; }
+  if (_atomicBusy) { showToast('⏳ عملية جارية — انتظر انتهاءها', 'error'); return 0; }
+  const seen = new Set(), list = [];
+  (rows || []).forEach(r => { if (r && hasValidInspectionId(r.id) && !seen.has(String(r.id))) { seen.add(String(r.id)); list.push(r); } });
+  if (!list.length) { showToast('⚠️ لا توجد سجلات صالحة للإلغاء', 'error'); return 0; }
+  if (list.length > 500) { showToast('⚠️ الحد الأقصى 500 سجل للإلغاء الكامل الواحد — ضيّق الفلتر (' + list.length + ' سجل)', 'error'); return 0; }
+  for (const r of list) { const why = opsBlockReason(r.line_name, r.tower_number, 'void'); if (why) { showToast(why, 'error'); return 0; } }
+  const online = navigator.onLine && csLiveEnabled();
+  let prev = null;
+  if (online) { showToast('⏳ جاري معاينة أثر الإلغاء على الخادم…'); prev = await csCall('app_inspection_cancel_preview', { p_ids: list.map(r => String(r.id)) }); }
+  if (prev && prev.stale) return 0;
+  if (prev && prev.ok === false && !prev.net && prev.code !== 'network') {
+    opsAtomicModal({ title: '⛔ لا يمكن إلغاء هذا الكشف', bodyHtml: '<div style="white-space:pre-line;color:#C53030">' + _atEsc(_cuRefusalMsg(prev)) + '</div><p style="font-size:0.8rem;color:#4A5568;margin-top:8px">لم يُعدَّل أي سجل. لا يُعاد إرسال شيء تلقائياً.</p>', noConfirm: true });
+    return 0;
+  }
+  const good = !!(prev && prev.ok === true);
+  const opId = genUUID();
+  opsAtomicModal({ title: '🗑️ تأكيد إلغاء الكشف كاملاً', bodyHtml: _cuBody(good ? prev : null, list, online), confirmLabel: good ? 'نعم، ألغِ الكشف كاملاً' : 'حفظ الطلب للإرسال لاحقاً', reasonDefault: opt.reasonDefault || 'إلغاء كشف من واجهة السجلات',
+    run: async (reason) => { const r = await _cuRun(list, opId, good ? prev.hash : null, reason); if (r && r.ok && !r.pending) { try { if (typeof opt.onDone === 'function') opt.onDone(r.result); } catch (e) {} } return r; } });
+  return list.length;
+}
+async function opsDeleteInspection(id) {
+  const row = records.find(x => x.id === id) || (fullRecordsCache || []).find(x => x.id === id);
+  if (!row) { showToast('⚠️ تعذّر إيجاد السجل', 'error'); return 0; }
+  return opsCancelInspectionUnit(dayMemberRows(row), {});   // v335-C6r14 (N20): إلغاء الكشف اليومي = كل صفوفه، كوحدة واحدة
+}
+
+async function opsDeleteInspections(rows, opt) { return opsCancelInspectionUnit(rows, opt || { reasonDefault: 'إلغاء جماعي لسجلات كشف' }); }
 
 async function opsDeleteTreatments(rows) {
   const reason = opsAskReason('حذف معالجة'); if (!reason) { showToast('⚠️ لم يُسجَّل الإلغاء: السبب إلزامي', 'error'); return 0; }
@@ -6546,7 +6662,7 @@ async function opsPrepare(e) {
 }
 
 function opsDescribe(e) {
-  const k = e.kind === 'void' ? ('طلب إلغاء ' + (e.target_kind === 'treatment' ? 'معالجة' : e.target_kind === 'inspection' ? 'كشف' : 'سجل'))
+  const k = e.kind === 'void' ? ('طلب إلغاء ' + (e.target_kind === 'treatment' ? 'معالجة' : (e.target_kind === 'inspection' || e.target_kind === 'inspection_unit') ? 'كشف' + (e.target_kind === 'inspection_unit' ? ' كامل (' + (((e.payload && e.payload.ids) || []).length) + ' سجل)' : '') : 'سجل'))
           : ({ observation: 'كشف', treatment: 'معالجة', correction: 'تصحيح', annotate: 'تعديل وصفي' }[e.kind] || e.kind);
   return k + ' — ' + e.line + ' — برج ' + e.tower;
 }
@@ -6597,10 +6713,21 @@ async function opsSyncOutbox() {
         // تثبيت الحمولة قبل الإرسال: إعادة الإرسال بعد ضياع الردّ يجب أن تكون بنفس الحمولة تماماً (idempotent)
         if (!opsUpdate(e.id, x => { x.payload = payload; x.prepared = true; })) { blocked.add(tk); continue; }
       }
-      if (payload && payload.kind === 'void') opsUpdate(e.id, x => { x.sent_at = Date.now(); });   // outcome unknown until a definite reply arrives (a lost reply is retried with the SAME id and payload; the server is idempotent)
-      const r = await csCall('app_op_apply', { p_op: payload });
+      const _isUnit = !!(payload && payload.kind === 'void_unit');   // N25-R6u: إلغاء كشف كامل = طلب واحد (معاملة واحدة على الخادم)
+      if (payload && (payload.kind === 'void' || _isUnit)) opsUpdate(e.id, x => { x.sent_at = Date.now(); });   // outcome unknown until a definite reply arrives (a lost reply is retried with the SAME id and payload; the server is idempotent)
+      const r = _isUnit ? await csCall('app_inspection_cancel', { p_op_id: payload.op_id, p_ids: payload.ids, p_reason: payload.reason, p_expected_hash: payload.expected_hash || null }) : await csCall('app_op_apply', { p_op: payload });
       if (r && r.stale) { res.auth = true; break; }
       if (r && r.ok === true) {
+        if (_isUnit) {
+          res.voidApplied = true; _cuResults[e.id] = r;
+          try {
+            const nCan = (r.cancelled || []).length, nAlr = (r.already || []).length; let nt = 0, unc = false, noPrior = false;
+            (r.results || []).forEach(x => { const cz = x.cascade || {}; nt += ((cz.treatments || []).length) + ((cz.legacy_hidden || []).length); if (x.review_required || (cz.uncertain || []).length) unc = true; if (x.no_prior_state) noPrior = true; });
+            (res.voidNotes = res.voidNotes || []).push('أُلغي الكشف كاملاً (' + (nCan + nAlr) + ' سجل)' + (nt ? ' وأُلغيت ' + nt + ' معالجة مرتبطة' : ''));
+            if (unc) res.voidNotes.push('⚠️ بعض الأقسام صارت «غير معروفة» وتحتاج مراجعة'); if (noPrior) res.voidNotes.push('بعض الأبراج عادت «لم يُكشف»');
+          } catch (x) {}
+          try { (r.towers || []).forEach(env => { if (env && env.line_name) { res.lines.add(env.line_name); if (csEnvValid(env, env.line_name, env.tower_number) && csIngest(env.line_name, env.tower_number, env, 'server', r.as_of)) { csRemember(env.line_name, env.tower_number, env, r.as_of); _applyConfirmedTowerEnv(env.line_name, env.tower_number, env); } } }); } catch (x) {}
+        }
         if (payload && payload.kind === 'void') {
           res.voidApplied = true;
           try { const cz = r.cascade || {}; const nt = ((cz.treatments || []).length) + ((cz.legacy_hidden || []).length); if (nt) (res.voidNotes = res.voidNotes || []).push('أُلغيت ' + nt + ' معالجة مرتبطة'); if (r.review_required || (cz.uncertain || []).length) (res.voidNotes = res.voidNotes || []).push('⚠️ بعض الأقسام صارت «غير معروفة» وتحتاج مراجعة (تعذّر إثبات حالتها من السجل المتبقّي)'); } catch (x) {}
@@ -6610,11 +6737,19 @@ async function opsSyncOutbox() {
         if (!opsRemove(e.id)) { opsUpdate(e.id, x => { x.status = 'pending'; x.err = 'removal_unconfirmed'; }); blocked.add(tk); continue; }
         res.applied++; res.lines.add(e.line);
         try { if (r.tower && csEnvValid(r.tower, e.line, e.tower)) { if (csIngest(e.line, e.tower, r.tower, 'server', r.as_of)) { csRemember(e.line, e.tower, r.tower, r.as_of); _applyConfirmedTowerEnv(e.line, e.tower, r.tower); } } } catch (x) {}
-        if (payload && (payload.kind === 'void' || payload.kind === 'annotate')) res.marks = true;
+        if (payload && (payload.kind === 'void' || payload.kind === 'void_unit' || payload.kind === 'annotate')) res.marks = true;
         try { markLocalTouch({}); } catch (x) {}
         continue;
       }
       const code = r && r.code;
+      if (_isUnit && !(OPS_AUTH_CODES.indexOf(code) >= 0) && !(r && (r.net || code === 'network')) && !(OPS_TRANSIENT.indexOf(code) >= 0 || /^http_5/.test(code || '')) && code !== 'topology_busy') {
+        // N25-R6u: رفض قاطع من الخادم (لم يتغيّر شيء): لا يبقى معلّقاً ولا يحجب البرج ولا يُعاد إرساله تلقائياً؛ يُسجَّل بالسجل اليدوي ويُعرض سببه
+        _cuResults[e.id] = Object.assign({ ok: false }, r || {});
+        opsLog('void_unit_refused', e, { code: code, failed: r && r.failed ? r.failed : null, failures: r && r.failures ? r.failures : null });
+        if (!opsRemove(e.id)) { opsUpdate(e.id, x => { x.status = 'rejected'; x.err = code || 'rejected'; x.sent_at = null; }); blocked.add(tk); res.rejected++; continue; }
+        res.unitRefused = (res.unitRefused || []).concat([_cuRefusalMsg(Object.assign({ code: code }, r || {}))]);
+        continue;
+      }
       if (code === 'already_voided' && payload && payload.kind === 'void') {   // v335-C6r16 (N05): الهدف أُلغي سابقاً (مثلاً ضمن إلغاء الكشف المرتبط) = المطلوب متحقق؛ لا رفض ولا حجب للبرج
         if (!opsRemove(e.id)) { opsUpdate(e.id, x => { x.status = 'pending'; x.err = 'removal_unconfirmed'; }); blocked.add(tk); continue; }
         res.applied++; res.lines.add(e.line); res.voidApplied = true; res.marks = true;
@@ -6648,6 +6783,8 @@ async function opsSyncOutbox() {
     try { if (depUI) depUI.renderLines(); } catch (e) {}
     showToast('✅ تأكّد على السيرفر: ' + res.applied + ' عملية' + (res.voidNotes && res.voidNotes.length ? ' — ' + Array.from(new Set(res.voidNotes)).join('، ') : ''));
   }
+  if (res.unitRefused && res.unitRefused.length) showToast(res.unitRefused[0], 'error');
+  if (res.applied && res.voidApplied) { try { _cuRefreshViews(); } catch (e) {} }
   if (res.conflicts) showToast('⚠️ ' + res.conflicts + ' عملية متعارضة مع عمل أحدث — افتح «العناصر المعلّقة» لاتخاذ القرار (لم يُكتب فوق عمل أحد)', 'error');
   if (res.rejected) showToast('⚠️ ' + res.rejected + ' عملية رفضها السيرفر — راجع «العناصر المعلّقة»', 'error');
   return res;
@@ -6679,6 +6816,14 @@ async function opsLoadMarks() {
 }
 
 function opsIsVoided(id) { return _opsMarks.voidedIds.has(String(id)); }
+
+// N25-R6u: بعد تأكيد الخادم لإلغاء كامل: السجل والأرشيف يتحدّثان فوراً (العلامات حُمّلت قبل هذا الاستدعاء)
+function _cuRefreshViews() {
+  const act = id => { const el = document.getElementById(id); return !!(el && el.classList.contains('active')); };
+  try { if (act('page-records') && typeof filterRecords === 'function') filterRecords(); } catch (e) {}
+  try { if (act('page-records')) { const hv = document.getElementById('hubDetailView'), hd = document.getElementById('hubDatesView'); if (hv && hv.style.display !== 'none' && typeof renderHubDetail === 'function') renderHubDetail(); else if (hd && hd.style.display !== 'none' && typeof renderHubDates === 'function') renderHubDates(); } } catch (e) {}
+  try { if (currentGridLine) renderTowersGridFromCache(currentGridLine); } catch (e) {}
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // حسم التعارضات (بقرار صريح فقط — لا كتابة فوق عمل أحدث بصمت)
@@ -7504,6 +7649,7 @@ function badge(val) {
 }
 
 function openDeleteModal(id) {
+  if (currentUser && currentUser.role === 'admin') { deleteId = null; opsDeleteInspection(id); return; }   // N25-R6u: نافذة تأكيد واحدة تعرض الأثر وتطلب السبب (الإلغاء كوحدة واحدة)
   deleteId = id;
   try { const row = records.find(x => x.id === id) || (fullRecordsCache || []).find(x => x.id === id); const el = document.getElementById('deleteModalLinked'); if (el) el.textContent = row ? opsLinkedNote(dayMemberRows(row)).trim() : ''; } catch (x) {}   // v335-C6r16 (N05)
   document.getElementById('deleteModal').classList.add('show');
@@ -7525,9 +7671,7 @@ async function bulkDeleteRecords() {
   }
   const n = filteredRecords.length;
   if (!n) { showToast('⚠️ لا توجد سجلات مطابقة للفلتر الحالي', 'error'); return; }
-  if (!confirm(`🗑️ تأكيد إلغاء ${n} سجل مطابق للفلتر الحالي؟ لا يُحذف الأصل؛ يُسجَّل إلغاء بسبب ويُخفى من السجلات، وتُستعاد حالة البرج من السجل المتبقّي.` + opsLinkedNote(filteredRecords))) return;   // v335-C6r16 (N05)
-  const done = await opsDeleteInspections(filteredRecords.slice());   // v335-C4
-  showToast(done === n ? `📦 سُجّل إلغاء ${done} من ${n} سجل وسيُرسل` : `⚠️ سُجّل إلغاء ${done} من ${n} سجل فقط — الباقي لم يُسجَّل (راجع الرسائل)`, done === n ? undefined : 'error');
+  await opsDeleteInspections(filteredRecords.flatMap(dayMemberRows), { reasonDefault: 'إلغاء جماعي لسجلات كشف' });   // N25-R6u: معاينة الأثر ثم تأكيد واحد؛ كل صفوف كل كشف يومي في عملية واحدة
 }
 
 // يحول حالة العوازل إلى نص وصفي: "R: عازل 5، 12 متضرر | S: سليم | T: عازل 3 متضرر"
