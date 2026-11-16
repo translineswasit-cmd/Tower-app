@@ -264,6 +264,8 @@ function editLineImpl(idx) {
   lmRowsInit();
   renderLineTowersEditor();
   lmTopoSync();
+  try { const so = lineFormSnapshot(l.name || ''); _lineFormOpen.metaOpen = JSON.stringify(so.meta); _lineFormOpen.cfgOpen = { c: so.circuitCount, m: so.chainMode }; } catch (e) {}
+  lmSpecCapture();
   document.getElementById('lineModal').style.display = '';
   { const sb = document.getElementById('lm_save_btn'); if (sb) sb.disabled = !!_linesOp; }
 }
@@ -334,6 +336,7 @@ async function deleteLineImpl(idx) {
 }
 
 let _editingLineTowersList = [];
+let _lineSpecOpen = null;   // N25-R6x: ربط المسودة بهوية الأبراج/رقم الإصدار/بصمة الإعداد لحظة فتح المحرر
 let _lineRows = null, _lineBaseNums = [];   // N25-R6r: صفوف المحرر لخط قائم (أصلي/جديد/مُخرَج) — الحفظ مرة واحدة
 
 // N25-R6: خطّ قائم له قائمة أبراج لا يُعاد ترقيمه من هنا: الحفظ بالرقم يفصل التاريخ عن هوية البرج (الخادم يرفضه بـ topology_managed). التغيير الوحيد المسموح هنا لقائمة قائمة: النوع/السلاسل/المادة (الأرقام ثابتة).
@@ -436,8 +439,10 @@ function renderLineTowersEditor() {
   countEl.textContent = _editingLineTowersList.length ? `إجمالي الأبراج: ${_editingLineTowersList.length}` : 'ما فيه أبراج مولّدة بعد';
   wrap.innerHTML = _editingLineTowersList.map((t, i) => lmSpecRowHtml(t, i, `<span style="min-width:56px;font-weight:700">برج ${t.num}</span>`, false, '')).join('') || '<div class="empty-state">ولّد نطاقاً أولاً</div>';
 }
+function lmSpecReady() { return !!(_lineSpecOpen && _lineSpecOpen.gen === _lineFormSeq && _lineSpecOpen.ready); }
 function lmSpecRowHtml(t, i, head, dis, tail) {
-  const d = dis ? ' disabled' : '';
+  // N25-R6y: صفوف المواصفات لبرج قائم تُعرض للقراءة فقط إلى أن تصل استجابة الخادم التي تثبّت الهوية/الترقيم/البصمة (الصفوف الجديدة وبقية مسارات R6v كما هي)
+  const d = (dis || (_lineRows && t.orig != null && !lmSpecReady())) ? ' disabled' : '';
   return `
     <div class="lm-row" style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.82rem;border-bottom:1px solid #F0F2F5;flex-wrap:wrap${dis ? ';opacity:0.5' : ''}">
       ${head}
@@ -493,6 +498,36 @@ function _lmSameList(a, b) {
   return a.every((t, i) => n(t) === n(b[i]));
 }
 function _lmPendRead() { try { const o = JSON.parse(localStorage.getItem('topo_pending_v1') || 'null'); return o && o.opId ? o : null; } catch (e) { return null; } }
+function lmSpecCapture() {   // N25-R6x: قراءة هوية الأبراج + رقم الإصدار + بصمة الإعداد لحظة فتح الخط (قراءة فقط؛ تفشل بصمت — الحفظ يطلب إعادة الفتح عندها)
+  _lineSpecOpen = null; if (!_lineRows) return;
+  const st = { gen: _lineFormSeq, key: _lmTopoKey(), done: false, res: null };
+  _lineSpecOpen = st;
+  try { if (typeof FEAT_MODULE_SRC === 'object' && !FEAT_MODULE_SRC.topo) FEAT_MODULE_SRC.topo = './topology-admin.js'; } catch (e) {}
+  st.promise = Promise.resolve().then(() => featRun(['topo'], () => topoSpecCaptureForEditor({ line: st.key }), 'topo')).then(r => { st.res = r || { ok: false }; st.done = true; lmSpecApply(st); return st.res; }).catch(() => { st.res = { ok: false }; st.done = true; return st.res; });
+}
+// N25-R6y: صفوف المواصفات القابلة للتعديل تُبنى من نفس استجابة الخادم التي ثبّتت الهوية والترقيم والبصمة (لا من كاش الجهاز)
+function lmSpecApply(st) {
+  if (st.gen !== _lineFormSeq || _lineSpecOpen !== st || !_lineRows) return;   // نافذة/خط آخر: لا يُمسّ شيء
+  const fail = (msg) => { st.ready = false; st.res = { ok: false, msg }; renderLineTowersEditor(); };
+  if (!st.res || !st.res.ok) { renderLineTowersEditor(); return; }
+  const base = st.res.base, cacheNums = _editingLineTowersList.map(t => String(t.num));
+  if (lmTopoDirty()) return fail('تغيّرت الصفوف (إدراج/إخراج) قبل وصول هوية الخادم — أعد فتح الخط لتعديل المواصفات');
+  if (!cacheNums.every(n => base.towers[n])) return fail('قائمة الأبراج على هذا الجهاز لا تطابق الخادم — أعد فتح الخط');
+  _editingLineTowersList = base.order.map(n => JSON.parse(JSON.stringify(base.towers[n].entry)));
+  lmRowsInit(); st.ready = true; renderLineTowersEditor(); lmTopoSync();
+  try { const mo = JSON.parse(_lineFormOpen.metaOpen); mo.towers = parseInt(document.getElementById('lm_towers').value) || null; _lineFormOpen.metaOpen = JSON.stringify(mo); } catch (e) {}
+}
+function lmSpecEdits(snap) {   // N25-R6w: صفوف أبراج قائمة (غير مُخرَجة) تغيّر نوعها/سلاسلها/مادتها عمّا كانت عليه عند فتح النافذة
+  if (!snap.rows) return [];
+  const base = new Map(_editingLineTowersList.map(t => [String(t.num), t])), out = [];
+  snap.rows.forEach(r => {
+    if (r.orig == null || r.removed) return;
+    const b = base.get(String(r.orig)); if (!b) return;
+    if ((r.type || '') !== (b.type || '') || (r.chain_override || '') !== (b.chain_override || '') || (r.material_default || 'glass') !== (b.material_default || 'glass'))
+      out.push({ orig: String(r.orig), open: { type: b.type, chain_override: b.chain_override || '', material_default: b.material_default || 'glass' }, after: { type: r.type, chain_override: r.chain_override || '', material_default: r.material_default || 'glass' } });
+  });
+  return out;
+}
 function _lmDirtySnap(snap) { return !!(snap.rows && snap.rows.some(r => r.orig == null || r.removed)); }
 function lmTopoSave(snap, resume) {   // الإدراج/الإخراج + عدد الأبراج: نداء ذرّي واحد (app_line_edit_apply) عبر وحدة الترقيم
   try { if (typeof FEAT_MODULE_SRC === 'object' && !FEAT_MODULE_SRC.topo) FEAT_MODULE_SRC.topo = './topology-admin.js'; } catch (e) {}
@@ -503,7 +538,7 @@ function lmResyncAfterTopo(snap, freshRow) {   // بعد نجاح الحفظ ا�
   if (snap.gen !== _lineFormSeq) return;
   _editingLineTowersList = JSON.parse(JSON.stringify(snap.towers));
   if (freshRow) { _lineFormOpen.openSig = linesRowSig(freshRow); }
-  lmRowsInit(); renderLineTowersEditor(); lmTopoSync();
+  lmRowsInit(); renderLineTowersEditor(); lmTopoSync(); lmSpecCapture();
 }
 
 // لقطة مدخلات النموذج وقت الضغط: ثابتة طوال الطلب (لا تتأثر بما يُكتب أو يُفتح بعده)
@@ -591,6 +626,25 @@ async function saveLineModal() {
     // N25-R6r: محرر الصفوف لخط قائم — أي إدراج/إخراج (أو عملية معلّقة سابقة) يُحفظ بنداء ذرّي واحد قبل بقية الحقول
     let baseline = bl, nextRows = next;
     if (snap.rows) {
+      // N25-R6x: تعديل نوع/سلاسل/مادة برج قائم = تصحيح مواصفات بحارس الخادم نفسه، مرتبط بهوية الأبراج/رقم الإصدار/بصمة الإعداد من لحظة فتح النافذة.
+      // مسار منفصل: لا يُمزج بإدراج/إخراج ولا بحقول الخط العامة (يُرفض قبل أي كتابة)، وبعد نجاحه ينتهي المسار بلا حفظ قائمة الخط القديمة ولا بيانات الخط.
+      const specEdits = lmSpecEdits(snap);
+      if (specEdits.length) {
+        const generalChanged = JSON.stringify(snap.meta) !== _lineFormOpen.metaOpen || !_lineFormOpen.cfgOpen || snap.circuitCount !== _lineFormOpen.cfgOpen.c || snap.chainMode !== _lineFormOpen.cfgOpen.m;
+        if (_lmDirtySnap(snap) || _lmPendRead() || generalChanged) { lmNote('⚠️ لديك تعديل مواصفات برج مع تغيير آخر (إدراج/إخراج أو بيانات الخط العامة أو إعدادات الدوائر): احفظ تعديل المواصفات وحده أولاً في حفظ منفصل ثم عدّل البقية — لم يُحفظ شيء.'); return; }
+        const so = _lineSpecOpen && _lineSpecOpen.gen === snap.gen && _lineSpecOpen.key === snap.topoKey ? _lineSpecOpen : null;
+        const cap = so ? (so.done ? so.res : await so.promise) : null;
+        if (!linesOpLive(op)) return;
+        if (so && !so.ready) { lmNote('⚠️ هوية الأبراج لم تُثبَّت من الخادم لهذا الفتح (' + ((so.res && so.res.msg) || 'تعذّرت القراءة') + ') — أعد فتح الخط. لم يُحفظ شيء.'); return; }
+        if (!cap || !cap.ok) { lmNote('⚠️ لا ربط صالح بهوية الأبراج من لحظة فتح الخط (' + ((cap && cap.msg) || 'تعذّرت القراءة') + ') — أغلق النافذة وأعد فتح الخط. لم يُحفظ شيء.'); return; }
+        const sr = await Promise.resolve(featRun(['topo'], () => topoSpecSaveFromEditor({ line: snap.topoKey, volt: snap.meta.voltage, edits: specEdits, base: cap.base }), 'topo'));
+        if (!linesOpLive(op)) return;
+        if (!sr || !sr.ok) { if (sr && sr.cancelled) { showToast(sr.msg); return; } lmNote('⚠️ ' + ((sr && sr.msg) || 'تعذّر حفظ تصحيح المواصفات — لم يُحفظ شيء.')); return; }
+        const sameSp = linesOpFormOpen(op); if (sameSp) closeLineModal();
+        try { renderLinesInfo(); } catch (e) {}
+        showToast('✅ حُفظ تصحيح مواصفات ' + specEdits.length + ' برج — الهوية والسجلات لم تتغيّر');
+        return;
+      }
       const pend = _lmPendRead(), dirty = _lmDirtySnap(snap);
       if (dirty || (pend && pend.kind === 'line_edit')) {
         const res0 = await lmTopoSave(snap, !!pend);

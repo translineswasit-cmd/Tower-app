@@ -597,6 +597,10 @@ function _tdPhaseLines(c) {
   }).join('');
 }
 
+// N25-R6w: «نوع البرج» في التفاصيل = المواصفات الحالية المعتمدة للبرج (بعد أي تصحيح)، لا نوع آخر كشف قديم؛ سجل الكشف نفسه يبقى كما سُجّل
+function _tdCurrentType(lineName, towerNum) {
+  try { const t = getLineTowers(lineName).find(x => String(x.num) === String(towerNum)); return t && t.type ? t.type : null; } catch (e) { return null; }
+}
 function renderTowerDetail(lineName, towerNum) {
   const body = document.getElementById('towerDetailBody');
   if (!(typeof csLiveEnabled === 'function' && csLiveEnabled())) return renderTowerDetailLegacy(lineName, towerNum);
@@ -624,7 +628,7 @@ function renderTowerDetail(lineName, towerNum) {
       <div style="font-weight:700;color:#1a2e4a">📋 آخر كشف</div>
       <div style="font-size:0.78rem;color:#718096">📅 ${_tdEsc(r.inspection_date || '—')} | 👤 ${_tdEsc(r.created_by_name || '—')}</div>
     </div>
-    <div style="font-size:0.85rem;color:#4A5568;margin-top:6px">نوع البرج: <strong>${_tdEsc(TOWER_TYPES[r.tower_type] || r.tower_type || 'غير معروف')}</strong> | الجهد: <strong>${vv != null ? _tdEsc(vv) + ' ك.ف' : 'غير معروف'}</strong></div>
+    <div style="font-size:0.85rem;color:#4A5568;margin-top:6px">نوع البرج: <strong>${_tdEsc(_tdCurrentType(lineName, towerNum) || TOWER_TYPES[r.tower_type] || r.tower_type || 'غير معروف')}</strong> | الجهد: <strong>${vv != null ? _tdEsc(vv) + ' ك.ف' : 'غير معروف'}</strong></div>
   </div>`;
   html += `<button class="btn btn-secondary" id="towerHistoryBtn" style="width:100%;margin-bottom:14px" onclick="openTowerHistory(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">📜 سجل البرج</button>`;
   if (currentUser && currentUser.role === 'admin') html += `<button class="btn btn-secondary" id="towerSpecBtn" style="width:100%;margin-bottom:14px" onclick="openTowerSpec(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">⚙️ مواصفات البرج (تصحيح)</button>`;   // N25-R6   // v335-C6r24 (P02)

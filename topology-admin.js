@@ -166,7 +166,9 @@
     invalid_session: 'انتهت الجلسة — سجّل الدخول من جديد.', session_changed: 'تغيّرت الجلسة أثناء الطلب — لم يُعتمد شيء.',
     unknown_line: 'خط غير معروف للخادم.', later_data_exists: 'لا يمكن التراجع: كُتبت بيانات بعد هذا التغيير. لم يُغيَّر شيء.',
     offline: 'لا يوجد اتصال — هذه العملية تتطلب اتصالاً بالخادم.', network: 'تعذّر الاتصال بالخادم أو لم يصل الردّ. إن كنت اعتمدت للتو فأعد المحاولة بنفس العملية (آمنة).',
-    bad_response: 'ردّ غير مفهوم من الخادم.', mapping_required: 'تغيير المواصفات يحتاج قرار مراجعة لمواضع محفوظة.', topology_managed: 'تغيير الأرقام لا يتم إلا عبر إدارة الترقيم.'
+    bad_response: 'ردّ غير مفهوم من الخادم.', mapping_required: 'تغيير المواصفات يحتاج قرار مراجعة لمواضع محفوظة.', topology_managed: 'تغيير الأرقام لا يتم إلا عبر إدارة الترقيم.',
+    geometry_change_not_correctable: 'لا يُقبل كتصحيح: التعديل يغيّر هندسة عوازل لها حالة محفوظة، ولا يمكن حفظ حالتها وروابط معالجتها بأمان. لم يُحفظ أي شيء. يلزم حدث «استبدال معدّات» مؤرَّخ (مرحلة لاحقة منفصلة).',
+    spec_correction_protected: 'مواصفات برج قائم لا تُعدَّل بحفظ قائمة كاملة؛ تُعدَّل بمسار التصحيح فقط. لم يُحفظ شيء.', no_stored_configuration: 'هذا الخط بلا تهيئة أبراج مخزَّنة — لا تُعدَّل مواصفات برج منه قبل حفظ تهيئة الخط.', server_error: 'خطأ في الخادم — أُلغيت العملية كلها ولم يُغيَّر شيء.'
   };
   const PLAN_ERR = {
     plan_malformed: 'صيغة الخطة غير صالحة', line_settings_required: 'يلزم تحديد عدد دوائر الخط ونمط السلاسل صراحةً (لا تُخمَّن)', line_settings_change_not_allowed: 'لا يجوز تغيير إعدادات الخط من هنا',
@@ -192,7 +194,7 @@
   };
   // N25-R6b: server-side verification gates. They stay FALSE until the matching server path has been tested against the real SQL on a matching baseline
   // (see evidence R6b). While false the UI performs NO request for that action (preview stays available).
-  const SERVER_VERIFIED = { apply: true, recover: false, spec: false };   // N25-R6m production pilot: apply verified (R6k/R6l); recover, spec correction and dated replacement stay DISABLED
+  const SERVER_VERIFIED = { apply: true, recover: false, spec: true };   // N25-R6w: spec correction verified against the real SQL70 (single tower + line editor, one guard); recover and dated replacement stay DISABLED
   const UNVERIFIED = {
     apply: 'اعتماد التغيير معطّل: مسار الاعتماد على الخادم (app_topology_apply) لم يُتحقَّق منه بعد على قاعدة مطابقة. المعاينة فقط متاحة.',
     recover: 'التراجع معطّل: مسار التراجع على الخادم (app_topology_recover) لم يُتحقَّق منه بعد على قاعدة مطابقة.',
@@ -531,7 +533,7 @@
         '<div>البرج ' + _te(S.num) + ' • الدوائر في الخط: ' + imp.circuits + '</div>' + ap.changed.map(k => '<div>• ' + ({ type: 'النوع', chain_override: 'السلاسل', material_default: 'المادة الافتراضية' }[k]) + ': <strong>' + _te((S.base[k] || (k === 'material_default' ? 'glass' : '—'))) + '</strong> ← <strong>' + _te(ap.after[k] || (k === 'material_default' ? 'glass' : 'افتراضي الخط')) + '</strong></div>').join('') +
         '<div style="margin-top:6px;color:#4A5568">يبقى: الهوية الدائمة، كل الكشوف والمعالجات والحراري والأضرار والدورات المسجّلة، وبيانات الدائرتين. ' + (imp.geometry ? '<strong>تغيير الهندسة:</strong> إن كان لهذا البرج حالة عوازل محفوظة ويغيّر التعديل هندسة العوازل يرفضه الخادم كتصحيح (لا يُمحى ولا يُحوَّل شيء) ويلزم حدث «استبدال معدّات» مؤرَّخ (معلّق). تعديل المادة الافتراضية وحدها لا يمس حالة العوازل.' : 'المادة الافتراضية تُطبَّق على كشف جديد فقط ولا تغيّر حالة محفوظة.') + '</div>') + '</div>';
     h += '<input id="topoSpReason" placeholder="سبب التصحيح (إلزامي، 3 أحرف على الأقل)" value="' + _te(S.reason) + '" oninput="topoSpecReason(this.value)" style="width:100%;padding:8px;border-radius:8px;border:1px solid #ccc;margin:6px 0">' +
-      '<button id="topoSpSave" class="btn btn-primary" style="width:100%" onclick="topoSpecSave()" ' + (SERVER_VERIFIED.spec && ap.ok && ap.changed.length && !S.busy ? '' : 'disabled ') + '>💾 حفظ التصحيح</button>' + (SERVER_VERIFIED.spec ? '' : '<div id="topoSpUnverified" style="margin-top:6px;font-size:0.8rem;color:#822727">⛔ ' + _te(UNVERIFIED.spec) + '</div>');
+      '<button id="topoSpSave" class="btn btn-primary" style="width:100%" onclick="topoSpecSave()" ' + (SERVER_VERIFIED.spec && ap.ok && ap.changed.length && !S.busy && (S.reason || '').trim().length >= 3 ? '' : 'disabled ') + '>💾 حفظ التصحيح</button>' + (SERVER_VERIFIED.spec ? '' : '<div id="topoSpUnverified" style="margin-top:6px;font-size:0.8rem;color:#822727">⛔ ' + _te(UNVERIFIED.spec) + '</div>');
     b.innerHTML = h;
   }
   async function specSave(tag) {
@@ -553,7 +555,7 @@
     if (!sessOk(gen) || !ok()) return;
     if (r && r.ok === true) {
       S.opId = null; S.opKey = null; S.note = '✅ حُفظ التصحيح للبرج ' + num + ' — الهوية والسجل التاريخي لم يتغيّرا' + (r.idempotent ? ' (كان قد نُفِّذ سابقاً ولم يُكرَّر)' : '');
-      try { csPurgeUserData(); await loadLineTowersCache(); } catch (e) {}
+      await specAfter(line, num);
       S.base = null; await openSpecKeep(line, num, S.note); return;
     }
     const code = r && r.code;
@@ -561,8 +563,82 @@
     if (['stale_config', 'stale_topology_revision', 'stale_topology_identity', 'tower_retired', 'tower_not_in_config', 'ambiguous_config'].indexOf(code) >= 0) { S.base = null; S.opId = null; S.opKey = null; }
     S.err = msgOf(code) + (r && r.message ? ' — ' + r.message : ''); if (DEFINITIVE_BAD.indexOf(code) < 0) { S.opId = null; S.opKey = null; } render();
   }
+  // N25-R6w: بعد تأكيد الخادم: المواصفات الجديدة تظهر فوراً في تفاصيل البرج المفتوحة وفي الكشف القادم (كاش الأبراج + حالة البرج + الشبكة/النموذج)
+  async function specAfter(line, num) {
+    try { csPurgeUserData(); } catch (e) {}
+    try { await loadLineTowersCache(); } catch (e) {}
+    try { await csDirLoad(line, 0); } catch (e) {}
+    try {
+      const open = (typeof _towerDetailCtx !== 'undefined' && _towerDetailCtx && _towerDetailCtx.line === line && (num == null || _towerDetailCtx.tower === String(num)));
+      if (open && typeof _fetchFullTowerRecord === 'function') { const f = await _fetchFullTowerRecord(line, _towerDetailCtx.tower); if (f && f.ok && f.cs && f.cs.ok && f.cs.source !== 'cache') _applyConfirmedTowerEnv(line, _towerDetailCtx.tower, f.cs.env); renderTowerDetail(line, _towerDetailCtx.tower); }
+    } catch (e) {}
+    try { const g = document.getElementById('towersGrid'); const sel = document.getElementById('f_line_name'); if (g && sel && sel.value === line && typeof renderTowersGrid === 'function') renderTowersGrid(); } catch (e) {}
+  }
   async function openSpecKeep(line, num, note) { await openSpec(line, num); if (S) { S.note = note; render(); } }
 
+
+  // ======================================================================= N25-R6w: تعديل مواصفات أبراج قائمة من محرر الخط — نفس الحارس (app_line_spec_correct → app_tower_spec_correct لكل برج، ذرّي كله)
+  let _leSpec = { key: null, opId: null };
+  const LE_SPEC_REASON = 'تصحيح مواصفات أبراج من نافذة تعديل الخط';
+  const _kLabel = { type: 'النوع', chain_override: 'السلاسل', material_default: 'المادة' };
+  const _vLabel = (k, v) => k === 'chain_override' ? ({ single: 'مفرد', double: 'مزدوج' }[v] || 'افتراضي الخط') : k === 'material_default' ? ({ plastic: 'بلاستك', ceramic: 'خزف' }[v] || 'زجاج (افتراضي)') : (v || '—');
+  // ctx: { line (مفتاح الخط عند الخادم), volt, edits:[{orig:'7', after:{type, chain_override, material_default}}] }
+  const LE_REOPEN = 'تغيّر الخط (ترقيم أو هوية برج أو إعداد) منذ فتح النافذة، فرُفض الحفظ ولم تتغيّر مواصفات أي برج. أغلق النافذة وأعد فتح الخط ثم راجع التعديلات (حُفظت مدخلاتك للمراجعة على هذا الجهاز).';
+  const LE_STALE = ['stale_config', 'stale_topology_revision', 'stale_topology_identity', 'tower_retired', 'tower_not_in_config', 'ambiguous_config'];
+  function leReviewKeep(ctx, code) { try { localStorage.setItem('topo_spec_review_v1', JSON.stringify({ line: ctx.line, at: new Date().toISOString(), code, edits: (ctx.edits || []).map(e => ({ num: e.orig, from: e.open, to: e.after })) })); } catch (e) {} }
+  // يُستدعى لحظة فتح محرر الخط: هوية كل برج (tower_id) + رقم الترقيم + بصمة الإعداد ورقم الإصدار — المسودة تُربط بها ولا تُقرأ من جديد عند الحفظ
+  async function leSpecCapture(ctx) {
+    const gen = sessGen();
+    if (!SERVER_VERIFIED.spec) return leFail('disabled', UNVERIFIED.spec);
+    if (!navigator.onLine) return leFail('offline');
+    const rd = await csCall('app_line_spec_read', { p_line_name: ctx.line });
+    if (!sessOk(gen)) return leFail('session_changed');
+    if (!rd || rd.ok !== true) return leFail((rd && rd.code) || 'bad_response');
+    if (rd.circuit_count == null || !rd.chain_mode) return leFail('invalid', 'إعدادات الدوائر/السلاسل غير مخزّنة لهذا الخط — لا يُعدَّل شيء بالتخمين.');
+    const towers = {}; (rd.towers || []).forEach(t => { towers[String(t.num)] = { tower_id: t.tower_id, entry: t.entry }; });
+    return { ok: true, base: { line: ctx.line, rev: Number(rd.topology_rev), etag: rd.etag, circuit_count: rd.circuit_count, chain_mode: rd.chain_mode, towers, order: (rd.towers || []).map(t => String(t.num)) } };
+  }
+  // ctx: { line, volt, base (من leSpecCapture لحظة الفتح), edits:[{orig:'7', open:{type,chain_override,material_default}, after:{...}}] }
+  async function saveSpecFromEditor(ctx) {
+    const gen = sessGen(), line = ctx.line, base = ctx.base;
+    if (!SERVER_VERIFIED.spec) return leFail('disabled', UNVERIFIED.spec);
+    if (!navigator.onLine) return leFail('offline');
+    if (!base || base.line !== line || !base.etag || base.rev == null) { leReviewKeep(ctx, 'no_open_binding'); return leFail('stale_config', LE_REOPEN); }
+    const opts = Number(ctx.volt) === 400 ? T400 : T132, items = [], txt = [], nm = (e) => [e.type || '', e.chain_override || '', e.material_default || 'glass'].join('|');
+    for (const e of ctx.edits || []) {
+      const t = base.towers[String(e.orig)];
+      // الهوية من لحظة الفتح؛ وما فتحه المستخدم يجب أن يطابق ما قرأه الخادم وقتها (وإلا المسودة مبنيّة على نسخة قديمة)
+      if (!t || !t.tower_id || nm(t.entry || {}) !== nm(e.open || {})) { leReviewKeep(ctx, 'draft_mismatch'); return leFail('stale_config', LE_REOPEN); }
+      const b = e.open || {}, f = e.after || {}, ch = {};   // الحقول التي عدّلها المستخدم فعلاً مقارنةً بالنسخة التي فتحها
+      if ((f.type || '') !== (b.type || '')) ch.type = f.type;
+      if ((f.chain_override || '') !== (b.chain_override || '')) ch.chain_override = f.chain_override || '';
+      if ((f.material_default || 'glass') !== (b.material_default || 'glass')) ch.material_default = f.material_default || 'glass';
+      if (!Object.keys(ch).length) continue;
+      const ap = TopoPlan.specApply([t.entry], t.entry.num, ch, opts);
+      if (!ap.ok) return leFail(ap.code, 'البرج ' + e.orig + ': ' + (MSG[ap.code] || ap.code) + ' — لم يُحفظ شيء.');
+      items.push({ tower_id: t.tower_id, changes: ch });
+      txt.push('• برج ' + e.orig + ': ' + ap.changed.map(k => _kLabel[k] + ' ' + _vLabel(k, b[k] || (k === 'material_default' ? 'glass' : '')) + ' ← ' + _vLabel(k, ap.after[k] || (k === 'material_default' ? 'glass' : ''))).join('، '));
+    }
+    if (!items.length) return { ok: true, none: true };
+    const geo = (ctx.edits || []).some(e => { const b = e.open || {}, f = e.after || {}; return (f.type || '') !== (b.type || '') || (f.chain_override || '') !== (b.chain_override || ''); });
+    const msg = ['سيُصحَّح على الخادم دفعة واحدة (ذرّياً) — تصحيح بيانات خاطئة، لا استبدال معدّات:'].concat(txt, ['• الدوائر في الخط: ' + (Number(base.circuit_count) === 2 ? 2 : 1),
+      'يبقى كما هو: الهوية الدائمة، الأرقام، كل الكشوف والمعالجات والحراري والأضرار والدورات وروابط المعالجة.',
+      geo ? 'إن غيّر التعديل هندسة عوازل لها حالة محفوظة في أي برج منها يُرفض الحفظ كله بلا أي تطبيق جزئي.' : 'تعديل المادة الافتراضية وحدها لا يمس حالة العوازل المحفوظة.', 'متابعة؟']).join('\n');
+    if (!confirm(msg)) return { ok: false, cancelled: true, msg: 'أُلغي — لم يُحفظ شيء.' };
+    // الخادم يتحقق وقت التنفيذ (قفل الخط + رقم الإصدار + بصمة الإعداد + هوية كل برج) بنفس حارس SQL70؛ لا قراءة جديدة تُستبدل بها هوية صاحب الرقم الحالي
+    const req = { p_line_name: line, p_expected_rev: Number(base.rev), p_expected_etag: base.etag, p_items: items, p_reason: LE_SPEC_REASON };
+    const key = JSON.stringify(req); if (_leSpec.key !== key) { _leSpec.key = key; _leSpec.opId = uuid(); }
+    const r = await csCall('app_line_spec_correct', Object.assign({ p_op_id: _leSpec.opId }, req));
+    if (!sessOk(gen)) return leFail('session_changed', msgOf('session_changed'));
+    if (r && r.ok === true) { _leSpec = { key: null, opId: null }; try { localStorage.removeItem('topo_spec_review_v1'); } catch (e) {} await specAfter(line, null); return { ok: true, r, n: items.length }; }
+    const code = r && r.code;
+    if (DEFINITIVE_BAD.indexOf(code) < 0) _leSpec = { key: null, opId: null };
+    if (LE_STALE.indexOf(code) >= 0) { _leSpec = { key: null, opId: null }; leReviewKeep(ctx, code); return leFail(code, LE_REOPEN, { reply: r }); }
+    const failT = r && r.tower_id ? Object.keys(base.towers).find(n => base.towers[n].tower_id === r.tower_id) : null;
+    return leFail(code, (failT ? 'البرج ' + failT + ': ' : '') + msgOf(code) + (r && r.message ? ' — ' + r.message : '') + ' (لم يُغيَّر أي برج)', { reply: r });
+  }
+  root.topoSpecCaptureForEditor = leSpecCapture;
+  root.topoSpecSaveFromEditor = saveSpecFromEditor;
 
   // ======================================================================= N25-R6r: «حفظ مرة واحدة» من محرر الخط
   // ctx: { line (مفتاح الخط عند الخادم), baseNums:[أرقام القائمة وقت فتح النافذة], rows:[{orig:'7'|null, type, chain_override?, material_default?, removed}], info:{idx, tension_towers|null}, circuit_count, chain_mode }
