@@ -6908,8 +6908,8 @@ function opsWithdrawVoid(id) {
 
 function opsConflictSummary(e) {
   const c = e.conflict || {};
-  const comps = (c.conflicts || []).map(x => x.component).join('، ');
-  const later = (c.later_ops || []).map(o => (o.kind || '') + ' بتاريخ ' + (o.business_date || '—') + ' بواسطة ' + (o.actor || '—') + ' [' + ((o.components || []).join(',')) + ']').join(' | ');
+  const comps = opsCompsAr((c.conflicts || []).map(x => x.component)).join('، ');   // N25-R10: أسماء الأقسام بالعربية (لا مفاتيح الخادم)
+  const later = (c.later_ops || []).map(o => _cuLaterLine(o)).join(' | ');
   return { comps, later };
 }
 
@@ -9598,6 +9598,7 @@ function getTowerMaterialDefault(lineName, towerNumber) {
 
 const _PREFILL_BANNER = {
   loading:     ['⏳ جاري تحميل الكشف السابق لهذا البرج…', 'انتظر اكتمال التحميل قبل الحفظ.', []],
+  loadingSlow: ['⏳ الاتصال بطيء — لا يزال التحميل جارياً', 'مدخلاتك محفوظة ولن تُستبدل. انتظر قليلاً، أو تابع كشفاً جديداً دون انتظار (يتحقق الخادم من الحالة عند الرفع ويرفض ما يخالف حالة أحدث).', ['➕ متابعة دون انتظار']],
   unavailable: ['⚠️ تعذّر تحميل الكشف السابق لهذا البرج', 'عدم توفّر البيانات لا يعني أن البرج سليم. أعد المحاولة، أو ابدأ كشفاً جديداً دون بيانات سابقة إن كان هذا مقصوداً.', ['retry', '➕ كشف جديد دون بيانات سابقة']],
   partial:     ['⚠️ البيانات السابقة المحمّلة جزئية', 'تعذّر جلب التفاصيل الكاملة للكشف السابق (دورات العوازل، الملاحظات…) فقد تكون بعض الحقول ناقصة. أعد المحاولة، أو تابع بالبيانات الجزئية بعد مراجعتها.', ['retry', '✔ متابعة بالبيانات الجزئية']],
   orderUnknown: ['⏳ لهذا البرج كشف معلّق غير مرفوع بنفس تاريخ كشف آخر', 'لا يمكن تحديد الأحدث منهما، فلم تُحمَّل بيانات سابقة تلقائياً. ارفع الكشف المعلّق (صفحة المعلّقات) ثم أعد المحاولة، أو تابع كشفاً جديداً دون بيانات سابقة.', ['retry', '➕ متابعة دون بيانات سابقة']],
@@ -9610,7 +9611,8 @@ function _renderPrefillBanner() {
   const b = document.getElementById('incompleteBanner');
   if (!b) return;
   const s = _prefillState;
-  const cfg = _PREFILL_BANNER[s.state];
+  const cfg = _PREFILL_BANNER[s.state === 'loading' && s.slow ? 'loadingSlow' : s.state];
+  try { if (typeof csInsContextRefresh === 'function') csInsContextRefresh(); } catch (e) {}
   const set = (id, show, label) => { const el = document.getElementById(id); if (!el) return; el.style.display = show ? '' : 'none'; if (label) el.textContent = label; };
   const title = document.getElementById('incompleteBannerTitle'), msg = document.getElementById('incompleteBannerMsg');
   if (cfg) {

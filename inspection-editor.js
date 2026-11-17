@@ -96,13 +96,27 @@ function openTowerModalImpl(lineName, towerNum, scrollY0) {
   tSel.value = towerNum;
   onTowerChange();
   csInsCfgRefresh();
-  document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + towerNum;
+  document.getElementById('modalTowerTitle').textContent = '🗼 برج رقم ' + towerNum + ' — ' + lineName;   // N25-R10: الخط ظاهر في النافذة نفسها (على الآيفون يُخفيه ما خلف النافذة)
+  try { csInsContextRefresh(); } catch (e) { /* UI only */ }
   document.getElementById('towerInspectionModal').classList.add('show');
   csInsCfgRefresh();   // N25-R4i: بعد ظهور النافذة (يُظهر خطأ/إعادة محاولة صريحة إن لم تُهيَّأ العوازل)
   // بدون هذا، فتح البرج التالي كان يبقي نافذة الكشف بنفس موضع التمرير القديم (عادة قرب الأسفل عند
   // زر الحفظ) بدل الرجوع لأعلاها — فتظهر الملاحظات مباشرة بدل قسم العوازل
   const modalBox = document.querySelector('#towerInspectionModal .modal-box');
   if (modalBox) modalBox.scrollTop = 0;
+}
+
+// N25-R10: شريط سياق ثابت أعلى نموذج البرج: الخط/البرج/الجهد/عدد الدوائر المنطبقة (من قواعد المشروع وتجاوزات البرج نفسها عبر isDoubleOperational) + تذكير بأن غير المرصود لا يُسجَّل
+function csInsContextRefresh() {
+  const line = _v('f_line_name'), tower = _v('f_tower_number');
+  let el = document.getElementById('insContextStrip');
+  if (!el) { const anchor = document.getElementById('towerInfoBox'); if (!anchor || !anchor.parentNode) return; el = document.createElement('div'); el.id = 'insContextStrip';
+    el.style.cssText = 'background:#EBF8FF;border:1px solid #90CDF4;color:#2A4365;border-radius:8px;padding:8px 10px;margin:6px 0;font-size:0.82rem;line-height:1.7'; anchor.parentNode.insertBefore(el, anchor); }
+  if (!line || !tower) { el.style.display = 'none'; return; }
+  let dbl = false; try { dbl = isDoubleOperational(line, tower); } catch (e) { dbl = false; }
+  const v = Number(currentVoltage) ? ' — ' + Number(currentVoltage) + ' ك.ف' : '';
+  el.textContent = '📍 ' + line + ' — برج ' + tower + v + ' — ' + (dbl ? 'دائرتان (تظهر عوازل الدائرتين)' : 'دائرة واحدة (عوازل الدائرة الأولى فقط)') + '. سجّل فقط ما رصدته فعلاً؛ القسم الذي تتركه فارغاً لا يُسجَّل ولا يُعدّ سليماً.';
+  el.style.display = '';
 }
 
 function closeTowerInspectionModal() {
@@ -148,6 +162,7 @@ function onTowerChangeOriginal() {
   document.getElementById('towerInfoBox').style.display = 'block';
   buildInsulatorUI(currentVoltage, type);
   updateWiresGroundUI();
+  try { csInsContextRefresh(); } catch (e) { /* UI only */ }
 }
 
 // يبني سلسلة بلاستيك (لولب SVG) قابلة للضغط
@@ -1191,6 +1206,7 @@ function withSoftTimeout(promise, ms) {
   });
 }
 
+let _saveRecBusyUntil = 0;
 async function saveRecord() {
   const d = getFormData();
   if (!d.line_name || !d.tower_number) { showToast('⚠️ اسم الخط ورقم البرج مطلوبان','error'); return; }
@@ -1217,11 +1233,14 @@ async function saveRecord() {
   }
 
   const btn = document.getElementById('saveBtn');
+  if (_saveRecBusyUntil > Date.now()) return;   // N25-R10: نقرة ثانية سريعة بعد حفظ ناجح لا تُنتج رسالة خطأ ولا عملية ثانية
+  _saveRecBusyUntil = Date.now() + 2000;
   btn.disabled = true;
+  let saved = false;
   try {
     // v335-C4: لا POST/PATCH مباشر على inspections. التسجيل الدائم بالصندوق أولاً ثم الإرسال بعملية واحدة تُطبَّق على الحالة والسجل التاريخي معاً
-    if (editId) await opsSaveEdit(d); else await opsSaveObservation(d);
-  } finally { btn.disabled = false; }
+    saved = editId ? await opsSaveEdit(d) : await opsSaveObservation(d);
+  } finally { btn.disabled = false; if (saved === false) _saveRecBusyUntil = 0; }
 }
 
 // بعد حفظ ناجح (أو تخزين أوف لاين) لكشف برج من شبكة الأبراج:
@@ -1573,8 +1592,12 @@ function _prefillIsCurrent(token, lineName, towerNumber) {
     document.getElementById('f_tower_number').value === String(towerNumber);
 }
 
+// N25-R10: اتصال ضعيف — القراءة قد تصل 25 ثانية؛ بعد PREFILL_SLOW_MS يظهر بالتنبيه خيار «متابعة دون انتظار» بدل الجمود (الردّ المتأخر يُهمل بعدها، ومدخلات الموظف لا تُمسّ)
+let PREFILL_SLOW_MS = 6000, _prefillSlowTimer = null;
 function _setPrefillState(state, lineName, towerNumber, note) {
+  if (_prefillSlowTimer) { clearTimeout(_prefillSlowTimer); _prefillSlowTimer = null; }
   _prefillState = { state, line: lineName || '', tower: towerNumber == null ? '' : String(towerNumber), note: note || '' };
+  if (state === 'loading') { const mine = _prefillState; _prefillSlowTimer = setTimeout(() => { _prefillSlowTimer = null; if (_prefillState === mine && mine.state === 'loading') { mine.slow = true; _renderPrefillBanner(); } }, Number(window.__prefillSlowMs) || PREFILL_SLOW_MS); }
   _renderPrefillBanner();
   try { if (state === 'ready' || state === 'partial') opsCaptureBaseline('inherit'); else if (state === 'none' || state === 'acknowledged') opsCaptureBaseline('blank'); } catch (e) { console.warn('[tower-app] baseline', e); }   // v335-C4
 }
@@ -1599,7 +1622,7 @@ function retryPrefill() {
 function acknowledgePrefill() {
   const s = _prefillState;
   if (s.state === 'unresolved') { showToast('⛔ حالة هذا البرج غير محسومة — لا يمكن المتابعة من هنا. أعد المحاولة أو بلّغ المسؤول.', 'error'); return; }
-  if (s.state !== 'unavailable' && s.state !== 'partial' && s.state !== 'deferred' && s.state !== 'orderUnknown') return;
+  if (s.state !== 'unavailable' && s.state !== 'partial' && s.state !== 'deferred' && s.state !== 'orderUnknown' && !(s.state === 'loading' && s.slow)) return;
   const keepLoaded = s.state === 'partial';
   _prefillSeq++; // يلغي أي طلب جارٍ
   if (!keepLoaded) { previousInspectionForLoad = null; previousTreatmentsForLoad = []; _prefillNoteState = null; }
