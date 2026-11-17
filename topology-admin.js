@@ -172,6 +172,7 @@
     event_date_in_future: 'تاريخ الاستبدال في المستقبل.', invalid_date: 'تاريخ الاستبدال غير صالح.', nothing_selected: 'لم يُحدَّد شيء للاستبدال.',
     component_not_applicable: 'موضع غير مطبّق/غير محسوم لهذا البرج لا يُستبدل.', no_tower_state: 'لا توجد حالة مخزّنة لهذا البرج بعد (لا كشف ولا تهيئة) — لا يُسجَّل عليه استبدال.',
     event_before_later_evidence: 'يوجد كشف أو معالجة أحدث من تاريخ الاستبدال على المواضع نفسها؛ لا يُسجَّل الاستبدال قبلها. صحّح التاريخ أو راجع تلك السجلات.',
+    state_required: 'اختر حالة كل معدّة مستبدلة: سليم / تالف / «ما فحصتها» (غير معروف فقط عند اختيارها صراحةً).', state_for_unselected: 'حالة لمعدّة غير مختارة للاستبدال.', invalid_state: 'حالة المعدّة غير صالحة (راجع الحقول المطلوبة).', invalid_positions: 'مواضع العوازل التالفة غير صالحة (أرقام صحيحة ضمن عدد مواضع الطور).', severity_required: 'حدّد درجة خطورة العوازل التالفة.', geometry_unresolved_for_state: 'تخطيط العوازل غير محسوم؛ لا تُسجَّل حالة عوازل جديدة (اختر «ما فحصتها»).',
     event_before_later_replacement: 'سُجّل استبدال أحدث لنفس المعدّة بتاريخ لاحق؛ لا يُسجَّل استبدال مؤرَّخ قبله. صحّح التاريخ (المواضع المستقلة غير متأثرة).',
     geometry_not_allowed_in_insulator_scope: 'تغيير النوع/السلاسل يتم بمسار «استبدال البرج» لا باستبدال العوازل.', component_missing: 'القسم المطلوب غير موجود في حالة البرج.',
     geometry_map_unresolved: 'خريطة المواضع بعد تغيير الهندسة غير محسومة — لم يُحفظ شيء.',
@@ -581,7 +582,7 @@
   function rpInit() {
     const e = (S.base || {});
     S.rp = { rd: null, scope: 'insulators', date: rpToday(), comps: {}, secs: { iron: true, insulators: true, foundation: false }, form: { type: e.type || '', chain_override: e.chain_override || '', material_default: e.material_default || 'glass' },
-             reason: '', pv: null, pvKey: null, pvBusy: false, err: null, note: '', busy: false, opId: null, opKey: null, seq: 0 };
+             reason: '', pv: null, pvKey: null, pvBusy: false, err: null, note: '', busy: false, opId: null, opKey: null, seq: 0, st: {}, isev: '' };
     rpLoad(); render();
   }
   async function rpLoad() {
@@ -601,11 +602,48 @@
     if ((R.form.material_default || 'glass') !== (e.material_default || 'glass')) c.material_default = R.form.material_default || 'glass';
     return c;
   }
+  const RP_SEV = { simple: 'مغادرة بسيطة', moderate: 'مغادرة متوسطة', below_critical: 'مغادرة دون الحرجة', critical: 'مغادرة حرجة' };
+  const rpInsKeys = () => ((S.rp.rd && S.rp.rd.components) || []).filter(c => c.section === 'insulator' && c.applicability === 'applicable').map(c => c.component);
+  // N25-R7b: المفاتيح المستبدلة فعلياً (نفس ما سيحسبه الخادم) وحالة كل منها كما اختارها المستخدم
+  function rpKeys() {
+    const R = S.rp;
+    if (R.scope === 'insulators') return Object.keys(R.comps).filter(k => R.comps[k]).sort();
+    return [].concat(R.secs.iron ? ['iron'] : [], R.secs.foundation ? ['foundation'] : [], R.secs.insulators ? rpInsKeys() : []).sort();
+  }
+  function rpPosList(txt) { const t = String(txt || '').split(/[,\s،;]+/).filter(Boolean); return t.map(x => (/^\d+$/.test(x) ? Number(x) : x)); }
+  function rpStateOf(k) {
+    const R = S.rp, c = R.st[k] || {}, ins = /^ins/.test(k); if (!c.state) return null;
+    if (c.state === 'unchecked' || c.state === 'healthy') return ins && c.state === 'healthy' ? { state: 'healthy', material: c.material || R.form.material_default || 'glass' } : { state: c.state };
+    if (ins) return { state: 'damaged', positions: rpPosList(c.pos), material: c.material || R.form.material_default || 'glass' };
+    return { state: 'defect', sev: c.sev || '', text: (c.text || '').trim() };
+  }
+  function rpStatesIssue(keys) {
+    const R = S.rp; for (const k of keys) { const c = R.st[k] || {}; if (!c.state) return 'state'; if (c.state === 'damaged' && !rpPosList(c.pos).length) return 'pos'; if (c.state === 'defect' && (!c.sev || !(c.text || '').trim())) return 'defect'; }
+    if (keys.some(k => /^ins/.test(k) && (R.st[k] || {}).state === 'damaged') && !R.isev) return 'isev';
+    return null;
+  }
   function rpReq() {
     const R = S.rp, q = { scope: R.scope, event_date: R.date }, ch = rpChanges();
     if (R.scope === 'insulators') q.components = Object.keys(R.comps).filter(k => R.comps[k]).sort(); else q.sections = ['iron', 'insulators', 'foundation'].filter(k => R.secs[k]);
     if (Object.keys(ch).length) q.changes = ch;
+    const keys = rpKeys(), st = {}; keys.forEach(k => { const x = rpStateOf(k); if (x) st[k] = x; }); q.states = st;
+    if (keys.some(k => /^ins/.test(k) && st[k] && st[k].state === 'damaged') && R.isev) q.sev = { insulators: R.isev };
     return q;
+  }
+  function rpStateCtl(k) {
+    const R = S.rp, c = R.st[k] || {}, ins = /^ins/.test(k), sel = 'padding:6px;border-radius:6px;border:1px solid #ccc;font-family:inherit', K = _te(k);
+    const opts = (ins ? [['healthy', 'سليم'], ['damaged', 'تالف (حدّد المواضع)'], ['unchecked', 'ما فحصتها']] : [['healthy', 'سليم'], ['defect', 'فيه تلف/ملاحظة'], ['unchecked', 'ما فحصتها']]);
+    let h = '<div style="margin:2px 18px 6px 0;padding:4px 8px;border-right:3px solid #CBD5E0"><select id="rpSt_' + K + '" onchange="topoRp(\'st\',\'' + K + '\',\'state\',this.value)" style="' + sel + '"><option value="">— اختر حالة المعدّة الجديدة —</option>' + opts.map(o => '<option value="' + o[0] + '"' + (c.state === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>';
+    if (ins && (c.state === 'healthy' || c.state === 'damaged')) h += ' <select id="rpMt_' + K + '" onchange="topoRp(\'st\',\'' + K + '\',\'material\',this.value)" style="' + sel + '">' + [['glass', 'زجاج'], ['plastic', 'بلاستك'], ['ceramic', 'خزف']].map(o => '<option value="' + o[0] + '"' + ((c.material || R.form.material_default || 'glass') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>';
+    if (ins && c.state === 'damaged') h += ' <input id="rpPos_' + K + '" placeholder="أرقام المواضع التالفة مثل: 1، 4، 7" value="' + _te(c.pos || '') + '" oninput="topoRp(\'st\',\'' + K + '\',\'pos\',this.value,1)" style="' + sel + ';min-width:170px">';
+    if (!ins && c.state === 'defect') h += ' <select id="rpSv_' + K + '" onchange="topoRp(\'st\',\'' + K + '\',\'sev\',this.value)" style="' + sel + '"><option value="">— الدرجة —</option>' + Object.keys(RP_SEV).map(o => '<option value="' + o + '"' + (c.sev === o ? ' selected' : '') + '>' + RP_SEV[o] + '</option>').join('') + '</select> <input id="rpTx_' + K + '" placeholder="وصف التلف" value="' + _te(c.text || '') + '" oninput="topoRp(\'st\',\'' + K + '\',\'text\',this.value,1)" style="' + sel + ';min-width:170px">';
+    return h + '</div>';
+  }
+  function rpStateTxt(a) {
+    if (a.state === 'unchecked') return '<strong>غير معروف</strong> (ما فحصتها)';
+    if (a.state === 'healthy') return '<strong>سليم</strong>' + (a.new_material ? ' • المادة: ' + _te(_vLabel('material_default', a.new_material)) : '');
+    if (a.state === 'damaged') return '<strong>تالف</strong> — المواضع: ' + _te((a.new_damaged || []).join('، ')) + ' من ' + _te(a.new_positions) + ' • المادة: ' + _te(_vLabel('material_default', a.new_material));
+    return '<strong>' + _te(RP_SEV[a.new_sev] || a.new_sev) + '</strong> — ' + _te(a.new_text || '');
   }
   const rpSelEmpty = (q) => !(q.components || q.sections || []).length;
   let _rpTimer = null;
@@ -613,7 +651,7 @@
   async function rpPreview() {
     const R = S && S.rp; if (!R || !R.rd) return; const q = rpReq(), key = JSON.stringify(q), gen = sessGen(), my = ++R.seq;
     R.pvKey = null; R.pv = null;
-    if (rpSelEmpty(q) || !R.date) { R.pvBusy = false; rpPaint(); return; }
+    if (rpSelEmpty(q) || !R.date || rpStatesIssue(rpKeys())) { R.pvBusy = false; rpPaint(); return; }
     if (!navigator.onLine) { R.pv = { ok: false, code: 'offline' }; rpPaint(); return; }
     R.pvBusy = true; rpPaint();
     const r = await csCall('app_tower_replace_preview', { p_line_name: S.line, p_tower_id: S.tid, p_request: q });
@@ -623,11 +661,12 @@
   function rpImpactHtml() {
     const R = S.rp, pv = R.pv, e = R.rd.entry || {}, q = rpReq();
     if (rpSelEmpty(q)) return '<div style="color:#718096">اختر ما سيُستبدل.</div>';
+    { const iss = rpStatesIssue(rpKeys()); if (iss) return '<div style="color:#975A16" role="alert">' + ({ state: 'اختر حالة كل معدّة مستبدلة: سليم / تالف / «ما فحصتها» — «غير معروف» لا يُسجَّل إلا باختيارك الصريح.', pos: 'اكتب أرقام المواضع التالفة.', defect: 'اختر درجة الخطورة واكتب وصف التلف.', isev: 'حدّد درجة خطورة العوازل التالفة.' }[iss]) + '</div>'; }
     if (R.pvBusy || !pv) return '<div style="color:#718096">⏳ يحسب الخادم الأثر...</div>';
     if (pv.ok !== true) return '<div style="color:#822727" role="alert">⛔ ' + _te(msgOf(pv.code)) + (pv.reason ? ' — ' + _te(RP_REASON[pv.reason] || pv.reason) : '') + (pv.components ? ' (' + pv.components.map(k => _te(RP_LBL[k] || k)).join('، ') + ')' : '') + (pv.later_date ? ' (' + _te(pv.later_date) + ')' : '') + '<div style="margin-top:4px;color:#4A5568">لا يمكن الحفظ.</div></div>';
     let h = '<div><strong>الوضع السابق:</strong> ' + _te(e.type || '—') + ' • سلاسل: ' + _te(e.chain_override ? (e.chain_override === 'single' ? 'مفردة' : 'مزدوجة') : 'افتراضي الخط') + ' • مادة: ' + _te(_vLabel('material_default', e.material_default)) + ' • تخطيط العوازل: ' + _te(rpModeTxt(pv.from_mode)) + '</div>';
     h += '<div><strong>التغيير المطلوب:</strong> ' + (pv.config_changed ? _te(pv.entry_after.type || '—') + ' • سلاسل: ' + _te(pv.entry_after.chain_override ? (pv.entry_after.chain_override === 'single' ? 'مفردة' : 'مزدوجة') : 'افتراضي الخط') + ' • مادة: ' + _te(_vLabel('material_default', pv.entry_after.material_default)) + ' • تخطيط العوازل: ' + _te(rpModeTxt(pv.to_mode)) + (pv.geometry_change ? ' <strong>(تغيّرت الهندسة)</strong>' : '') : 'نفس المواصفات (استبدال معدّات فقط)') + ' • تاريخ الاستبدال: ' + _te(pv.event_date) + '</div>';
-    h += '<div style="margin-top:4px"><strong>المواضع المتأثرة (تصبح «غير معروفة» حتى تُكشف):</strong></div>' + (pv.affected || []).map(a => '<div>• ' + _te(RP_LBL[a.component] || a.component) + ': كان <strong>' + _te(RP_COND(a.prev_condition, a.prev_data_status)) + '</strong>' + (a.prev_damaged ? ' (' + _te(a.prev_damaged) + ' تالف)' : '') + ' ← <strong>غير معروف</strong></div>').join('');
+    h += '<div style="margin-top:4px"><strong>المواضع المتأثرة والحالة بعد الحفظ (لا يُنقل ضرر أو معالجة المعدّة القديمة):</strong></div>' + (pv.affected || []).map(a => '<div>• ' + _te(RP_LBL[a.component] || a.component) + ': كان <strong>' + _te(RP_COND(a.prev_condition, a.prev_data_status)) + '</strong>' + (a.prev_damaged ? ' (' + _te(a.prev_damaged) + ' تالف)' : '') + ' ← ' + rpStateTxt(a) + '</div>').join('') + (pv.spec_after ? '<div style="margin-top:4px"><strong>المواصفات بعد الحفظ:</strong> ' + _te(pv.spec_after.type || '—') + ' • سلاسل: ' + _te(pv.spec_after.chain_override ? (pv.spec_after.chain_override === 'single' ? 'مفردة' : 'مزدوجة') : 'افتراضي الخط') + ' • مادة: ' + _te(_vLabel('material_default', pv.spec_after.material_default)) + ' • تخطيط العوازل: ' + _te(rpModeTxt(pv.spec_after.mode)) + '</div>' : '');
     h += '<div style="margin-top:4px;color:#4A5568">تبقى بحالتها: ' + _te(pv.unaffected_count) + ' موضعاً/قسماً غير مستبدل. يبقى كاملاً: الهوية الدائمة، كل الكشوف والمعالجات والحراري والأضرار والدورات القديمة وروابطها. لا تُنقل أي معالجة قديمة إلى المعدّات الجديدة، ولا تُعدّ المعدّات سليمة بمجرد استبدالها.' + ((pv.section_reset || []).length ? ' يُمسح تقدير شدّة القسم المستبدل كلياً (' + pv.section_reset.map(x => _te({ iron: 'الهيكل', foundation: 'الأساس', insulator: 'العوازل' }[x] || x)).join('، ') + ') إلى «بلا كشف».' : '') + '</div>';
     return h;
   }
@@ -647,14 +686,15 @@
       h += '<div style="font-weight:700;margin:6px 0 2px">المواضع (كل طور من كل دائرة وحدة الحالة المخزّنة)</div>' + ins.map(c => {
         const okc = c.applicability === 'applicable';
         return '<label style="display:block;font-size:0.84rem;' + (okc ? '' : 'color:#A0AEC0') + '"><input type="checkbox" id="rpC_' + _te(c.component) + '" ' + (okc ? '' : 'disabled ') + (R.comps[c.component] ? 'checked ' : '') + 'onchange="topoRp(\'comp\',\'' + _te(c.component) + '\',this.checked)"> ' + _te(RP_LBL[c.component] || c.component) +
-          ' — الحالة الحالية: <strong>' + _te(okc ? RP_COND(c.condition, c.data_status) : (c.applicability === 'not_applicable' ? 'غير مطبّق' : 'غير محسوم')) + '</strong>' + (c.damaged ? ' (' + _te(c.damaged) + ' تالف)' : '') + (c.replaced ? ' • استُبدل سابقاً ولم يُكشف بعد' : '') + '</label>';
+          ' — الحالة الحالية: <strong>' + _te(okc ? RP_COND(c.condition, c.data_status) : (c.applicability === 'not_applicable' ? 'غير مطبّق' : 'غير محسوم')) + '</strong>' + (c.damaged ? ' (' + _te(c.damaged) + ' تالف)' : '') + (c.replaced ? (c.condition === 'unknown' ? ' • استُبدل سابقاً ولم يُكشف بعد' : ' • معدّة مستبدلة (حالتها سُجّلت عند الاستبدال)') : '') + '</label>' + (R.comps[c.component] ? rpStateCtl(c.component) : '');
       }).join('');
     } else {
       h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><div class="field" style="flex:1;min-width:150px"><label>نوع البرج الجديد</label><select id="rpType" onchange="topoRp(\'form\',\'type\',this.value)" style="' + sel + '">' + TYPES().map(o => '<option' + (o === R.form.type ? ' selected' : '') + '>' + _te(o) + '</option>').join('') + (TYPES().indexOf(R.form.type) < 0 ? '<option selected>' + _te(R.form.type) + '</option>' : '') + '</select></div>' +
         '<div class="field" style="flex:1;min-width:130px"><label>سلاسل العوازل</label><select id="rpChain" onchange="topoRp(\'form\',\'chain_override\',this.value)" style="' + sel + '">' + [['', 'افتراضي الخط'], ['single', 'مفرد'], ['double', 'مزدوج']].map(o => '<option value="' + o[0] + '"' + (o[0] === (R.form.chain_override || '') ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></div></div>' +
         '<div style="font-weight:700;margin:6px 0 2px">الأقسام المستبدلة (غير المحدَّدة تبقى بحالتها)</div>' +
-        [['iron', 'الهيكل الحديدي'], ['insulators', 'كل العوازل (كل الأطوار والدوائر المطبّقة)'], ['foundation', 'الأساس']].map(o => '<label style="display:block;font-size:0.84rem"><input type="checkbox" id="rpS_' + o[0] + '" ' + (R.secs[o[0]] ? 'checked ' : '') + 'onchange="topoRp(\'sec\',\'' + o[0] + '\',this.checked)"> ' + o[1] + '</label>').join('');
+        [['iron', 'الهيكل الحديدي'], ['insulators', 'كل العوازل (كل الأطوار والدوائر المطبّقة)'], ['foundation', 'الأساس']].map(o => '<label style="display:block;font-size:0.84rem"><input type="checkbox" id="rpS_' + o[0] + '" ' + (R.secs[o[0]] ? 'checked ' : '') + 'onchange="topoRp(\'sec\',\'' + o[0] + '\',this.checked)"> ' + o[1] + '</label>' + (R.secs[o[0]] ? (o[0] === 'insulators' ? ins.filter(c => c.applicability === 'applicable').map(c => '<div style="font-size:0.8rem;margin-right:18px">' + _te(RP_LBL[c.component] || c.component) + rpStateCtl(c.component) + '</div>').join('') : rpStateCtl(o[0])) : '')).join('');
     }
+    if (rpKeys().some(k => /^ins/.test(k) && (R.st[k] || {}).state === 'damaged')) h += '<div class="field" style="margin-top:6px"><label>درجة خطورة العوازل التالفة</label><select id="rpIsev" onchange="topoRp(\'isev\',this.value)" style="' + sel + '"><option value="">— اختر —</option>' + Object.keys(RP_SEV).map(o => '<option value="' + o + '"' + (R.isev === o ? ' selected' : '') + '>' + RP_SEV[o] + '</option>').join('') + '</select></div>';
     h += '<div class="field" style="margin-top:6px"><label>المادة الافتراضية للعازل (للكشف القادم)</label><select id="rpMat" onchange="topoRp(\'form\',\'material_default\',this.value)" style="' + sel + '">' + [['glass', 'زجاج (افتراضي)'], ['plastic', 'بلاستك'], ['ceramic', 'خزف']].map(o => '<option value="' + o[0] + '"' + (o[0] === (R.form.material_default || 'glass') ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></div></div>';
     h += '<div class="form-card" style="margin:8px 0;font-size:0.8rem" id="rpImpact">' + rpImpactHtml() + '</div>';
     h += '<input id="rpReason" placeholder="سبب الاستبدال (إلزامي، 3 أحرف على الأقل)" value="' + _te(R.reason) + '" oninput="topoRpReason(this.value)" style="width:100%;padding:8px;border-radius:8px;border:1px solid #ccc;margin:6px 0">' +
@@ -667,7 +707,7 @@
     const R = S && S.rp; if (!R || R.busy || !rpSaveOk()) return;
     if (!navigator.onLine) { R.err = msgOf('offline'); render(); return; }
     const q = rpReq(), pv = R.pv, reason = R.reason.trim(), line = S.line, num = S.num, gen = sessGen();
-    const msg = ['سيُسجَّل استبدال معدّات فعلي مؤرَّخ ' + pv.event_date + ' للبرج ' + num + ' (الخط: ' + line + '):'].concat((pv.affected || []).map(a => '• ' + (RP_LBL[a.component] || a.component) + ': ' + RP_COND(a.prev_condition, a.prev_data_status) + ' ← غير معروف حتى يُكشف'),
+    const msg = ['سيُسجَّل استبدال معدّات فعلي مؤرَّخ ' + pv.event_date + ' للبرج ' + num + ' (الخط: ' + line + '):'].concat((pv.affected || []).map(a => '• ' + (RP_LBL[a.component] || a.component) + ': ' + RP_COND(a.prev_condition, a.prev_data_status) + ' ← ' + ({ unchecked: 'غير معروف (ما فحصتها)', healthy: 'سليم', damaged: 'تالف المواضع ' + (a.new_damaged || []).join('،'), defect: (RP_SEV[a.new_sev] || '') + ' ' + (a.new_text || '') }[a.state] || '')),
       [pv.config_changed ? ('• المواصفات: ' + (pv.entry_before.type || '—') + ' ← ' + (pv.entry_after.type || '—') + ' • تخطيط العوازل: ' + rpModeTxt(pv.from_mode) + ' ← ' + rpModeTxt(pv.to_mode)) : '• المواصفات لا تتغيّر', 'يبقى السجل التاريخي كاملاً ولا تُنقل أي معالجة قديمة. السبب: ' + reason, 'متابعة؟']).join('\n');
     if (!confirm(msg)) return;
     const req = { p_line_name: line, p_tower_id: S.tid, p_expected_rev: Number(R.rd.topology_rev), p_expected_etag: R.rd.etag, p_expected_state_rev: Number(R.rd.state_rev), p_request: q, p_reason: reason };
@@ -677,7 +717,7 @@
     R.busy = false;
     if (!sessOk(gen) || !ok() || S.rp !== R) return;
     if (r && r.ok === true) {
-      const note = '✅ سُجّل الاستبدال للبرج ' + num + ' بتاريخ ' + r.event_date + (r.idempotent ? ' (كان قد نُفِّذ سابقاً ولم يُكرَّر)' : '') + ' — المعدّات المستبدلة «غير معروفة» حتى تُكشف، والسجل التاريخي لم يتغيّر';
+      const note = '✅ سُجّل الاستبدال للبرج ' + num + ' بتاريخ ' + r.event_date + (r.idempotent ? ' (كان قد نُفِّذ سابقاً ولم يُكرَّر)' : '') + ' — حُفظت المواصفات وحالة المعدّات الجديدة كما حدّدتها، والسجل التاريخي لم يتغيّر';
       R.opId = null; R.opKey = null;
       await specAfter(line, num);
       S.base = null; await openSpec(line, num); if (S) { S.kind = 'replacement'; rpInit(); S.rp.note = note; render(); }
@@ -690,12 +730,14 @@
     render();
   }
   root.topoSpecKind = (v) => { if (!S || S.mode !== 'spec') return; S.kind = v === 'replacement' ? 'replacement' : 'correction'; if (S.kind === 'replacement' && !S.rp) rpInit(); else render(); };
-  root.topoRp = (k, a, b2) => {
+  root.topoRp = (k, a, b2, b3, b4) => {
     const R = S && S.rp; if (!R) return;
     if (k === 'scope') { R.scope = a === 'tower' ? 'tower' : 'insulators'; R.pv = null; R.pvKey = null; render(); rpPreviewSoon(); return; }
     if (k === 'date') { R.date = a; R.pv = null; R.pvKey = null; rpPaint(); rpPreviewSoon(); return; }
+    if (k === 'st') { const f = b2, v = b3, soft = b4; R.st[a] = R.st[a] || {}; R.st[a][f] = v; R.pv = null; R.pvKey = null; if (soft) { rpPaint(); rpPreviewSoon(); } else { render(); rpPreviewSoon(); } return; }
+    if (k === 'isev') { R.isev = a; R.pv = null; R.pvKey = null; render(); rpPreviewSoon(); return; }
     if (k === 'comp') R.comps[a] = !!b2; else if (k === 'sec') R.secs[a] = !!b2; else if (k === 'form') R.form[a] = b2;
-    R.pv = null; R.pvKey = null; rpPaint(); rpPreviewSoon();
+    R.pv = null; R.pvKey = null; if (k === 'comp' || k === 'sec') render(); else rpPaint(); rpPreviewSoon();
   };
   root.topoRpReason = (v) => { if (S && S.rp) { S.rp.reason = v; const b = document.getElementById('rpSave'); if (b) b.disabled = !rpSaveOk(); } };
   root.topoRpSave = () => rpSave();
