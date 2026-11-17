@@ -6352,7 +6352,7 @@ function opsVoidEntry(kindLabel, row, reason, items) {
   const p = { kind: 'void', op_id: genUUID(), line_name: row.line_name, tower_number: String(row.tower_number), target_source_id: row.id, reason };
   if (row.tower_id) p.tower_id = row.tower_id;   // N25-R4a: هوية السجل نفسه، لا صاحب رقمه اليوم
   if (items && items.length) p.items = items;
-  return opsNewEntry('void', p, { target_kind: kindLabel });
+  return opsNewEntry('void', p, { target_kind: kindLabel, target_date: row.treatment_date || row.inspection_date || row.date || null });   // N25-R9: تاريخ السجل المطلوب إلغاؤه يُحفظ مع الطلب ليُشرح الرفض لاحقاً
 }
 
 async function opsVoidMany(kindLabel, rows, reason) {
@@ -6437,16 +6437,54 @@ const OPS_UNIT_CODE_MSG = {
   identity_unresolved: 'تعذّر إثبات هوية البرج من السجل الأصلي (لا tower_id مخزَّن ولا رابط مؤكَّد على الخادم، والخط أُعيد ترقيمه) — لا تُستنتج من صاحب الرقم اليوم',
   identity_ambiguous: 'السجل مرتبط بأكثر من برج على الخادم — لا يُحسم', identity_conflict: 'هوية السجل المخزَّنة تخالف رابطه المسجَّل على الخادم',
   tower_retired: 'البرج مُخرَج إلى الأرشيف', unknown_tower: 'البرج غير معروف على الخادم', unknown_inspection: 'السجل غير موجود على الخادم',
-  tower_not_initialised: 'حالة هذا البرج غير مهيّأة على الخادم (يلزم تهيئة قبل الإلغاء)', later_ops: 'توجد عمليات لاحقة على الأقسام نفسها تمنع الإلغاء (ألغِها أولاً)',
+  tower_not_initialised: 'حالة هذا البرج غير مهيّأة على الخادم (يلزم تهيئة قبل الإلغاء)', later_ops: 'توجد عملية لاحقة على الأقسام نفسها تمنع إلغاء هذا السجل وحده — ألغِ العملية اللاحقة أولاً ثم أعد المحاولة',
   no_before_value: 'تعذّر إثبات الحالة السابقة لأحد الأقسام', reason_required: 'السبب إلزامي', topology_busy: 'تغيير ترقيم جارٍ على الخادم — أعد المحاولة بعد قليل',
   identity_changed: 'تغيّرت هوية الأبراج أثناء التنفيذ — لم يُلغَ شيء، أعد المحاولة', impact_changed: 'تغيّر أثر الإلغاء منذ المعاينة — لم يُلغَ شيء؛ أعد الإلغاء ليُعاد عرض الأثر',
   op_id_reused: 'معرّف العملية استُخدم لطلب مختلف', invalid: 'بيانات غير صالحة', forbidden: 'الإلغاء من صلاحيات المدير فقط', server_error: 'خطأ في الخادم — لم يُلغَ شيء', already_voided: 'مُلغى سابقاً'
 };
+// N25-R9: أسماء الأقسام بالعربية (لا تُعرض مفاتيح الخادم الخام) + تفسير العملية اللاحقة التي تمنع الإلغاء. الترتيب يأتي من روابط الخادم (op_later: المكوّنات المشتركة + المصدر) لا من التواريخ وحدها.
+const OPS_COMP_AR = { ins_R: 'عوازل الدائرة 1 — طور R', ins_S: 'عوازل الدائرة 1 — طور S', ins_T: 'عوازل الدائرة 1 — طور T', ins2_R: 'عوازل الدائرة 2 — طور R', ins2_S: 'عوازل الدائرة 2 — طور S', ins2_T: 'عوازل الدائرة 2 — طور T',
+  iron: 'الهيكل الحديدي', foundation: 'الأساس', road: 'طريق الوصول', attachment: 'الملحقات', fire: 'الحريق', washing: 'غسيل العوازل',
+  wire_r1: 'أسلاك الدائرة 1 — طور R', wire_s1: 'أسلاك الدائرة 1 — طور S', wire_t1: 'أسلاك الدائرة 1 — طور T', wire_r1_c2: 'أسلاك الدائرة 2 — طور R', wire_s1_c2: 'أسلاك الدائرة 2 — طور S', wire_t1_c2: 'أسلاك الدائرة 2 — طور T',
+  ground_1: 'سلك الأرضي 1', ground_2: 'سلك الأرضي 2' };
+const OPS_KIND_AR = { observation: 'كشف', treatment: 'معالجة', correction: 'تصحيح', void: 'إلغاء', annotate: 'تعديل وصفي', seed: 'تهيئة', config: 'تهيئة' };
+function opsCompsAr(keys) {
+  const seen = new Set(), out = [];
+  (keys || []).forEach(k => { const t = OPS_COMP_AR[k] || 'قسم آخر'; if (!seen.has(t)) { seen.add(t); out.push(t); } });
+  return out;
+}
+function _cuLaterLine(o, queuedIds) {
+  const comps = opsCompsAr(o && o.components);
+  const queued = o && o.source_id && queuedIds && queuedIds.has(String(o.source_id));
+  return (OPS_KIND_AR[o && o.kind] || (o && o.kind) || 'عملية') + ' بتاريخ ' + ((o && o.business_date) || '—') + (comps.length ? ' على: ' + comps.join('، ') : '') + (o && o.actor ? ' (بواسطة ' + o.actor + ')' : '') +
+    (queued ? ' — طلب إلغائها محفوظ على هذا الجهاز' : '');
+}
+// الخطوة التالية الوحيدة المسموحة بالسياسة: إلغاء العملية اللاحقة صراحةً (بقرار المدير ومعاينة أثرها) ثم إعادة المحاولة. لا شيء يُلغى تلقائياً.
+function _cuNextStep(later, queuedIds) {
+  const l = (later || []).filter(o => o && !(o.source_id && queuedIds && queuedIds.has(String(o.source_id))));
+  if (!l.length) return 'سيُرسل هذا الطلب تلقائياً بعد تأكيد إلغاء العملية اللاحقة المحفوظة على هذا الجهاز.';
+  const k = l[0].kind, d = l[0].business_date || '';
+  const where = k === 'treatment' ? 'من «سجل المعالجات»' : 'من «السجلات»';
+  const what = k === 'treatment' ? 'المعالجة اللاحقة' : (k === 'correction' ? 'التصحيح اللاحق' : 'الكشف اللاحق');
+  return 'الخطوة التالية: ألغِ ' + what + (d ? ' بتاريخ ' + d : '') + ' ' + where + ' (سيُعرض أثر ذلك قبل التأكيد)، ثم أعد المحاولة هنا. لا يُلغى أي سجل آخر تلقائياً.';
+}
 const _cuResults = {};
-function _cuRowLabel(x) { return (x && x.line_name ? x.line_name : '') + ' — برج ' + (x && x.tower_number != null ? x.tower_number : '') + (x && x.date ? ' — ' + x.date : ''); }
+function _cuRowLabel(x) {
+  const base = (x && x.line_name ? x.line_name : '') + ' — برج ' + (x && x.tower_number != null ? x.tower_number : '') + (x && x.date ? ' — ' + x.date : '');
+  // N25-R9: هوية البرج الدائمة — إن أُعيد ترقيمه أو أُرشف يُذكر رقمه/موضعه الحالي (لا صاحب الرقم القديم)
+  if (x && x.retired) return base + ' (برج مُخرَج إلى الأرشيف)';
+  if (x && x.cur_number != null && (String(x.cur_number) !== String(x.tower_number) || (x.cur_line && x.cur_line !== x.line_name))) return base + ' (رقمه الحالي: ' + (x.cur_line && x.cur_line !== x.line_name ? x.cur_line + ' — ' : '') + 'برج ' + x.cur_number + ')';
+  return base;
+}
 function _cuFailLines(res) {
   const fl = (res && Array.isArray(res.failures) && res.failures.length) ? res.failures : (res && res.failed ? [res.failed] : []);
-  return fl.slice(0, 6).map(f => '• ' + _cuRowLabel(f) + ': ' + (OPS_UNIT_CODE_MSG[f.code] || ('رفض الخادم (' + f.code + ')'))).join('\n') + (fl.length > 6 ? '\n… و' + (fl.length - 6) + ' سجل آخر' : '');
+  return fl.slice(0, 6).map(f => {
+    let t = '• ' + _cuRowLabel(f) + ': ' + (OPS_UNIT_CODE_MSG[f.code] || ('رفض الخادم (' + f.code + ')'));
+    const d = f && f.detail;
+    if (d && Array.isArray(d.later_ops) && d.later_ops.length) t += '\n   ↳ ' + d.later_ops.slice(0, 4).map(o => _cuLaterLine(o)).join('\n   ↳ ') + '\n   ' + _cuNextStep(d.later_ops);
+    else if (d && d.component) t += ' (' + opsCompsAr([d.component]).join('') + ')';
+    return t;
+  }).join('\n') + (fl.length > 6 ? '\n… و' + (fl.length - 6) + ' سجل آخر' : '');
 }
 function _cuRefusalMsg(res) {
   if (!res) return '⚠️ لم يصل ردّ الخادم';
@@ -6474,6 +6512,8 @@ function _cuBody(prev, list, online) {
   if (corr) h += '<div style="font-size:0.84rem">وتُلغى ' + corr + ' تصحيح(ات) مرتبطة بهذا الكشف.</div>';
   const dry = (prev.dry && prev.dry.results) || [];
   const rv = dry.some(x => x && (x.review_required || (x.cascade && Array.isArray(x.cascade.uncertain) && x.cascade.uncertain.length)));
+  const reb = []; dry.forEach(x => ((x && x.cascade && x.cascade.rebased) || []).forEach(o => reb.push(o)));
+  if (reb.length) h += '<div style="font-size:0.84rem;margin-top:6px">عمليات لاحقة على الأقسام نفسها لن تُلغى: ستُعاد حالتها فوق السجل المتبقّي (' + reb.length + ' عملية — ' + opsCompsAr([].concat.apply([], reb.map(o => o.components || []))).map(_atEsc).join('، ') + ').</div>';
   if (rv) h += '<div style="background:#FFFAF0;border:1px solid #F6AD55;border-radius:8px;padding:8px;margin-top:6px;font-size:0.84rem">⚠️ بعض الأقسام ستصبح «غير معروفة» لتعذّر إثبات حالتها من السجل المتبقّي، وتحتاج كشفاً جديداً.</div>';
   if (dry.some(x => x && x.no_prior_state)) h += '<div style="font-size:0.84rem;margin-top:4px">بعض الأبراج ستعود «لم يُكشف» (لا كشف سابق).</div>';
   h += '<div style="font-size:0.8rem;color:#718096;margin-top:6px">سياسة الاعتماد: الإلغاء من صلاحيات المدير فقط ويُسجَّل باسمه وبسببه.</div>';
@@ -6837,8 +6877,7 @@ function opsVoidDependencies(e, later, items) {
     ((y.payload.target_source_id && srcs.has(String(y.payload.target_source_id))) || (y.payload.target_op && ops.has(String(y.payload.target_op))))).map(y => y.id);
 }
 function opsLaterText(later, queuedIds) {
-  return (later || []).map(o => ({ observation: 'كشف', treatment: 'معالجة', correction: 'تصحيح' }[o.kind] || o.kind || '') + ' بتاريخ ' + (o.business_date || '—') + ' بواسطة ' + (o.actor || '—') +
-    (o.components && o.components.length ? ' [' + o.components.join(',') + ']' : '') + (o.source_id && queuedIds && queuedIds.has(String(o.source_id)) ? ' (مُحدَّد للإلغاء)' : ' (غير مُحدَّد للإلغاء)')).join(' | ');
+  return (later || []).map(o => _cuLaterLine(o, queuedIds)).join('\n');
 }
 function opsRetryVoid(id) {
   const rd = opsRead(); if (!rd.ok) return false;
@@ -6995,6 +7034,16 @@ function opsErrText(e) {
 
 // v335-C6r9: a cancellation REQUEST is not the cancellation. States: queued (never sent) / waiting for a newer cancellation / outcome of the last send unknown / refused by the server.
 // In every state the stored record is still active until the server confirms; "withdraw" removes only this request from the device.
+function opsTargetInfo(e) {
+  const k = e.target_kind === 'treatment' ? 'معالجة' : (e.target_kind === 'treatment_items' ? 'عناصر معالجة' : 'كشف');
+  let d = e.target_date || null;
+  if (!d && e.payload && e.payload.target_source_id) {
+    const id = String(e.payload.target_source_id);
+    try { const t = (treatmentsCache || []).find(x => x && String(x.id) === id); if (t) d = t.treatment_date; } catch (x) {}
+    if (!d) { try { const r = (records || []).concat(fullRecordsCache || []).find(x => x && String(x.id) === id); if (r) d = r.inspection_date; } catch (x) {} }
+  }
+  return { kind: k, date: d };
+}
 function opsVoidCard(e, queuedSrc) {
   const what = e.target_kind === 'treatment' ? 'المعالجة' : 'الكشف';
   const waiting = e.status === 'pending' && e.err === 'waiting_dependency';
@@ -7006,10 +7055,15 @@ function opsVoidCard(e, queuedSrc) {
   const later = rejected ? (e.detail && e.detail.later_ops) : (waiting ? e.waiting_later : null);
   if (rejected) {
     body += '<div style="font-size:0.78rem;margin-top:6px;color:#922B21">' + _csEsc(opsErrText(e)) + '</div>';
-    if (e.err === 'later_ops') body += '<div style="font-size:0.78rem;margin-top:4px;color:#7C4A03">لا يُلغى سجل قبل إلغاء ما كُتب بعده على نفس المكوّنات. ألغِ الأحدث أولاً (من «سجل المعالجات» أو «السجلات») ثم أعد المحاولة.</div>';
+    if (e.err === 'later_ops') body += '<div style="font-size:0.78rem;margin-top:4px;color:#7C4A03">' + _csEsc('لم يتغيّر شيء على الخادم والسجل ما زال فعّالاً. لا يُلغى سجل قبل إلغاء ما كُتب بعده على الأقسام نفسها.') + '</div>';
   }
   if (waiting) body += '<div style="font-size:0.78rem;margin-top:6px;color:#7C4A03">سيُرسل تلقائياً بعد تأكيد إلغاء السجل الأحدث المُحدَّد معه (بنفس المعرّف ونفس الطلب).</div>';
-  if (later && later.length) body += '<div style="font-size:0.76rem;margin-top:4px;color:#7C4A03">أعمال أحدث: ' + _csEsc(opsLaterText(later, queuedSrc)) + '</div>';
+  if (later && later.length) {
+    const ti = opsTargetInfo(e);   // N25-R9: السجل المحجوب + العملية اللاحقة الحاجبة (نوعها وتاريخها وأقسامها بالعربية) + الخطوة التالية
+    body += '<div style="font-size:0.78rem;margin-top:6px;color:#2D3748;white-space:pre-line"><b>السجل المطلوب إلغاؤه:</b> ' + _csEsc(ti.kind + (ti.date ? ' بتاريخ ' + ti.date : '') + ' — ' + (e.line || '') + ' — برج ' + (e.tower || '')) + '</div>' +
+      '<div style="font-size:0.78rem;margin-top:4px;color:#7C4A03;white-space:pre-line"><b>العملية اللاحقة التي تمنع إلغاءه:</b>\n' + _csEsc(opsLaterText(later, queuedSrc)) + '</div>' +
+      '<div style="font-size:0.78rem;margin-top:4px;color:#7C4A03">' + _csEsc(_cuNextStep(later, queuedSrc)) + '</div>';
+  }
   if (unknown && !rejected) body += '<div style="font-size:0.78rem;margin-top:6px;color:#7C4A03">قد يكون الخادم استلم الطلب ونفّذه. ستُعاد المحاولة بأمان بنفس المعرّف دون تكرار؛ لا يمكن سحبه الآن.</div>';
   if (!rejected && !waiting && !unknown && e.err) body += '<div style="font-size:0.72rem;color:#7B7B7B;margin-top:4px">آخر محاولة: ' + _csEsc(e.err) + '</div>';
   if (opsActorMismatch(e)) body += '<div style="font-size:0.78rem;color:#7C4A03;margin-top:6px">تخص: ' + _csEsc(e.uname || '—') + ' — سجّل الدخول بحسابه ليُرسلها.</div>';
