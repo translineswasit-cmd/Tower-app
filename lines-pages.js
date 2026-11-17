@@ -523,15 +523,21 @@ function towerDetailModel(env, opts) {
   const row = env.row && typeof env.row === 'object' ? env.row : {}, meta = env.meta || {};
   const circuits = [1, 2].map(n => {
     const pre = n === 1 ? 'ins_' : 'ins2_', phases = {};
+    // N25-R8: circuit 2 is single by the project rule (all 400 kV, 132 kV single lines) - the SERVER already resolved it in meta.circuits (read-time overlay of the same rule). Stored circuit-2 rows that were seeded «unknown» and never
+    // held data follow that resolution; a row with recorded data (known / invalid) is never overridden. No guess: only the server's own resolution is used.
+    const c2single = n === 2 && !!(meta.circuits && meta.circuits.circuit2_applicability === 'not_applicable');
     ['R', 'S', 'T'].forEach(ph => {
       const c = comps[pre + ph];
+      if (c2single && (!c || (c.ap === 'unknown' && c.ds !== 'known' && c.ds !== 'invalid'))) { phases[ph] = { state: 'not_applicable', ap: 'not_applicable', fromMeta: true }; return; }
       if (!c) phases[ph] = { state: 'unknown', ap: null };
       else if (c.ap === 'not_applicable') phases[ph] = { state: 'not_applicable', ap: c.ap };
       else if (c.ds !== 'known' || !c.v || !_tdBoolArr(c.v.damaged)) phases[ph] = { state: 'unknown', ap: c.ap, flags: c.fl || [], invalid: c.ds === 'known' };   // known-but-malformed damage arrays are NOT drawn and NOT read as healthy
       else {
         const cy = c.v.cycle, okCy = Array.isArray(cy) && cy.length === c.v.damaged.length && cy.every(x => Number.isInteger(x) && x >= 0);
         const dm = c.v.damaged, openN = dm.filter(Boolean).length, badCnt = c.v.damaged_count !== undefined && c.v.damaged_count !== null && c.v.damaged_count !== openN;   // N24-B3B: the authoritative damaged[] gives the CURRENT open count; a disagreeing damaged_count is not shown as a number
-        phases[ph] = { state: 'known', ap: c.ap, cond: c.cond, damaged: dm, cycle: okCy ? cy : null, cycleState: okCy ? 'ok' : (cy == null ? 'missing' : 'invalid'),
+        // N25-R8: the treated positions of the CURRENT state (component value.treated_positions) - used when present and valid; only an older row without it falls back to the cycle inference below
+        const tp = Array.isArray(c.v.treated_positions) && c.v.treated_positions.every(i => Number.isInteger(i) && i >= 0 && i < dm.length) ? Array.from(new Set(c.v.treated_positions)).filter(i => !dm[i]).sort((a, b) => a - b) : null;
+        phases[ph] = { state: 'known', ap: c.ap, cond: c.cond, damaged: dm, cycle: okCy ? cy : null, cycleState: okCy ? 'ok' : (cy == null ? 'missing' : 'invalid'), flags: c.fl || [], treated: tp,
           openCount: badCnt ? null : openN, total: dm.length,
           recurrent: okCy ? dm.filter((d, i) => d && cy[i] > 0).length : null,       // damaged now AND a recorded replacement cycle at the same position (when it happened is NOT known)
           priorOk: okCy ? dm.filter((d, i) => !d && cy[i] > 0).length : null };      // sound now with a recorded replacement cycle (NOT proven to belong to any damage episode)   // a missing / malformed cycle never becomes zero or "treated"
@@ -587,12 +593,14 @@ function _tdEsc(v) { return (typeof _csEsc === 'function') ? _csEsc(v) : String(
 function _tdPhaseLines(c) {
   return ['R', 'S', 'T'].map(ph => {
     const x = c.phases[ph], st = 'font-size:0.82rem;padding:2px 0;';
-    if (x.state !== 'known') return '<div style="' + st + 'color:#7B341E">الفيز ' + ph + ': غير مسجّل</div>';
+    if (x.state !== 'known') return '<div style="' + st + 'color:#7B341E">الفيز ' + ph + ': ' + ((x.flags || []).indexOf('equipment_replaced') >= 0 ? 'غير معروف — المعدّة استُبدلت ولم تُكشف بعد' : 'غير مسجّل') + '</div>';
     let t = 'الفيز ' + ph + ': ' + (x.openCount == null ? '<span style="color:#7B341E">عدد المتضرر غير متّسق مع المصفوفة — لا يُعرض رقم</span>' : '<strong>' + x.openCount + '</strong> موضع متضرر مفتوح حالياً من ' + x.total);
     if (x.cycle) {
       if (x.recurrent > 0) t += ' — <span style="color:#9B2C2C">' + x.recurrent + ' منها متضرر مجدداً في موضع استُبدل سابقاً (دورة مسجّلة، دون تحديد وقت حدوثه)</span>';
-      if (x.priorOk > 0) t += ' — ' + x.priorOk + ' موضع سليم الآن وله دورة استبدال مسجّلة سابقاً (لا يُعرف ضمن أي ضرر)';
-    } else t += ' — <span style="color:#7B341E">الدورات غير معروفة: لا يمكن تمييز الاستبدال السابق أو تكرار الضرر</span>';
+      if (x.treated) { if (x.treated.length > 0) t += ' — <span style="color:#276749"><strong>' + x.treated.length + '</strong> موضع معالَج (مواضع ' + x.treated.map(i => i + 1).join('، ') + ')</span>'; }
+      else if (x.priorOk > 0) t += ' — ' + x.priorOk + ' موضع سليم الآن وله دورة استبدال مسجّلة سابقاً (لا يُعرف ضمن أي ضرر)';
+    } else t += (x.treated && x.treated.length ? ' — <span style="color:#276749"><strong>' + x.treated.length + '</strong> موضع معالَج</span>' : '') + ' — <span style="color:#7B341E">الدورات غير معروفة: لا يمكن تمييز الاستبدال السابق أو تكرار الضرر</span>';
+    if ((x.flags || []).indexOf('equipment_replaced') >= 0) t += ' — <span style="color:#2B6CB0">معدّة مستبدلة (حالتها مسجّلة عند الاستبدال)</span>';
     return '<div style="' + st + '">' + t + '</div>';
   }).join('');
 }
@@ -651,7 +659,7 @@ function renderTowerDetail(lineName, towerNum) {
       html += `<div class="insulator-legend" style="margin-bottom:10px"><div class="legend-item"><div class="legend-box ok"></div><span>سليم</span></div><div class="legend-item"><div class="legend-box dmg"></div><span>متضرر</span></div><div class="legend-item"><div style="width:16px;height:12px;border-radius:2px;border:1.5px solid #276749;background:#48BB78;display:inline-block;vertical-align:middle"></div><span style="margin-right:4px">استبدال مسجّل سابقاً (سليم الآن)</span></div></div>`;
       html += `<div id="${cid}" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center"></div>`;
       const st = {}, cy = {}, ti = {}, unk = [];
-      ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; if (x.state === 'known') { st[ph] = x.damaged; cy[ph] = x.cycle || []; ti[ph] = x.cycle ? x.damaged.map((d, i) => (!d && (x.cycle[i] || 0) > 0) ? i : -1).filter(i => i >= 0) : []; } else { st[ph] = []; cy[ph] = []; ti[ph] = []; unk.push(ph); } });
+      ['R', 'S', 'T'].forEach(ph => { const x = c.phases[ph]; if (x.state === 'known') { st[ph] = x.damaged; cy[ph] = x.cycle || []; ti[ph] = x.treated ? x.treated.slice() : (x.cycle ? x.damaged.map((d, i) => (!d && (x.cycle[i] || 0) > 0) ? i : -1).filter(i => i >= 0) : []); } else { st[ph] = []; cy[ph] = []; ti[ph] = []; unk.push(ph); } });
       draws.push(() => renderTowerDetailInsulators(st, ti, mode, stA, stB, cid, cy, unk));
       html += '<div style="margin-top:8px">' + _tdPhaseLines(c) + '</div>';
     } else {
