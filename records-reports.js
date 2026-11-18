@@ -446,10 +446,12 @@ function reportCell(c, r) {
 }
 
 // v335-C6r8: يرجع null إن تغيّر النطاق/الجلسة أثناء الانتظار (ردّ قديم لا يُستهلك)
+let _reportTowerLabels = {};
 async function getReportAvailableTowers(scope) {
   scope = scope || reportCaptureScope();
   const { lines, from, to, types } = scope;
-  const towers = new Set();
+  const towers = new Set(), tlab = {};
+  const addT = (r) => { const k = reportTowerKey(r); if (k != null) { towers.add(k); if (!tlab[k]) tlab[k] = reportTowerKeyLabel(r, k); } };
   const aux = await reportEnsureAux(types, false, scope);
   if (aux.stale || !reportScopeCurrent(scope, true)) return null;
   if (!aux.ok) showToast(reportAuxText(aux.failed), 'error');
@@ -457,12 +459,12 @@ async function getReportAvailableTowers(scope) {
     let rows;
     try { rows = await fetchInspectionsForReport(lines, from, to, undefined, undefined, { light: true }); }
     catch (e) { showToast(String(e && e.message) === 'report_coverage_incomplete' ? reportErrorText(e) : '⚠️ تعذّر تحميل قائمة الأبراج (الحالة/الإلغاءات غير متاحة)', 'error'); rows = []; }
-    rows.forEach(r => { if (r.tower_number != null) towers.add(String(r.tower_number)); });
+    rows.forEach(r => { if (r.tower_number != null) addT(r); });
   }
   if (types.includes('treatment')) {
     (aux.rows.treat || []).forEach(t => {
       if (!opsIsVoided(t.id) && (!lines || lines.includes(t.line_name)) && (!from || (t.treatment_date||'') >= from) && (!to || (t.treatment_date||'') <= to) && t.tower_number != null) {
-        towers.add(String(t.tower_number));
+        addT(t);
       }
     });
   }
@@ -479,11 +481,13 @@ async function getReportAvailableTowers(scope) {
       if (lines && !lines.includes(r.line_name)) return;
       if (from && (r.inspection_date||'') < from) return;
       if (to && (r.inspection_date||'') > to) return;
-      if (r.tower_number != null) towers.add(String(r.tower_number));
+      if (r.tower_number != null) addT(r);
     });
   }
   if (!reportScopeCurrent(scope, true)) return null;
-  return [...towers].sort((a,b) => (parseInt(a)||0) - (parseInt(b)||0) || a.localeCompare(b));
+  _reportTowerLabels = tlab;
+  const isA = k => String(k).indexOf('A:') === 0;   // الفعّالة أولاً بترتيب الرقم، ثم المؤرشفة
+  return [...towers].sort((a,b) => (isA(a) - isA(b)) || (parseInt(a)||0) - (parseInt(b)||0) || a.localeCompare(b));
 }
 
 async function updateReportTowersList() {
@@ -496,7 +500,7 @@ async function updateReportTowersList() {
   wrap.innerHTML = towers.map(tn => `
     <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
       <input type="checkbox" class="repTowerChk" value="${tn}" checked onchange="updateReportResultCount()">
-      <span>برج ${tn}</span>
+      <span>${_reportTowerLabels[tn] || ('برج ' + tn)}</span>
     </label>`).join('');
 }
 function toggleAllReportTowers() {
@@ -508,7 +512,20 @@ function toggleAllReportTowers() {
 }
 
 // دالة تحقق موحّدة: هل رقم برج معيّن يمر فلتر الأبراج الحالي (كل / نطاق / معيّنة)؟
-function reportRowPasses(r) { return reportTowerPasses(csFilterNumber(r), true); }   // N25-R5: المرشّح يقارن الرقم الحالي لهوية البرج لا لقطة الصف
+// N25-R12: مفتاح اختيار البرج في التقرير = هويته الدائمة: برج فعّال → رقمه الحالي؛ برج مؤرشف → 'A:'+tower_id (لا رقمه القديم الذي قد يحمله برج آخر). القائمة والمرشّح يستعملان المفتاح نفسه.
+function reportTowerKey(r) {
+  const n = csFilterNumber(r); if (n != null) return String(n);
+  try { if (r && r.tower_id && csRowIdent(r) === 'retired') return 'A:' + String(r.tower_id); } catch (e) {}
+  return null;
+}
+function reportTowerKeyLabel(r, key) {
+  if (String(key).indexOf('A:') !== 0) return 'برج ' + key;
+  let n = r && r.tower_number; try { const e = csMap(r.line_name).byId[String(r.tower_id)]; if (e && e.rn != null) n = e.rn; } catch (e) {}
+  return '🗄️ برج مؤرشف (كان رقمه ' + (n == null ? '؟' : n) + ')';
+}
+// ملاحظة هوية السطر في الملفات: التقرير الحالي = حالة الأبراج الفعّالة (لا لقطات) فلا ملاحظة؛ التاريخي/النشاط = لقطة الرقم + الرقم الحالي أو «مؤرشف» حيث يختلفان
+function reportIdNote(r) { try { return reportIsCurrent(r) ? '' : csRowNote(r); } catch (e) { return ''; } }
+function reportRowPasses(r) { return reportTowerPasses(reportTowerKey(r), true); }   // N25-R5: المرشّح يقارن الرقم الحالي لهوية البرج لا لقطة الصف
 function reportTowerPasses(towerNumber, fromRow) {
   const mode = document.querySelector('input[name="repTowersMode"]:checked').value;
   if (mode === 'all') return true;
@@ -782,6 +799,7 @@ async function buildReportInspectionCardCanvas(r, categories) {
     if (r.road_access_notes && r.road_access_notes.trim()) lines.push(`🛣️ ملاحظات الطريق: ${r.road_access_notes.trim()}`);
   }
 
+  { const idn = reportIdNote(r); if (idn) lines.unshift('🏷️ هوية البرج: ' + idn); }   // N25-R12
   // الملاحظات العامة لآخر كشف — تظهر دائماً إذا كان فيها أي نص، بغض النظر عن التصنيف المختار
   if (r.notes && String(r.notes).trim()) lines.push(`📝 ملاحظات: ${r.notes.trim()}`);
 
@@ -927,6 +945,7 @@ async function exportUnifiedReportExcel() {
   if (inspections.length) {
     const cols = getReportExcelColumns(categories);
     const data = inspections.map(r => { const o = {}; cols.forEach(c => { o[c.label] = reportCell(c, r); }); return o; });
+    { const notes = inspections.map(reportIdNote); if (notes.some(Boolean)) data.forEach((o, i) => { o['هوية البرج'] = notes[i]; }); }   // N25-R12: عمود الهوية فقط حيث يوجد فرق (رقم حالي مختلف / مؤرشف)
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'كشف');
   }
   if (treatments.length) {
@@ -937,6 +956,7 @@ async function exportUnifiedReportExcel() {
       'المعالج': t.treated_by || '',
       'العناصر المعالَجة': (t.items_treated||[]).map(i => i.label).join('، ')
     }));
+    { const notes = treatments.map(t => { try { return csRowNote(t); } catch (e) { return ''; } }); if (notes.some(Boolean)) data.forEach((o, i) => { o['هوية البرج'] = notes[i]; }); }
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'معالجات');
   }
   if (thermalForms.length || thermalRaw.length) {
@@ -952,7 +972,8 @@ async function exportUnifiedReportExcel() {
         'R': r.r1, 'S': r.s1, 'T': r.t1,
         'الحمل (MW)': '',
         'الحرارة المحيطة': r.ambient_temp,
-        'ملاحظات': ''
+        'ملاحظات': '',
+        ...((n) => n ? { 'هوية البرج': n } : {})((() => { try { return csRowNote(r); } catch (e) { return ''; } })())
       });
     });
     // المصدر الثاني: صفوف الاستمارات الرسمية
@@ -1056,7 +1077,7 @@ async function generateUnifiedReportPDF() {
       const thermalNotes = types.includes('thermal') ? getThermalNotesForTower(line_name, tower_number, thermalRaw, thermalForms, gkey) : [];
 
       for (const r of insForTower) { for (const card of await buildReportInspectionCardCanvas(r, categories)) await drawCard(card); }
-      for (const t of treatForTower) await drawCard(await buildTreatLogRecordCanvas(t));
+      for (const t of treatForTower) { try { t._idNote = csRowNote(t); } catch (e) { t._idNote = ''; } await drawCard(await buildTreatLogRecordCanvas(t)); }   // N25-R12
       if (thermalNotes.length) await drawCard(await buildThermalNotesCardCanvas(line_name, tower_number, thermalNotes));
     }
 
