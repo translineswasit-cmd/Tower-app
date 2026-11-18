@@ -1,4 +1,4 @@
-/* thermal-inspection.js — v335-C5r6
+/* thermal-inspection.js — v335-C5r6 + N25-R14a (ملكية الطابور بمعرّف المستخدم، حراسة تبديل الجلسة) + N25-R14 (حفظ محلي مُتحقَّق منه، تعريف البيانات المحفوظة، إعادة محاولة بنفس client_uuid)
    الكشف الحراري الجديد: جلسة الخط، إدخال القياسات، حفظ القراءة الخام وقياس مدخل الخط.
    يُحمَّل ويُنفَّذ مرة واحدة فقط عند أول طلب فعلي؛ لا يعمل شيء منه عند بدء التطبيق ولا عند فتح قائمة الكشف الحراري.
    سكربت كلاسيكي: يشارك الربط العام (let/const/function) مع index.html. */
@@ -12,6 +12,7 @@
 
     <!-- شريط الخطوط النشطة حالياً (كشف حراري) -->
     <div class="active-lines-tabs" id="activeThermalTabs" style="display:none"></div>
+    <div id="thCacheNote" role="status" style="display:none;margin:8px 0;padding:8px 12px;background:#FFFAF0;border:1.5px solid #F6AD55;border-radius:8px;font-size:0.8rem;color:#7B5B00"></div>
 
     <!-- step 1: session setup -->
     <div class="form-card" id="thermalSessionForm">
@@ -44,6 +45,7 @@
           <label>اختر البرج / المحطة *</label>
           <select id="th_point" onchange="onThermalPointChange()"><option value="">-- اختر --</option></select>
         </div>
+        <div id="thIdentNote" style="display:none;margin-top:6px;font-size:0.78rem;color:#4A5568"></div>
       </div>
       <div class="insulator-section" id="thermalReadingsBox" style="display:none">
         <h3><img src="icon-thermal.png" style="width:18px;height:18px;vertical-align:middle;margin-left:4px"> القياسات (°C)</h3>
@@ -104,7 +106,30 @@
 `);
   document.getElementById('th_date').value = new Date().toISOString().split('T')[0];
   refreshThermalLineSelect();
+  try { window.addEventListener('online', () => { try { thermalCacheNoteRefresh(); } catch (e) {} }); window.addEventListener('offline', () => { try { thermalCacheNoteRefresh(); } catch (e) {} }); } catch (e) {}
 })();
+
+// N25-R14: تعريف صريح للبيانات المحفوظة: (1) نسخة الخطوط/الأبراج المحفوظة إن لم تُحدَّث من الخادم، (2) هويات أبراج الخط الحالي إن كانت من نسخة قديمة، (3) انقطاع الاتصال.
+function thermalCacheNoteRefresh() {
+  const el = document.getElementById('thCacheNote'); if (!el) return;
+  const parts = [];
+  try { const n = lineCfgCacheNote(); if (n) parts.push(n); } catch (e) {}
+  const ln = currentThermalLine, m = ln && typeof _csLineId !== 'undefined' ? _csLineId[ln] : null;
+  if (ln && m && !(m.at >= performance.timeOrigin)) parts.push('🔗 هويات أبراج هذا الخط من نسخة محفوظة على الجهاز (نسخة الترقيم ' + (Number(m.rev) || 0) + '، آخر تحديث: ' + (m.at ? new Date(m.at).toLocaleString('ar-IQ') : '—') + ')');
+  if (ln && !m && navigator.onLine === false) parts.push('⚠️ لا توجد هويات أبراج محفوظة لهذا الخط على الجهاز — ستُحفظ القياسات برقم البرج وقت القياس فقط ويراجعها الخادم عند الإرسال');
+  if (navigator.onLine === false) parts.unshift('📴 لا اتصال: ما تحفظه هنا يبقى على الجهاز ولا يُؤكَّد بالخادم حتى يعود الاتصال');
+  el.textContent = parts.join(' • '); el.style.display = parts.length ? 'block' : 'none';
+}
+function thermalIdentNoteRefresh() {
+  const el = document.getElementById('thIdentNote'); if (!el) return;
+  const v = (document.getElementById('th_point') || {}).value || '';
+  if (!v || v.indexOf('TOWER::') !== 0) { el.style.display = 'none'; el.textContent = ''; return; }
+  const pk = _thPick, sn = pk && pk.snap;
+  const m = pk && typeof _csLineId !== 'undefined' ? _csLineId[pk.line] : null, cached = !!m && !(m.at >= performance.timeOrigin);
+  el.textContent = sn && !sn.blocked ? '🔗 هوية البرج الدائمة ملتقطة (نسخة الترقيم ' + sn.topology_rev + ')' + (cached ? ' — من نسخة محفوظة على الجهاز' : '')
+    : (sn && sn.blocked ? '' : '⚠️ لا تتوفر هوية دائمة لهذا البرج على الجهاز — يُحفظ القياس برقمه ويراجعه الخادم عند الإرسال (قد يُرفض ويُطلب مراجعته)');
+  el.style.display = el.textContent ? 'block' : 'none';
+}
 
 // N25-R6s: قائمة خط «كشف حراري جديد» = الخطوط المدمجة + الخطوط المُهيَّأة (line_towers_custom / lines_info) بنفس اكتشاف قائمة الكشف، بلا اشتراط تاريخ حراري سابق ولا لاحقة جهد.
 // السبب الجذري: القائمة كانت تُبنى مرة واحدة عند تحميل هذه الوحدة من LINES_DATA الثابتة فقط، بلا اكتشاف للخطوط المُهيَّأة ولا إعادة بناء بعد وصول الإعدادات.
@@ -113,6 +138,7 @@ function refreshThermalLineSelect() {   // N25-R6s3: الفهرس الموحّد
   try { registerConfiguredLineVoltages(); } catch (e) {}
   fillLineSelect(sel, { placeholder: '-- اختر الخط --' });
   try { refreshThermalPointOptions(); } catch (e) {}
+  try { thermalCacheNoteRefresh(); } catch (e) {}
 }
 try { registerLineSelector('thermal', refreshThermalLineSelect); } catch (e) {}
 // أبراج الخط الجاري بعد وصول إعدادات جديدة (إعادة ترقيم/إدراج/إخراج): تُبنى الخيارات من الأبراج الحالية دون مسّ ما كُتب.
@@ -248,6 +274,7 @@ function switchToThermalTab(lineName) {
   document.getElementById('thermalPointForm').style.display = 'block';
   resetThermalReadingInputs();
   renderActiveThermalTabs();
+  try { thermalCacheNoteRefresh(); } catch (e) {}
 }
 function showThermalSetupForAnotherLine() {
   document.getElementById('thermalPointForm').style.display = 'none';
@@ -295,11 +322,13 @@ async function thermalCapturePick(line, label) {
   if (!sn && navigator.onLine) { await csLineIdentLoad(line); sn = csIdentSnap(line, String(num), { mapOnly: true }); }
   if (my !== _thPickSeq) return;                      // اختيار أحدث حلّ محلّه: ردّ متأخر يُهمل
   _thPick = { line, num, snap: sn };
+  try { thermalIdentNoteRefresh(); } catch (e) {}
 }
 function onThermalPointChange() {
   const v = document.getElementById('th_point').value;
   const hadReview = !!_thReview; if (v && hadReview) thermalReviewClear();   // اختيار صريح بعد رسالة المراجعة: يلتقط صاحب الرقم الحالي، والقراءات المكتوبة تبقى
   try { const [_k, _l] = v.split('::'); if (v && _k !== 'LINE_ENTRY' && thermalSession) thermalCapturePick(thermalSession.line_name, _l); else { _thPickSeq++; _thPick = null; } } catch (e) {}
+  try { thermalIdentNoteRefresh(); } catch (e) {}
   const isLineEntry = v.startsWith('LINE_ENTRY::');
   document.getElementById('thermalReadingsBox').style.display = (v && !isLineEntry) ? 'block' : 'none';
   document.getElementById('lineEntryReadingsBox').style.display = (v && isLineEntry) ? 'block' : 'none';
@@ -317,7 +346,7 @@ function resetThermalReadingInputs() {
   ['le_r_landing','le_r_wt_in','le_r_wt_out','le_r_busbar',
    'le_s_landing','le_s_wt_in','le_s_wt_out','le_s_busbar',
    'le_t_landing','le_t_wt_in','le_t_wt_out','le_t_busbar'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  document.getElementById('th_point').value = ''; _thPickSeq++; _thPick = null; _thChkSeq++; thermalReviewClear();
+  document.getElementById('th_point').value = ''; _thPickSeq++; _thPick = null; _thChkSeq++; thermalReviewClear(); try { thermalIdentNoteRefresh(); } catch (e) {}
   document.getElementById('thermalReadingsBox').style.display = 'none';
   document.getElementById('lineEntryReadingsBox').style.display = 'none';
 }
@@ -328,8 +357,26 @@ function thermalIdentityMsg(c) {
   return ({ identity_required: 'تغيّر ترقيم هذا الخط ولا تتوفر هوية البرج لهذا القياس (حدّث الصفحة وأنت متصل)', stale_topology_identity: 'رقم البرج لم يعد يخص هذا البرج بعد تغيير الترقيم',
            tower_retired: 'هذا البرج أُخرج من الخدمة', unknown_tower_id: 'هوية البرج غير معروفة للخادم', future_topology_revision: 'نسخة ترقيم الخط أحدث من علم الخادم — أعد المحاولة بعد المزامنة' })[c] || c;
 }
+let _thRetry = null;   // N25-R14: آخر سجل لم يُحسم (لإعادة استعمال client_uuid عند إعادة المحاولة)
+// N25-R14a: تبديل الحساب (خروج/دخول) يصفّر كل حالة مؤقتة للكشف الحراري (الخط/الجلسة/النقطة/الهوية الملتقطة/إعادة المحاولة/المراجعة/الحقول)؛ الطوابير الدائمة لأصحابها لا تُمسّ هنا أبداً.
+function thermalResetTransient() {
+  _thRetry = null; _leRetry = null; _thPickSeq++; _thPick = null; _thChkSeq++; _thChk = null; _thReview = null;
+  activeThermalSessions = {}; currentThermalLine = null; thermalSession = null;
+  try {
+    const f = document.getElementById('thermalPointForm'); if (f) f.style.display = 'none';
+    const sf = document.getElementById('thermalSessionForm'); if (sf) sf.style.display = 'block';
+    ['th_ambient'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+    const ln = document.getElementById('th_line_name'); if (ln) ln.value = '';
+    resetThermalReadingInputs(); renderActiveThermalTabs();
+    const n = document.getElementById('thCacheNote'); if (n) { n.textContent = ''; n.style.display = 'none'; }
+  } catch (e) {}
+}
 async function saveThermalPoint() {
+  const ownerUid = thqUid(), gen0 = _csAuthGen;                    // N25-R14a: صاحب هذا القياس = من ضغط «تم»؛ لا يتغيّر مهما تبدّلت الجلسة لاحقاً
+  const live = () => gen0 === _csAuthGen && thqUid() === ownerUid;
+  if (!ownerUid) { showToast('⛔ سجّل الدخول أولاً', 'error'); return; }
   if (_thChk) { try { await _thChk; } catch (e) {} }   // فحص هوية معلّق بعد تحديث الترقيم يُنهى قبل أي حفظ
+  if (!live()) return;
   if (_thReview) { showToast('⚠️ راجع اختيار البرج أولاً: اختر النقطة صراحةً من القائمة (القراءات محفوظة)', 'error'); return; }
   const ptVal = document.getElementById('th_point').value;
   if (!ptVal) { showToast('⚠️ اختر البرج أو المحطة أولاً', 'error'); return; }
@@ -369,26 +416,40 @@ async function saveThermalPoint() {
       rec.tower_id = pk.snap.tower_id; rec.topology_rev = pk.snap.topology_rev;
     } }
 
+  // N25-R14: إعادة محاولة بعد فشل تخزين/إرسال قابل للتعافي تعيد نفس السجل (نفس client_uuid ونفس الهوية الملتقطة) إن لم يتغيّر شيء، فلا يتكرر سجل أُرسل ضاع ردّه.
+  { const sig = JSON.stringify(Object.assign({}, rec, { client_uuid: null }));
+    if (_thRetry && _thRetry.sig === sig) { rec.client_uuid = _thRetry.rec.client_uuid; if (_thRetry.rec.tower_id) { rec.tower_id = _thRetry.rec.tower_id; rec.topology_rev = _thRetry.rec.topology_rev; } }
+    else _thRetry = { sig, rec }; }
   const btn = document.getElementById('thSaveBtn');
   btn.disabled = true;
+  // لا يُفرَّغ شيء ولا تُعلَن رسالة «حُفظ» قبل نجاح فعلي: إما تأكيد الخادم أو تخزين دائم مُتحقَّق منه بالجهاز. فشل التخزين = تبقى الحقول والبرج المختار وهويته.
+  // N25-R14a: بعد تبديل الحساب أثناء الانتظار لا نلمس واجهة الحساب الجديد؛ القياس يُخزَّن باسم صاحبه الأصلي (ownerUid) أو يُؤكَّد بالخادم بجلسته.
+  const keepOnStorageFail = () => { if (live()) { showToast('⛔ لم يُحفظ القياس — تعذّر التخزين على الجهاز. القراءات والبرج المختار باقية؛ حرّر مساحة ثم اضغط «تم» مرة أخرى', 'error'); btn.disabled = false; } else showToast('⛔ تعذّر تخزين قياس الحساب السابق على الجهاز', 'error'); };
+  const done = (msg, err) => { if (!live()) return; showToast(msg, err); btn.disabled = false; resetThermalReadingInputs(); };
   try {
-    const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-    if (res.ok) showToast('✅ تم حفظ القياس — ' + rec.point_label);
-    else {
-      let bt = ''; try { bt = await res.text(); } catch (e) {}
-      const idc = thermalIdentityCode(bt);
-      if (idc) { rec._conflict = idc; addToThermalQueue(rec); showToast('⚠️ ' + thermalIdentityMsg(idc) + ' — حُفظ القياس على الجهاز ولم يُكتب على أي برج آخر', 'error'); btn.disabled = false; resetThermalReadingInputs(); return; }
-      throw new Error(`HTTP ${res.status}`);
+    if (navigator.onLine !== false) {
+      let res = null;
+      try { res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) }); } catch (e) { res = null; }
+      if (res && res.ok) { if (live()) _thRetry = null; done('✅ تم حفظ القياس بالخادم — ' + rec.point_label); return; }
+      if (res) {
+        let bt = ''; try { bt = await res.text(); } catch (e) {}
+        const idc = thermalIdentityCode(bt);
+        if (idc) {
+          rec._conflict = idc;
+          if (!addToThermalQueue(rec, ownerUid)) { delete rec._conflict; keepOnStorageFail(); return; }
+          if (live()) _thRetry = null; done('⚠️ ' + thermalIdentityMsg(idc) + ' — حُفظ القياس على الجهاز للمراجعة ولم يُكتب على أي برج آخر', 'error'); return;
+        }
+      }
     }
-  } catch {
-    addToThermalQueue(rec);
-    const msg = navigator.onLine ? '📦 خطأ بالإرسال، حُفظ محلياً' : '📦 حُفظ أوف لاين، سيُرسل تلقائياً';
-    showToast(msg);
-  }
-  btn.disabled = false;
-  resetThermalReadingInputs();
+    if (!addToThermalQueue(rec, ownerUid)) { keepOnStorageFail(); return; }
+    if (live()) _thRetry = null;
+    done(navigator.onLine === false ? '📦 حُفظ على الجهاز فقط (لا اتصال) — لم يُؤكَّد بالخادم بعد، سيُرسل تلقائياً عند عودة الاتصال' : '📦 تعذّر الإرسال — حُفظ على الجهاز فقط ولم يُؤكَّد بالخادم بعد، سيُعاد تلقائياً');
+  } catch (e) { keepOnStorageFail(); return; }
 }
+let _leRetry = null;
 async function saveLineEntryPoint() {
+  const ownerUid = thqUid(), gen0 = _csAuthGen, live = () => gen0 === _csAuthGen && thqUid() === ownerUid;     // N25-R14a
+  if (!ownerUid) { showToast('⛔ سجّل الدخول أولاً', 'error'); return; }
   const ptVal = document.getElementById('th_point').value;
   if (!ptVal) { showToast('⚠️ اختر مدخل الخط أولاً', 'error'); return; }
   const [kind, label] = ptVal.split('::');
@@ -428,23 +489,20 @@ async function saveLineEntryPoint() {
     client_uuid: genUUID(),
   };
 
+  { const sig = JSON.stringify(Object.assign({}, rec, { client_uuid: null }));      // N25-R14: نفس منطق إعادة المحاولة لمدخل الخط (نقطة مستقلة عن أبراج الخط)
+    if (_leRetry && _leRetry.sig === sig) rec.client_uuid = _leRetry.rec.client_uuid; else _leRetry = { sig, rec }; }
   const btn = document.getElementById('leSaveBtn');
   btn.disabled = true;
-  if (navigator.onLine) {
-    try {
-      const res = await sbFetch('line_entry_thermal?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-      if (res.ok) showToast('✅ تم حفظ قياسات مدخل الخط — جهة ' + label);
-      else throw new Error();
-    } catch {
-      addToLineEntryQueue(rec);
-      showToast('📦 حُفظ محلياً، سيُرسل عند الاتصال');
+  const fin = (msg, err) => { if (!live()) return; showToast(msg, err); btn.disabled = false; resetThermalReadingInputs(); };
+  try {
+    if (navigator.onLine !== false) {
+      let res = null; try { res = await sbFetch('line_entry_thermal?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) }); } catch (e) { res = null; }
+      if (res && res.ok) { if (live()) _leRetry = null; fin('✅ تم حفظ قياسات مدخل الخط بالخادم — جهة ' + label); return; }
     }
-  } else {
-    addToLineEntryQueue(rec);
-    showToast('📦 حُفظ أوف لاين، سيُرسل تلقائياً');
-  }
-  btn.disabled = false;
-  resetThermalReadingInputs();
+    if (!addToLineEntryQueue(rec, ownerUid)) { if (live()) { showToast('⛔ لم يُحفظ قياس مدخل الخط — تعذّر التخزين على الجهاز. القراءات باقية؛ حرّر مساحة ثم اضغط «تم» مرة أخرى', 'error'); btn.disabled = false; } else showToast('⛔ تعذّر تخزين قياس الحساب السابق على الجهاز', 'error'); return; }
+    if (live()) _leRetry = null;
+    fin(navigator.onLine === false ? '📦 حُفظ على الجهاز فقط (لا اتصال) — لم يُؤكَّد بالخادم بعد' : '📦 تعذّر الإرسال — حُفظ على الجهاز فقط ولم يُؤكَّد بالخادم بعد');
+  } catch (e) { if (live()) { showToast('⛔ لم يُحفظ قياس مدخل الخط', 'error'); btn.disabled = false; } return; }
 }
 function finishThermalSession() {
   if (currentThermalLine) endThermalLine(currentThermalLine);

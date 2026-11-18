@@ -2536,6 +2536,9 @@ function csPurgeUserData() {
   try { if (typeof depxPurge === 'function') depxPurge(); } catch (e) {}   // v335-C6r10: ملف PDF الجاهز وعملية التصدير الجارية تخصّ الحساب الذي أنشأها
   try { if (window.PeriodStats && typeof window.PeriodStats.purge === 'function') window.PeriodStats.purge(); } catch (e) {}   // v335-C6r17 (N22): نتائج الإحصائيات تخصّ الحساب الذي قرأها
   try { csDirPurge(); } catch (e) {}   // N25-R5(r2): دليل الأبراج المخزَّن يخص الحساب الذي قرأه
+  try { localStorage.removeItem('active_thermal_sessions'); if (typeof thermalResetTransient === 'function') thermalResetTransient(); } catch (e) {}   // N25-R14a: اختيار/إعادة محاولة/جلسات الكشف الحراري المؤقتة تخص الحساب؛ الطوابير الدائمة لا تُمسّ
+  try { lineCfgPurge(); } catch (e) {}   // N25-R14: نسخة الخطوط/الأبراج/الإعدادات المحفوظة تخص الحساب الذي قرأها
+  try { _csLineId = {}; localStorage.removeItem(CS_LINEID_KEY); } catch (e) {}   // N25-R14: خريطة (رقم → هوية دائمة) للخطوط تخص الحساب الذي قرأها
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -2648,9 +2651,10 @@ function csLineIdentAccept(line, rev, towers, seq) {
 }
 async function csLineIdentLoad(line) {      // تحديث خريطة خط؛ عند الانقطاع تبقى آخر خريطة معروفة
   if (!line || !navigator.onLine) return false;
-  const sq = _csIdSeq[line] || (_csIdSeq[line] = { issued: 0, applied: 0 }); const seq = ++sq.issued;
+  const sq = _csIdSeq[line] || (_csIdSeq[line] = { issued: 0, applied: 0 }); const seq = ++sq.issued; const gen = _csAuthGen;
   try {
     const r = await csCall('app_line_identity', { p_line_name: line });
+    if (gen !== _csAuthGen) return false;      // N25-R14a: ردّ حساب سابق لا يُخزَّن تحت حساب آخر
     if (r && r.ok === true && r.towers) return csLineIdentAccept(line, r.topology_rev, r.towers, seq);
   } catch (e) {}
   return false;
@@ -4056,7 +4060,7 @@ function updateStatus(online) {
 function getTotalPendingCount() {
   // طابور المعالجات/PATCH غير القابل للقراءة ليس فارغاً: يُحسب كعنصر معلّق مجهول حتى لا يُعلَن اكتمال المزامنة ولا يُسمح بإغلاق بلا تحذير
   const tq = readQueueStrict(TREATMENT_QUEUE_KEY), pq = readQueueStrict(INSPECTION_PATCH_QUEUE_KEY);
-  return getQueue().length + getThermalQueue().length + (tq.ok ? tq.items.length : 1) + getLineEntryQueue().length + (pq.ok ? pq.items.length : 1) + getStaffRosterQueue().length + opsPendingCount() + invTxnCount() + docqCount();   // v335-C5r3/r4
+  return getQueue().length + getThermalQueue().filter(thqVisible).length + (tq.ok ? tq.items.length : 1) + getLineEntryQueue().filter(thqVisible).length + (pq.ok ? pq.items.length : 1) + getStaffRosterQueue().length + opsPendingCount() + invTxnCount() + docqCount();   // v335-C5r3/r4
 }
 
 function updatePendingBadge() {
@@ -8240,23 +8244,43 @@ function isThermalRelevantTower(t, voltage) {
 
 const LINE_ENTRY_QUEUE_KEY = 'line_entry_queue';
 
-function addToLineEntryQueue(rec) {
-  const q = getLineEntryQueue(); q.push(rec); safeSetItem(LINE_ENTRY_QUEUE_KEY, JSON.stringify(q));
-  updatePendingBadge();
+// N25-R14: إضافة سجل لطابور محلي بنجاح مُتحقَّق منه: الطابور غير المقروء لا يُكتب فوقه أبداً، والنجاح لا يُعلَن إلا بعد قراءة السجل من التخزين نفسه؛ نفس client_uuid لا يُكرَّر.
+// يرجع true فقط إن بقي السجل فعلاً بالتخزين الدائم (واجهة الحفظ لا تُفرّغ الحقول ولا تعلن «حُفظ» إلا عندها).
+// N25-R14a: كل قياس حراري/مدخل خط معلّق يُربط محلياً بمعرّف المستخدم الثابت الذي أنشأه (`_uid`، نصّ؛ نفس اصطلاح docq: uid). بلا مالك = لا يُحفظ. `_uid` بيانات محلية: لا تُرسل للخادم أبداً.
+function thqUid() { return (typeof currentUser !== 'undefined' && currentUser && currentUser.id != null) ? String(currentUser.id) : null; }
+function thqOwn(r) { const u = thqUid(); return !!r && u !== null && r._uid != null && String(r._uid) === u; }
+function thqOwnerless(r) { return !!r && (r._uid == null || r._uid === ''); }
+function thqVisible(r) { return thqOwn(r) || thqOwnerless(r); }      // قياسات حساب آخر على هذا الجهاز لا تظهر ولا تُحسب ولا تُرسل ولا تُحذف
+function durableQueuePush(key, rec, ownerUid) {
+  if (ownerUid == null || ownerUid === '') return false;
+  const own = String(ownerUid);
+  let q = [];
+  try { const raw = localStorage.getItem(key); q = raw ? JSON.parse(raw) : []; if (!Array.isArray(q)) return false; } catch (e) { return false; }
+  const ex = q.find(x => x && x.client_uuid && x.client_uuid === rec.client_uuid);
+  if (ex && String(ex._uid) !== own) return false;                       // نفس المعرّف لمالك آخر/بلا مالك: لا كتابة فوقه ولا نقل ملكية
+  if (!ex) q.push(Object.assign({}, rec, { _uid: own }));
+  let ok = false;
+  try { ok = safeSetItem(key, JSON.stringify(q)) === true; } catch (e) { ok = false; }
+  if (ok) { try { const back = JSON.parse(localStorage.getItem(key) || '[]'); ok = Array.isArray(back) && back.some(x => x && x.client_uuid === rec.client_uuid && String(x._uid) === own); } catch (e) { ok = false; } }
+  try { updatePendingBadge(); } catch (e) {}
+  return ok;
 }
+function addToLineEntryQueue(rec, ownerUid) { return durableQueuePush(LINE_ENTRY_QUEUE_KEY, rec, ownerUid === undefined ? thqUid() : ownerUid); }
 
 function getLineEntryQueue() { try { return JSON.parse(localStorage.getItem(LINE_ENTRY_QUEUE_KEY) || '[]'); } catch { return []; } }
 
 async function syncLineEntryQueue() {
+  const uid = thqUid(), gen = _csAuthGen; if (!uid) return;
   const q = getLineEntryQueue();
-  if (!q.length) return;
+  if (!q.some(thqOwn)) return;
   const _snapKeys = snapshotQueueKeys(q);
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
+    if (!thqOwn(rec) || gen !== _csAuthGen || thqUid() !== uid) { remaining.push(rec); continue; }   // N25-R14a: بلا مالك/حساب آخر/تغيّرت الجلسة: لا يُرسل ولا يُعدَّل
     if (!rec.client_uuid) rec.client_uuid = genUUID();
     const toSend = { ...rec };
-    delete toSend._lastError;
+    delete toSend._lastError; delete toSend._uid;
     try {
       const res = await sbFetch('line_entry_thermal?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
       if (res.ok) synced++;
@@ -8273,27 +8297,42 @@ async function syncLineEntryQueue() {
   }
   saveQueueAfterSync(LINE_ENTRY_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
-  if (synced > 0) showToast(`✅ تم إرسال ${synced} قياس مدخل خط محفوظ أوف لاين`);
+  if (synced > 0 && gen === _csAuthGen && thqUid() === uid) showToast(`✅ تم إرسال ${synced} قياس مدخل خط محفوظ أوف لاين`);
 }
 
-function addToThermalQueue(rec) {
-  const q = getThermalQueue(); q.push(rec); safeSetItem(THERMAL_QUEUE_KEY, JSON.stringify(q));
-  updatePendingBadge();
+function addToThermalQueue(rec, ownerUid) { return durableQueuePush(THERMAL_QUEUE_KEY, rec, ownerUid === undefined ? thqUid() : ownerUid); }   // N25-R14: يرجع نجاح التخزين الدائم فعلاً
+
+// N25-R14: نص مراجعة رفض الهوية لقياس حراري معلّق (القياس والرقم/الوصف المسجَّل وقت الحدث والهوية الملتقطة تبقى كما هي؛ لا إعادة نسبة لصاحب الرقم الحالي)
+const THERMAL_CONFLICT_TEXT = {
+  identity_required: 'تغيّر ترقيم هذا الخط، ولم تكن هوية البرج الدائمة ملتقطة وقت القياس — لا يُنسب إلى برج برقمه الحالي',
+  stale_topology_identity: 'الرقم المسجَّل لم يعد يخص هذا البرج بعد تغيير الترقيم',
+  tower_retired: 'هذا البرج أُخرج من الخدمة',
+  unknown_tower_id: 'هوية البرج غير معروفة للخادم',
+  future_topology_revision: 'نسخة ترقيم الخط أحدث من علم الخادم — أعد المحاولة بعد تحديث الخط وأنت متصل'
+};
+function retryPendingThermal(i) {
+  const q = getThermalQueue(); if (!q[i] || !thqOwn(q[i])) return;   // N25-R14a: صاحب القياس فقط
+  delete q[i]._conflict; delete q[i]._lastError;
+  if (!safeSetItem(THERMAL_QUEUE_KEY, JSON.stringify(q))) { showToast('⛔ تعذّر الحفظ على الجهاز', 'error'); return; }
+  updatePendingBadge(); renderPendingSyncPage(); showToast('🔁 أُعيدت المحاولة — الخادم هو الحاكم على هوية البرج');
+  syncAllQueues().catch(() => {});
 }
 
 function getThermalQueue() { try { return JSON.parse(localStorage.getItem(THERMAL_QUEUE_KEY) || '[]'); } catch { return []; } }
 
 async function syncThermalQueue() {
+  const uid = thqUid(), gen = _csAuthGen; if (!uid) return;
   const q = getThermalQueue();
-  if (!q.length) return;
+  if (!q.some(thqOwn)) return;
   const _snapKeys = snapshotQueueKeys(q);
   let synced = 0;
   const remaining = [];
   for (const rec of q) {
+    if (!thqOwn(rec) || gen !== _csAuthGen || thqUid() !== uid) { remaining.push(rec); continue; }   // N25-R14a: بلا مالك/حساب آخر/تغيّرت الجلسة: لا يُرسل ولا يُعدَّل
     if (!rec.client_uuid) rec.client_uuid = genUUID();
     if (rec._conflict) { remaining.push(rec); continue; }   // N25-R4: محفوظ للمراجعة، لا إعادة إرسال تلقائية
     const toSend = { ...rec };
-    delete toSend._lastError; delete toSend._conflict;
+    delete toSend._lastError; delete toSend._conflict; delete toSend._uid;
     try {
       const res = await sbFetch('thermal_inspections?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(toSend) });
       if (res.ok) synced++;
@@ -8312,7 +8351,7 @@ async function syncThermalQueue() {
   }
   saveQueueAfterSync(THERMAL_QUEUE_KEY, _snapKeys, remaining);
   updatePendingBadge();
-  if (synced > 0) showToast(`✅ تم إرسال ${synced} قياس حراري محفوظ أوف لاين`);
+  if (synced > 0 && gen === _csAuthGen && thqUid() === uid) showToast(`✅ تم إرسال ${synced} قياس حراري محفوظ أوف لاين`);
 }
 
 function docqStatusHTML(state, code) {
@@ -8692,9 +8731,11 @@ if ('serviceWorker' in navigator) {
 let linesInfoCache = JSON.parse(JSON.stringify(LINES_INFO)); // احتياط أولي لحد ما يوصل تحميل قاعدة البيانات
 
 async function loadLinesInfoFromDB() {
+  const gen = _csAuthGen, uid0 = lineCfgUid();      // N25-R14a: ردّ بدأ تحت حساب لا يُقبل بعد تبديل الجلسة
   try {
     const rows = await fetchAllPages('lines_info?select=*&order=idx.asc');
-    if (Array.isArray(rows) && rows.length) { linesInfoCache = rows; try { refreshInspectionLineSelect(); } catch (e2) {} }
+    if (gen !== _csAuthGen || lineCfgUid() !== uid0) return;
+    if (Array.isArray(rows) && rows.length) { linesInfoCache = rows; _lineCfgMeta.info = true; _lineCfgMeta.infoAt = Date.now(); try { lineCfgPersist(); } catch (e3) {} try { refreshInspectionLineSelect(); } catch (e2) {} }
   } catch (e) {
     // فشل الاتصال: نبقى على القيم الاحتياطية الموجودة بالذاكرة (لا نكسر التطبيق أوف لاين)
   }
@@ -8930,7 +8971,8 @@ function renderPendingSyncPage() {
   const treatQ = getTreatmentQueue();
   const lineEntryQ = getLineEntryQueue();
   const staffRosterQ = getStaffRosterQueue();
-  const total = inspQ.length + thermQ.length + treatQ.length + lineEntryQ.length + staffRosterQ.length + opsPendingCount() + invTxnCount() + docqCount();
+  const thermVis = thermQ.filter(thqVisible).length, leVis = lineEntryQ.filter(thqVisible).length;   // N25-R14a: قياسات حساب آخر لا تظهر هنا
+  const total = inspQ.length + thermVis + treatQ.length + leVis + staffRosterQ.length + opsPendingCount() + invTxnCount() + docqCount();
 
   if (!total) { body.innerHTML = '<div class="empty-state">لا توجد عناصر معلقة ✅</div>'; return; }
 
@@ -8955,15 +8997,23 @@ function renderPendingSyncPage() {
     });
   }
 
-  if (thermQ.length) {
-    html += `<h3 style="color:#2E4057;margin:14px 0 8px"><img src="icon-thermal.png" style="width:17px;height:17px;vertical-align:middle;margin-left:4px"> قياسات حرارية (${thermQ.length})</h3>`;
+  if (thermVis) {
+    html += `<h3 style="color:#2E4057;margin:14px 0 8px"><img src="icon-thermal.png" style="width:17px;height:17px;vertical-align:middle;margin-left:4px"> قياسات حرارية (${thermVis})</h3>`;
     thermQ.forEach((rec, i) => {
+      if (!thqVisible(rec)) return;
       html += `<div class="dep-card" style="border-right-color:#F6C23E">
         <div class="dep-card-header">
           <div class="dep-card-title"><img src="icon-thermal.png" style="width:15px;height:15px;vertical-align:middle"> ${rec.line_name||'—'} — ${rec.point_label||'—'}</div>
           <div class="dep-card-meta">📅 ${rec.inspection_date||'—'} | أعلى قياس: ${rec.max_temp||'—'}°</div>
         </div>
+        ${thqOwnerless(rec)
+          ? `<div data-th-status="ownerless" style="font-size:12px;color:#7B5B00;background:#FFF5E1;border-radius:6px;padding:6px 8px;margin:6px 0">⚠️ قياس قديم بلا صاحب معروف — محفوظ على الجهاز، لن يُرسل تلقائياً ولا يُنسب لأحد. إن كان قياسك فاستلمه لحسابك صراحةً.</div>`
+          : rec._conflict
+          ? `<div data-th-status="review" style="font-size:12px;color:#c0392b;background:#fdecea;border-radius:6px;padding:6px 8px;margin:6px 0">⛔ للمراجعة: ${THERMAL_CONFLICT_TEXT[rec._conflict] || rec._conflict}.<br>القياس محفوظ على الجهاز كما أُدخل (${rec.point_label||'—'}، رقم وقت القياس ${rec.tower_number != null ? rec.tower_number : '—'})، ولم يُكتب على أي برج آخر ولن يُعاد إرساله تلقائياً.</div>`
+          : `<div data-th-status="pending" style="font-size:11px;color:#B7791F;margin:6px 0">📱 محفوظ على الجهاز فقط — لم يُؤكَّد بالخادم بعد${rec.point_type === 'tower' && !rec.tower_id ? ' — بلا هوية برج دائمة: قد يُرفض ويُطلب مراجعته' : ''}</div>`}
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          ${thqOwnerless(rec) ? `<button class="btn btn-sm" style="background:#2E4057;color:white;border:none" onclick="adoptPendingQueueItem(THERMAL_QUEUE_KEY, ${i})">✋ استلام لحسابي</button>` : ''}
+          ${rec._conflict && !thqOwnerless(rec) ? `<button class="btn btn-sm" style="background:#2E4057;color:white;border:none" onclick="retryPendingThermal(${i})">🔁 إعادة المحاولة</button>` : ''}
           <button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="deletePendingThermal(${i})">🗑️ حذف</button>
         </div>
       </div>`;
@@ -8987,15 +9037,18 @@ function renderPendingSyncPage() {
     });
   }
 
-  if (lineEntryQ.length) {
-    html += `<h3 style="color:#2E4057;margin:14px 0 8px">⚡ قياسات مدخل خط (${lineEntryQ.length})</h3>`;
+  if (leVis) {
+    html += `<h3 style="color:#2E4057;margin:14px 0 8px">⚡ قياسات مدخل خط (${leVis})</h3>`;
     lineEntryQ.forEach((rec, i) => {
+      if (!thqVisible(rec)) return;
       html += `<div class="dep-card" style="border-right-color:#F6C23E">
         <div class="dep-card-header">
           <div class="dep-card-title">⚡ ${rec.line_name||'—'} — جهة ${rec.station_side||'—'}</div>
           <div class="dep-card-meta">📅 ${rec.inspection_date||'—'} | أعلى قياس: ${rec.max_temp||'—'}°</div>
         </div>
+        ${thqOwnerless(rec) ? `<div data-th-status="ownerless" style="font-size:12px;color:#7B5B00;background:#FFF5E1;border-radius:6px;padding:6px 8px;margin:6px 0">⚠️ قياس قديم بلا صاحب معروف — لن يُرسل تلقائياً ولا يُنسب لأحد. إن كان قياسك فاستلمه لحسابك صراحةً.</div>` : `<div data-th-status="pending" style="font-size:11px;color:#B7791F;margin:6px 0">📱 محفوظ على الجهاز فقط — لم يُؤكَّد بالخادم بعد</div>`}
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          ${thqOwnerless(rec) ? `<button class="btn btn-sm" style="background:#2E4057;color:white;border:none" onclick="adoptPendingQueueItem(LINE_ENTRY_QUEUE_KEY, ${i})">✋ استلام لحسابي</button>` : ''}
           <button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="deletePendingLineEntry(${i})">🗑️ حذف</button>
         </div>
       </div>`;
@@ -9046,7 +9099,17 @@ function deletePendingInspection(i) {
   updatePendingBadge(); renderPendingSyncPage(); showToast('🗑️ تم الحذف');
 }
 
+// N25-R14a: استلام صريح لقياس قديم بلا مالك (لا يُنسب تلقائياً لأحد ولا يُخمَّن من الاسم): يصبح لحساب من ضغط الزر فقط
+function adoptPendingQueueItem(key, i) {
+  const q = (key === THERMAL_QUEUE_KEY ? getThermalQueue() : getLineEntryQueue()), u = thqUid();
+  if (!u || !q[i] || !thqOwnerless(q[i])) return;
+  if (!confirm('هذا قياس قديم محفوظ على الجهاز بلا صاحب معروف. هل تستلمه لحسابك ليُرسَل باسمك؟ لا تستلمه إن لم يكن قياسك.')) return;
+  q[i]._uid = u;
+  if (!safeSetItem(key, JSON.stringify(q))) { showToast('⛔ تعذّر الحفظ على الجهاز', 'error'); return; }
+  updatePendingBadge(); renderPendingSyncPage(); showToast('✅ استُلم القياس لحسابك — سيُرسل عند الاتصال'); syncAllQueues().catch(() => {});
+}
 function deletePendingThermal(i) {
+  { const q0 = getThermalQueue(); if (!q0[i] || !thqVisible(q0[i])) return; }   // N25-R14a: لا يحذف أحد قياس حساب آخر
   if (!confirm('حذف هذا القياس المعلق؟ لن يُرفع نهائياً.')) return;
   const q = getThermalQueue(); q.splice(i,1); localStorage.setItem(THERMAL_QUEUE_KEY, JSON.stringify(q));
   updatePendingBadge(); renderPendingSyncPage(); showToast('🗑️ تم الحذف');
@@ -9059,6 +9122,7 @@ function deletePendingTreatment(i) {
 }
 
 function deletePendingLineEntry(i) {
+  { const q0 = getLineEntryQueue(); if (!q0[i] || !thqVisible(q0[i])) return; }   // N25-R14a
   if (!confirm('حذف هذا القياس المعلق؟ لن يُرفع نهائياً.')) return;
   const q = getLineEntryQueue(); q.splice(i,1); localStorage.setItem(LINE_ENTRY_QUEUE_KEY, JSON.stringify(q));
   updatePendingBadge(); renderPendingSyncPage(); showToast('🗑️ تم الحذف');
@@ -9414,13 +9478,48 @@ let lineTowersCache = {};
 
 let lineSettingsCache = {}; // { line_name: { circuit_count: 1|2, chain_mode: 'single'|'double' } }
 
+// N25-R14: الخطوط المُهيَّأة (lines_info) وأبراجها وإعداداتها كانت بالذاكرة فقط: فتح التطبيق بلا اتصال يُسقطها فتختفي الخطوط المُهيَّأة ونقاط الحراري المؤهِّلة.
+// الآن آخر نسخة مقروءة من الخادم تُحفظ على الجهاز باسم الحساب الذي قرأها، وتُمسح عند الخروج/تبديل الحساب (csPurgeUserData)، وتُعلَّم «نسخة محفوظة» حتى تُحدَّث من الخادم.
+const CS_LINECFG_KEY = 'cs_line_cfg_v1';
+const _lineCfgMeta = { cached: false, at: null, info: false, towers: false };
+function lineCfgUid() { try { const o = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); return o && o.id != null ? String(o.id) : null; } catch (e) { return null; } }
+function lineCfgPersist() {      // يحفظ ما بالذاكرة (مقروء من الخادم أو مؤكَّد منه) فقط؛ الاحتياطي المدمج لا يُحفظ على أنه نسخة
+  const uid = lineCfgUid(); if (!uid) return;
+  const hasInfo = _lineCfgMeta.info || !!_lineCfgMeta.cachedInfo, hasTowers = _lineCfgMeta.towers || !!_lineCfgMeta.cachedTowers;
+  if (!hasInfo && !hasTowers) return;
+  try { localStorage.setItem(CS_LINECFG_KEY, JSON.stringify({ uid, at_info: _lineCfgMeta.infoAt || null, at_towers: _lineCfgMeta.towersAt || null, info: hasInfo ? linesInfoCache : null, towers: hasTowers ? lineTowersCache : null, settings: hasTowers ? lineSettingsCache : null })); } catch (e) { /* التخزين ممتلئ: لا نسخة محفوظة؛ الخطوط تبقى حيّة بالذاكرة */ }
+}
+(function lineCfgHydrate() {
+  try {
+    const uid = lineCfgUid(), o = JSON.parse(localStorage.getItem(CS_LINECFG_KEY) || 'null');
+    if (!uid || !o || String(o.uid) !== uid) { if (o) localStorage.removeItem(CS_LINECFG_KEY); return; }   // نسخة حساب آخر لا تُقرأ
+    if (Array.isArray(o.info) && o.info.length) { linesInfoCache = o.info; _lineCfgMeta.cachedInfo = o.info; _lineCfgMeta.cached = true; }
+    if (o.towers && typeof o.towers === 'object') { lineTowersCache = o.towers; lineSettingsCache = o.settings && typeof o.settings === 'object' ? o.settings : {}; _lineCfgMeta.cachedTowers = o.towers; _lineCfgMeta.cachedSettings = lineSettingsCache; _lineCfgMeta.cached = true; }
+    _lineCfgMeta.infoAt = o.at_info || null; _lineCfgMeta.towersAt = o.at_towers || null; { const ats = [o.at_info, o.at_towers].filter(Boolean); _lineCfgMeta.at = ats.length ? Math.min.apply(null, ats) : null; }
+  } catch (e) {}
+})();
+function lineCfgPurge() {
+  try { localStorage.removeItem(CS_LINECFG_KEY); } catch (e) {}
+  linesInfoCache = JSON.parse(JSON.stringify(LINES_INFO)); lineTowersCache = {}; lineSettingsCache = {};
+  _lineCfgMeta.cached = false; _lineCfgMeta.at = null; _lineCfgMeta.info = false; _lineCfgMeta.towers = false; _lineCfgMeta.infoAt = _lineCfgMeta.towersAt = null; delete _lineCfgMeta.cachedInfo; delete _lineCfgMeta.cachedTowers; delete _lineCfgMeta.cachedSettings;
+}
+// نص تعريف البيانات المحفوظة (فارغ عندما تكون الخطوط والأبراج محدّثة من الخادم في هذه الجلسة)
+function lineCfgCacheNote() {
+  const live = _lineCfgMeta.info && _lineCfgMeta.towers;
+  if (live || !_lineCfgMeta.cached) return '';
+  const t = _lineCfgMeta.at ? new Date(_lineCfgMeta.at).toLocaleString('ar-IQ') : 'غير معروف';
+  return '📦 الخطوط وإعداداتها وأبراجها من نسخة محفوظة على الجهاز (آخر تحديث من الخادم: ' + t + ') — لم تُحدَّث بعد من الخادم';
+}
+
 async function loadLineTowersCache() {
+  const gen = _csAuthGen, uid0 = lineCfgUid();      // N25-R14a
   try {
     // ملاحظة: sbFetch يرجّع كائن Response لا بيانات جاهزة — بدون res.json() كان الشرط يفشل دائماً
     // بصمت، فتبقى قوائم الأبراج المخصّصة وإعدادات الدوائر غير محمّلة ويرجع التطبيق للقيم الثابتة
     const res = await sbFetch('line_towers_custom?select=line_name,towers,circuit_count,chain_mode');
     if (!res.ok) return;
     const rows = await res.json();
+    if (gen !== _csAuthGen || lineCfgUid() !== uid0) return;
     if (Array.isArray(rows)) {
       lineTowersCache = {};
       lineSettingsCache = {};
@@ -9430,6 +9529,7 @@ async function loadLineTowersCache() {
           lineSettingsCache[r.line_name] = { circuit_count: r.circuit_count, chain_mode: r.chain_mode };
         }
       });
+      _lineCfgMeta.towers = true; _lineCfgMeta.towersAt = Date.now(); try { lineCfgPersist(); } catch (e3) {}
       try { refreshInspectionLineSelect(); } catch (e2) {}
     }
   } catch (e) { console.warn('[tower-app] فشل تحميل أبراج/إعدادات الخطوط:', e); }

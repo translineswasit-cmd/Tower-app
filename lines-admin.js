@@ -151,7 +151,7 @@ async function linesFetchBaseline() {
 // قائمة الخادم المؤكَّدة تحلّ محل الكاش المحلي (بعد تعارض/تغيّر صف) إن بقيت الجلسة نفسها
 function linesPublishBaseline(rows, sess) {
   if (_csAuthGen !== sess) return;
-  linesInfoCache = rows;
+  linesInfoCache = rows; try { _lineCfgMeta.info = true; _lineCfgMeta.infoAt = Date.now(); lineCfgPersist(); } catch (e) {}   // N25-R14: الخادم أكّد هذه القائمة — تُحفظ كنسخة جهاز
   try { refreshInspectionLineSelect(); } catch (e) {}
   try { const v = document.getElementById('linesInfoView'); if (v && v.style.display !== 'none') renderLinesInfo(); } catch (e) {}
 }
@@ -171,6 +171,7 @@ async function saveLinesInfoData(data, expectedVersion) {
   if (out.net) return { ok: false, code: 'network' };
   if (out.ok !== true) return { ok: false, code: out.code || 'failed' };
   linesInfoCache = data;   // مؤكَّد من الخادم فقط
+  try { _lineCfgMeta.info = true; _lineCfgMeta.infoAt = Date.now(); lineCfgPersist(); } catch (e) {}   // N25-R14
   try { refreshInspectionLineSelect(); } catch (e) {}   // N25-R6n: الخط الجديد يظهر في «إضافة كشف» فور الحفظ
   return { ok: true, version: out.version };
 }
@@ -328,6 +329,7 @@ async function deleteLineImpl(idx) {
       [key, target.name, target.name + ' ' + target.voltage + ' ك.ف'].forEach(n => { delete lineTowersCache[n]; delete lineSettingsCache[n]; });
       const bl = await linesFetchBaseline();
       if (bl.ok) linesPublishBaseline(bl.rows, op.sess); else { linesInfoCache = (linesInfoCache || []).filter(l => !(l && l.idx === target.idx && l.name === target.name)); }
+      try { lineCfgPersist(); } catch (e) {}   // N25-R14: حذف خط مؤكَّد من الخادم
       try { refreshInspectionLineSelect(); } catch (e) {}
       try { renderLinesInfo(); } catch (e) {}
       showToast('🗑️ حُذف الخط «' + target.name + '» (أُرشف ' + (r.archived_towers || 0) + ' برج — السجلات محفوظة)');
@@ -571,6 +573,7 @@ async function saveLineTowersToServer(snap, op) {
   if (r && r.ok === true) {
     lineTowersCache[snap.name] = JSON.parse(JSON.stringify(snap.towers));
     lineSettingsCache[snap.name] = { circuit_count: snap.circuitCount, chain_mode: snap.chainMode };
+    try { _lineCfgMeta.towers = true; _lineCfgMeta.towersAt = Date.now(); lineCfgPersist(); } catch (e) {}   // N25-R14: أبراج/إعدادات مؤكَّدة من الخادم
     return { ok: true };
   }
   return { ok: false, msg: (OPS_CODE_MSG[r && r.code] || (r && r.code) || 'خطأ') };
