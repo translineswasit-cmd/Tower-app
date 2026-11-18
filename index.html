@@ -6811,6 +6811,7 @@ async function opsSyncOutbox() {
       opsUpdate(e.id, x => { x.status = 'rejected'; x.err = code || 'rejected'; x.sent_at = null; x.detail = (function () { const d = Object.assign({}, r); delete d.ok; delete d.code; return d; })(); });
       if (!(code === 'later_ops' && payload && payload.kind === 'void')) blocked.add(tk);
       res.rejected++;
+      if (payload && payload.kind === 'treatment' && (code === 'precondition_failed' || code === 'newer_observation' || code === 'not_current_source')) res.staleTreat = (res.staleTreat || 0) + 1;
     }
   } finally { _opsSyncBusy = false; }
   updatePendingBadge();
@@ -6827,7 +6828,7 @@ async function opsSyncOutbox() {
   if (res.unitRefused && res.unitRefused.length) showToast(res.unitRefused[0], 'error');
   if (res.applied && res.voidApplied) { try { _cuRefreshViews(); } catch (e) {} }
   if (res.conflicts) showToast('⚠️ ' + res.conflicts + ' عملية متعارضة مع عمل أحدث — افتح «العناصر المعلّقة» لاتخاذ القرار (لم يُكتب فوق عمل أحد)', 'error');
-  if (res.rejected) showToast('⚠️ ' + res.rejected + ' عملية رفضها السيرفر — راجع «العناصر المعلّقة»', 'error');
+  if (res.rejected) showToast(res.staleTreat ? '⚠️ لم تُطبَّق ' + (res.staleTreat > 1 ? res.staleTreat + ' معالجات' : 'المعالجة') + ': تغيّرت حالة البرج بعد فتحها — لم يُكتب شيء وبقيت الحالة الأحدث. راجع «العناصر المعلّقة»' : '⚠️ ' + res.rejected + ' عملية رفضها السيرفر — راجع «العناصر المعلّقة»', 'error');
   return res;
 }
 
@@ -7029,6 +7030,11 @@ function opsErrText(e) {
   const f = e && e.detail && Array.isArray(e.detail.failures) ? e.detail.failures : null;
   if (e && e.err === 'precondition_failed' && f && f.length && f.every(x => x && x.reason === 'cycle_unknown'))
     return 'لم تُسجَّل المعالجة: دورات المعالجة السابقة لعوازل ' + Array.from(new Set(f.map(x => x.component))).join('، ') + ' مجهولة، ولا تُفترض صفراً. لم يتغيّر شيء على السيرفر — اطلب من المسؤول حسم دورات هذه الدائرة ثم أعد المعالجة، أو احذف هذه العملية بعد المراجعة.';
+  // N25-R11: معالجة قديمة رفضها الخادم لأن الحالة تغيّرت (موضع لم يعد متضرراً / معدّة استُبدلت): شرح بالعربية بدل JSON، وتوجيه المراجعة. لا إعادة تطبيق تلقائية على الحالة الجديدة.
+  if (e && e.kind === 'treatment' && e.err === 'precondition_failed' && f && f.length && f.every(x => x && (x.reason === 'not_damaged' || x.reason === 'state_unknown'))) {
+    const lines = f.slice(0, 8).map(x => '• ' + (opsCompsAr([x.component])[0] || 'قسم') + ': ' + (x.reason === 'not_damaged' ? 'الموضع رقم ' + (Number(x.index) + 1) + ' لم يعد متضرراً (سُجّل بعد فتحك للنموذج كشف أحدث أو معالجة)' : 'حالتها صارت «غير معروفة» (استُبدلت المعدّة أو لم تُكشف بعد)')).join('\n');
+    return 'لم تُطبَّق هذه المعالجة: تغيّرت حالة البرج على الخادم بعد أن فتحتَها، ولم يُكتب شيء وبقيت الحالة الأحدث كما هي.\n' + lines + '\nراجع الحالة الحالية للبرج، ثم أعد المعالجة من جديد إن كانت لا تزال لازمة (لا تُعاد تلقائياً على الحالة الجديدة).';
+  }
   return (OPS_ERR_MSG[e.err] || e.err || '') + (e.detail && e.detail.failures ? ' — ' + JSON.stringify(e.detail.failures).slice(0, 160) : '');
 }
 

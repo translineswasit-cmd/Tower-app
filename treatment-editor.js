@@ -123,7 +123,7 @@ function populateTreatLines() {
 
 try { registerLineSelector('treatment', () => { const e = document.getElementById('treatLine'); if (e && e.options.length > 1) populateTreatLines(); }); } catch (e) {}
 function onTreatLineChange() {
-  _treatPre = null;
+  _treatPre = null; try { _treatSetState('none'); } catch (e) { /* UI only */ }
   // تغيير الخط يُبطل أي اختيار برج جارٍ جلبه: يُصفَّر السجل وتُخفى البطاقة قبل أي خروج، وتسلسل الاختيار يتقدّم فيُرفض الطلب القديم عند عودته
   _treatSelectSeq++;
   currentTreatRecord = null;
@@ -177,32 +177,132 @@ async function onTreatTowerChange() {
   const towerNum = document.getElementById('treatTower').value;
   const card = document.getElementById('treatItemsCard');
   // لا يُستعمل سجل اختيار سابق: يُصفَّر قبل أي فحص أو جلب، وتُخفى البطاقة حتى يُقبل الاختيار الجديد
-  currentTreatRecord = null; currentTreatIdent = null;
+  currentTreatRecord = null; currentTreatIdent = null; _treatBasis = null; _treatRetryP = null; _treatRetryTok++;
   card.style.display = 'none';
+  try { _treatSetState('none'); } catch (e) { /* UI only */ }
   if (!lineName || !towerNum) return;
   // حارس قبل أي جلب: وجود كشف معلّق لنفس الخط والبرج (أي تاريخ) يمنع الجلب كي لا يستبدل loadFullTowerRecord كشفاً محلياً معلّقاً
   const early = treatmentBlockReason(lineName, towerNum, null);
   if (early) { showToast(early, 'error'); return; }
   // نجيب السجل الكامل لهذا البرج بالذات (طلب صغير وفوري) — شاشة المعالجة تحتاج تفاصيل غير متوفرة
   // بالتحميل المختصر لشبكة الأبراج (دورة المعالجة، مادة سلاسل الدائرة الثانية، الملاحظات)
-  const _px = navigator.onLine ? _treatTakePrefetch(lineName, towerNum) : null;
-  const r = navigator.onLine ? (await loadFullTowerRecord(lineName, towerNum, _px ? _treatPreResult(_px, lineName, towerNum) : null)) || getLatestRecordForTower(lineName, towerNum) : getLatestRecordForTower(lineName, towerNum);
+  // N25-R11: حالة تحميل/فشل/إعادة محاولة ظاهرة (كان الاختيار البطيء أو الفاشل صامتاً). القراءة نفسها واحدة: نتيجتها تُمرَّر لـloadFullTowerRecord بلا طلب ثانٍ.
+  const online = navigator.onLine;
+  let fr = null;
+  if (online) {
+    _treatSetState('loading', lineName, towerNum, mySeq);
+    const _px = _treatTakePrefetch(lineName, towerNum);
+    try { fr = await (_px ? _treatPreResult(_px, lineName, towerNum) : _fetchFullTowerRecord(lineName, towerNum)); } catch (e) { fr = { ok: false }; }
+    if (mySeq !== _treatSelectSeq || document.getElementById('treatLine').value !== lineName || document.getElementById('treatTower').value !== towerNum) return;   // اختيار آخر تقدّم: لا شيء يُمسّ
+  }
+  const live = !!(online && fr && fr.ok && !(fr.cs && fr.cs.source === 'cache'));
+  const r = online ? (await loadFullTowerRecord(lineName, towerNum, Promise.resolve(fr))) || getLatestRecordForTower(lineName, towerNum) : getLatestRecordForTower(lineName, towerNum);
   // لا نقبل السجل إلا لو بقي الاختيار نفسه: التسلسل لم يتقدّم والخط والبرج الحاليان يطابقان ما بدأ به الطلب
   if (mySeq !== _treatSelectSeq || document.getElementById('treatLine').value !== lineName || document.getElementById('treatTower').value !== towerNum) return;
   { const _ti = csLiveEnabled() ? csTowerInfo(lineName, towerNum) : null;   // v335-C6r7: برج غير مهيّأ في المخزن: صريح، ولا تُبنى معالجة من صف قديم محفوظ
-    if (_ti && _ti.basis === 'uninitialized') { showToast('⚠️ ' + csReasonsText(['uninitialized']), 'error'); return; } }
-  if (!r) return;
+    if (_ti && _ti.basis === 'uninitialized') { _treatSetState('none'); showToast('⚠️ ' + csReasonsText(['uninitialized']), 'error'); return; } }
+  if (!r) { if (live) _treatSetState('empty', lineName, towerNum, mySeq); else _treatSetState('failed', lineName, towerNum, mySeq, online); return; }
   const late = treatmentBlockReason(lineName, towerNum, r); // نفس الحراس مع معرّف السجل المجلوب (id صالح + لا عمليات معلّقة له)
-  if (late) { showToast(late, 'error'); return; }
+  if (late) { _treatSetState('none'); showToast(late, 'error'); return; }
   // N25-R4a: هوية هذا البرج تُلتقط مع السجل المعروض نفسه (لحظة قبول الاختيار) وتبقى ثابتة حتى الحفظ؛ سجل يخص برجاً غير صاحب الرقم اليوم = لا فتح
   { const sn = csIdentSnap(lineName, towerNum);
     if (sn && sn.blocked) { showToast(csIdentBlockMsg(sn.blocked), 'error'); return; }
     if (sn && r.tower_id && String(r.tower_id) !== String(sn.tower_id)) { showToast('⚠️ السجل المعروض يخص برجاً آخر غير صاحب هذا الرقم اليوم (تغيّر ترقيم الخط) — حدّث وأنت متصل ثم اختر البرج من جديد (لم يُفتح شيء)', 'error'); return; }
     currentTreatIdent = sn ? { tower_id: sn.tower_id, topology_rev: sn.topology_rev } : (r.tower_id ? { tower_id: String(r.tower_id), topology_rev: null } : null); }
   currentTreatRecord = r;
+  _treatBasis = (live && fr && fr.cs) ? _treatBasisOf(fr.cs.env) : null;   // N25-R11a: هوية الحالة الموثوقة وقت فتح المسودة (من غلاف الخادم الحيّ فقط)
+  _treatRetryP = null; _treatRetryTok++;
   otherDepTreatState = {};
   card.style.display = 'block';
   renderTreatItems();
+  _treatSetState(live ? 'live' : 'stale', lineName, towerNum, mySeq, online);
+  _treatContextRefresh(r, live);
+}
+
+// N25-R11: حالة اختيار البرج في شاشة المعالجة (تحميل / بطيء / فشل مع إعادة محاولة / لقطة غير حيّة) + شريط سياق: الخط والبرج والجهد والدوائر المنطبقة
+let _treatSlowTimer = null;
+function _treatStateEl() {
+  let el = document.getElementById('treatLoadState');
+  if (!el) { const anchor = document.getElementById('treatItemsCard'); if (!anchor || !anchor.parentNode) return null; el = document.createElement('div'); el.id = 'treatLoadState'; el.setAttribute('role', 'status');
+    el.style.cssText = 'display:none;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:0.85rem;line-height:1.8'; anchor.parentNode.insertBefore(el, anchor); }
+  return el;
+}
+function _treatSetState(kind, line, tower, seq, online) {
+  if (_treatSlowTimer) { clearTimeout(_treatSlowTimer); _treatSlowTimer = null; }
+  const el = _treatStateEl(); if (!el) return;
+  const box = (bg, bd, col) => { el.style.background = bg; el.style.border = '1.5px solid ' + bd; el.style.color = col; el.style.display = ''; };
+  const retry = '<div style="margin-top:6px"><button type="button" class="btn btn-secondary" id="treatRetryBtn" onclick="treatRetryRead()">🔄 إعادة المحاولة</button></div>';
+  if (kind === 'loading') {
+    box('#EBF8FF', '#90CDF4', '#2A4365'); el.innerHTML = '⏳ جاري قراءة حالة برج ' + _csEsc(String(tower)) + ' من الخادم…';
+    _treatSlowTimer = setTimeout(() => { _treatSlowTimer = null; if (seq === _treatSelectSeq) { const e2 = _treatStateEl(); if (e2 && /جاري قراءة/.test(e2.textContent)) e2.innerHTML = '⏳ الاتصال بطيء — لا يزال قراءة حالة برج ' + _csEsc(String(tower)) + ' جارياً. يمكنك الانتظار أو اختيار برج آخر؛ لن يتغيّر شيء مما أدخلته.' + retry; } }, Number(window.__treatSlowMs) || 6000);
+  } else if (kind === 'failed') {
+    box('#FFF5F5', '#FC8181', '#742A2A'); el.innerHTML = '⚠️ تعذّرت قراءة حالة برج ' + _csEsc(String(tower)) + (online === false ? ' (لا اتصال)' : '') + ' ولا توجد حالة محفوظة بالجهاز — لا يمكن بناء معالجة من حالة مجهولة.' + retry;
+  } else if (kind === 'stale') {
+    if (online === false || online === true) { box('#FFFAF0', '#F6AD55', '#7B341E'); el.innerHTML = '📴 ' + (online ? 'تعذّرت القراءة الحيّة' : 'لا اتصال') + ' — المعروض آخر حالة محفوظة بالجهاز وقد لا تشمل تحديثات أجهزة أخرى. يتحقق الخادم من كل معالجة عند الرفع ويرفض ما يخالف حالة أحدث.' + (online ? retry : ''); } else el.style.display = 'none';
+  } else if (kind === 'changed') {
+    box('#FFF5F5', '#FC8181', '#742A2A'); el.innerHTML = '⚠️ تغيّرت حالة هذا البرج على الخادم منذ فتحتَ النموذج. اختياراتك محفوظة هنا ولم تُمسّ، لكن الخادم سيرفض أي موضع لم يعد متضرراً ولن يُطبّق عليه شيء. لا تُوسَم هذه المسودة «حيّة»: لم تُربط بالحالة الجديدة ولم تُعدَّل اختياراتك. إن أردت المراجعة فاضغط الزر أدناه (يُطلب تأكيد قبل إلغاء اختياراتك)، وإلا فحفظها يمرّ على حماية الخادم التي ترفض ما لم يعد صالحاً دون أن تُكتب فوق الحالة الأحدث.<div style="margin-top:6px"><button type="button" class="btn btn-secondary" id="treatReopenBtn" onclick="treatReopenConfirm()">🔄 مراجعة الحالة الحالية وإعادة الفتح</button></div>';
+  } else if (kind === 'empty') {
+    box('#F0FFF4', '#9AE6B4', '#22543D'); el.innerHTML = 'ℹ️ لا توجد حالة/مغادرات مسجّلة لهذا البرج على الخادم.';
+  } else { el.style.display = 'none'; el.innerHTML = ''; }
+  if (kind === 'live') el.style.display = 'none';
+}
+// هل لدى الموظف اختيارات معالجة لم تُحفظ بعد في البطاقة المفتوحة؟
+function _treatHasEdits() {
+  if (Object.values(otherDepTreatState || {}).some(Boolean)) return true;
+  if (chainReplacementLog && chainReplacementLog.length) return true;
+  return !!document.querySelector('#treatItemsBody [data-treated="true"][data-idx]');
+}
+// إعادة المحاولة: بلا اختيارات = إعادة اختيار كاملة. مع اختيارات = قراءة واحدة تُقارَن بالحالة المعروضة؛ لا يُعاد رسم البطاقة ولا تُمسّ الاختيارات أبداً.
+// N25-R11a: لقطة الأساس الموثوقة لمسودة المعالجة = حقول غلاف الخادم الفعلية: tower_id، rev (إصدار الحالة)، version، مصدر الكشف، وإصدار كل قسم (rv) مع حالته/دورته/مادته/هندسته.
+// تُلتقط عند الفتح من قراءة حيّة فقط ولا تُحدَّث لاحقاً؛ التساوي مع قراءة حيّة جديدة شرط وسم المسودة «حيّة». أي فرق أو تعذّر إثبات التساوي = مراجعة، بلا إعادة ربط أو rebase.
+let _treatBasis = null, _treatRetryP = null, _treatRetryTok = 0;
+function _treatBasisOf(env) {
+  if (!env || typeof env !== 'object' || env.tower_id == null || !Number.isFinite(Number(env.rev)) || !Array.isArray(env.components)) return null;
+  const comps = {}; env.components.forEach(c => { if (c && typeof c.k === 'string') comps[c.k] = JSON.stringify(c); });
+  return { tower_id: String(env.tower_id), rev: Number(env.rev), version: env.version == null ? null : String(env.version), src: env.source && env.source.inspection_id != null ? String(env.source.inspection_id) : null, comps };
+}
+function _treatBasisSame(a, b) {
+  if (!a || !b || a.tower_id !== b.tower_id || a.rev !== b.rev || a.version !== b.version || a.src !== b.src) return false;
+  const ka = Object.keys(a.comps).sort(), kb = Object.keys(b.comps).sort();
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a.comps[k] === b.comps[k]);
+}
+function treatRetryRead() {
+  if (_treatRetryP) return _treatRetryP;   // نقرات متكررة = قراءة واحدة جارية
+  const tok = ++_treatRetryTok;
+  // N25-R11b: الملكية بهوية الوعد نفسه: كل مخرج (نجاح/فشل/فتح كامل مفوَّض) ينظّف فقط إن كان الوعد الحالي هو وعده؛ وعد قديم لا يمسح أحدث. التفويض المتزامن لـonTreatTowerChange يصفّر المؤشّر قبل أن يُسند هنا، لذا يُسند دائماً بعد الإنشاء.
+  const p = (async () => { try { return await _treatRetryDo(tok); } finally { if (_treatRetryP === p) _treatRetryP = null; } })();
+  _treatRetryP = p;
+  return p;
+}
+async function _treatRetryDo(tok) {
+  const lineName = document.getElementById('treatLine').value, towerNum = document.getElementById('treatTower').value, r0 = currentTreatRecord, seq = _treatSelectSeq, basis0 = _treatBasis;
+  if (!r0 || !_treatHasEdits()) return onTreatTowerChange();
+  const stillMine = () => tok === _treatRetryTok && seq === _treatSelectSeq && currentTreatRecord === r0 && document.getElementById('treatTower').value === towerNum;
+  if (!navigator.onLine) { _treatSetState('stale', lineName, towerNum, seq, false); return; }
+  _treatSetState('loading', lineName, towerNum, seq);
+  let fr = null; try { fr = await _fetchFullTowerRecord(lineName, towerNum); } catch (e) { fr = { ok: false }; }
+  if (!stillMine()) return;   // اختيار آخر تقدّم أو حُفظت المعالجة أو بدأت محاولة أحدث: لا يُمسّ شيء
+  const live = !!(fr && fr.ok && !(fr.cs && fr.cs.source === 'cache'));
+  if (!live) { _treatSetState('stale', lineName, towerNum, seq, true); return; }
+  const nb = _treatBasisOf(fr.cs.env);
+  if (basis0 && nb && _treatBasisSame(basis0, nb)) { _treatSetState('live'); _treatContextRefresh(r0, true); return; }
+  // تغيّر الأساس (أو لا يمكن إثبات التساوي): الاختيارات وشروط الطلب الأصلية (هوية البرج/النسخة الملتقطة) تبقى كما هي؛ لا وسم «حيّة»
+  _treatSetState('changed', lineName, towerNum, seq); _treatContextRefresh(r0, false, true);
+}
+function treatReopenConfirm() {
+  if (!confirm('مراجعة الحالة الحالية ستُلغي اختياراتك الحالية في هذه المسودة وتفتح البرج من جديد على الحالة الحيّة.\nهل تريد المتابعة؟')) return;
+  onTreatTowerChange();
+}
+function _treatContextRefresh(r, live, changed) {
+  let el = document.getElementById('treatContext');
+  const body = document.getElementById('treatItemsBody');
+  if (!el) { if (!body || !body.parentNode) return; el = document.createElement('div'); el.id = 'treatContext';
+    el.style.cssText = 'background:#EBF8FF;border:1px solid #90CDF4;color:#2A4365;border-radius:8px;padding:8px 10px;margin:0 0 10px;font-size:0.82rem;line-height:1.7'; body.parentNode.insertBefore(el, body); }
+  if (!r) { el.style.display = 'none'; return; }
+  let dbl = false; try { dbl = isDoubleOperational(r.line_name, r.tower_number, r.insulator_state_2); } catch (e) { dbl = false; }
+  const v = Number(r.voltage) ? ' — ' + Number(r.voltage) + ' ك.ف' : '';
+  el.textContent = '📍 ' + r.line_name + ' — برج ' + r.tower_number + v + ' — ' + (dbl ? 'دائرتان (تُعرض مغادرات الدائرتين)' : 'دائرة واحدة') + ' — ' + (live ? 'حالة حيّة من الخادم' : (changed ? 'حالة قديمة — تغيّرت على الخادم، تحتاج مراجعة' : 'حالة محفوظة بالجهاز')) + '. تُعالَج فقط المواضع التي تحدّدها؛ غيرها يبقى كما هو.';
+  el.style.display = '';
 }
 
 function renderTreatItems() {
@@ -236,7 +336,7 @@ function renderTreatItems() {
     } catch(e) { console.warn('[tower-app] فشل تحليل مستوى دورة المعالجة (الدائرة الأولى) للسجل', r.id, e); }
   }
 
-  const isDouble = isDoubleCircuitLine(r.line_name, r.insulator_state_2);
+  const isDouble = isDoubleOperational(r.line_name, r.tower_number, r.insulator_state_2);
   if (isDouble) {
     if (r.insulator_state_2) {
       treatInsulatorState2 = safeParseJSON(r.insulator_state_2) ? JSON.parse(JSON.stringify(safeParseJSON(r.insulator_state_2))) : {R:[],S:[],T:[]};
@@ -639,7 +739,7 @@ async function saveTreatment() {
 
   const now = new Date().toISOString().split('T')[0];
   const mode = getInsulatorMode(r.voltage||132, r.tower_type||'', r.line_name||'', r.tower_number);
-  const isDouble = isDoubleCircuitLine(r.line_name, r.insulator_state_2);
+  const isDouble = isDoubleOperational(r.line_name, r.tower_number, r.insulator_state_2);
   const stateAfter = JSON.parse(JSON.stringify(treatInsulatorState));
   const cycleAfter = JSON.parse(JSON.stringify(treatCycleState));
   const stateAfter2 = isDouble ? JSON.parse(JSON.stringify(treatInsulatorState2)) : null;
