@@ -1,4 +1,4 @@
-/* memo-doc.js — v335-C6r18 (N23)
+/* memo-doc.js — v335-C6r18 (N23) + N25-R13 (الخاتمة لا تُرحَّل وحدها لصفحة جديدة إن لم يلحقها مرفقات/توقيع)
    نموذج مستند المذكرة الموحّد + محرّك التخطيط الواحد (معاينة / PDF متعدد الصفحات / Word / .doc الاحتياطي) + تحميل الخطوط.
    سكربت كلاسيكي يُحمَّل مع ميزة المذكرة فقط (index.html → ensureMemoLoaded). لا يلمس DOM إلا عبر دوال الخطوط (document.fonts) والرسم على canvas.
    القواعد: نص المستخدم لا يدخل innerHTML أبداً؛ كل تنسيق يمرّ عبر sanitize (قائمة بيضاء)؛ لا خط بديل صامت (فشل التحميل = منع الإخراج برسالة). */
@@ -418,7 +418,9 @@
     y += lh;
     const closeRows = layoutPara({ r: state.closing.r.length ? state.closing.r : [] }, state.base.closing, () => contentW);
     const closeH = closeRows.reduce((a, r) => a + r.h, 0);
-    need(closeH + lh * 2.6);
+    // N25-R13: الحيّز المحجوز تحت الخاتمة (لإبقائها مع المرفقات/التوقيع) لا يُطلب إلا إن وُجد ما يليها؛ بدونه كانت الخاتمة وحدها تقفز إلى صفحة جديدة شبه فارغة رغم وجود مكان لها.
+    const hasTail = attOf(state, hdr).length > 0 || lineHas(lineOf(state, hdr, 'stitle', 'senderTitle')) || lineHas(lineOf(state, hdr, 'sname', 'senderName'));
+    need(closeH + (hasTail ? lh * 2.6 : 0));
     const afterClosingStart = y;
     { const ca = state.closing.a || AL_DEFAULT.closing; closeRows.forEach((row, ri) => { emitA(row, ri === closeRows.length - 1, right, contentW, y, ca); y += row.h; }); }
     y += lh * 0.6;
