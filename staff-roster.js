@@ -11,6 +11,7 @@
       <button class="btn btn-secondary btn-sm" id="btnAddStaffColumn" style="display:none" onclick="openAddStaffColumnModal()">➕ إضافة عمود</button>
       <button class="btn btn-secondary btn-sm" onclick="openPrintStaffRosterModal()">🖨️ طباعة</button>
     </div>
+    <div id="staffRosterStatus" style="display:none;margin-bottom:8px;padding:8px 12px;border-radius:8px;font-size:0.85rem;align-items:center;gap:8px;flex-wrap:wrap" role="status"></div>
     <div style="margin-bottom:10px">
       <select id="staffRosterLocationFilter" onchange="renderStaffRoster()" style="padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;font-size:14px">
         <option value="all">جميع المواقع</option>
@@ -71,13 +72,29 @@ function switchStaffStatsTabRosterImpl() {
   openStaffRosterView();
 }
 
+// N25-R16: شريط حالة صادق للعرض (محفوظ/جاري التحديث/فشل مع إعادة محاولة) — لا يلمس الجدول ولا الفلتر ولا نافذة التعديل.
+function setStaffRosterStatus(state) {
+  const el = document.getElementById('staffRosterStatus'); if (!el) return;
+  if (state === 'ok') { el.style.display = 'none'; el.textContent = ''; return; }
+  el.style.display = 'flex';
+  if (state === 'loading') { el.style.background = '#EBF8FF'; el.style.color = '#2C5282'; el.textContent = '⏳ جاري التحديث… المعروض نسخة محفوظة على الجهاز'; return; }
+  el.style.background = '#FFF5F5'; el.style.color = '#9B2C2C'; el.textContent = '';
+  const t = document.createElement('span'); t.textContent = '⚠️ تعذّر التحديث من الخادم — المعروض نسخة محفوظة قد لا تكون الأحدث';
+  const b = document.createElement('button'); b.className = 'btn btn-secondary btn-sm'; b.id = 'staffRosterRetry'; b.textContent = '🔄 إعادة المحاولة'; b.onclick = () => openStaffRosterView();
+  el.appendChild(t); el.appendChild(b);
+}
+let _rosterOpenSeq = 0;
 async function openStaffRosterView() {
-  const _tag = staffSessionTag();
+  const _tag = staffSessionTag(), seq = ++_rosterOpenSeq;
   loadStaffRosterCacheFromLocal();
   renderStaffRoster(); // نعرض الكاش المحلي فوراً (سريع، ويشتغل بدون إنترنت)
-  const ok = await fetchStaffRosterFromServer();
+  setStaffRosterStatus('loading');
+  let ok = await fetchStaffRosterFromServer();   // N25-R16: الفتحات المتزامنة تتشارك قراءة واحدة
+  if (ok === 'superseded' && _tag === staffSessionTag()) ok = await fetchStaffRosterFromServer();   // تعديل محلي سبق القراءة: قراءة واحدة جديدة
   if (_tag !== staffSessionTag()) return;      // تغيّرت الجلسة أثناء الجلب: لا نرسم ولا نتابع لحساب آخر
-  if (ok) renderStaffRoster(); // نحدّث بأحدث نسخة من السيرفر لو نجح الاتصال
+  if (seq !== _rosterOpenSeq) return;          // فتحة أحدث تتولى العرض والحالة
+  if (ok === true || ok === 'superseded') { renderStaffRoster(); setStaffRosterStatus('ok'); } // نحدّث بأحدث نسخة من السيرفر لو نجح الاتصال (أو نبقي النسخة المحلية الأحدث)
+  else setStaffRosterStatus('failed');
   if (!staffRosterLoaded && getStaffRosterQueue().length) syncStaffRosterQueue();
   staffRosterLoaded = true;
 }

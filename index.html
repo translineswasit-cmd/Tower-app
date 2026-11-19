@@ -2559,6 +2559,7 @@ function csPurgeUserData() {
   try { localStorage.removeItem('active_thermal_sessions'); if (typeof thermalResetTransient === 'function') thermalResetTransient(); } catch (e) {}   // N25-R14a: اختيار/إعادة محاولة/جلسات الكشف الحراري المؤقتة تخص الحساب؛ الطوابير الدائمة لا تُمسّ
   try { lineCfgPurge(); } catch (e) {}   // N25-R14: نسخة الخطوط/الأبراج/الإعدادات المحفوظة تخص الحساب الذي قرأها
   try { _csLineId = {}; localStorage.removeItem(CS_LINEID_KEY); } catch (e) {}   // N25-R14: خريطة (رقم → هوية دائمة) للخطوط تخص الحساب الذي قرأها
+  try { allUsers = []; } catch (e) {} try { if (typeof membersPurge === 'function') membersPurge(); } catch (e) {}   // N25-R16: قائمة الأعضاء تخص الحساب الذي قرأها
   _csMem.clear(); _csGeom.clear(); _csInfo.clear(); _csComps.clear(); _csTreated.clear(); _csLineEnv.clear(); _csInflight.clear(); _csSeq.clear(); _csApplied.clear(); _csMatReset();
   try {
     const rm = [];
@@ -8613,26 +8614,65 @@ function loadStaffRosterCacheFromLocal() {
   try { staffRosterMembersCache = JSON.parse(localStorage.getItem(STAFF_ROSTER_MEMBERS_CACHE_KEY) || '[]'); } catch(e) { staffRosterMembersCache = []; }
 }
 
-function saveStaffRosterColumnsCache(cols) { staffRosterColumnsCache = cols; localStorage.setItem(STAFF_ROSTER_COLUMNS_CACHE_KEY, JSON.stringify(cols)); }
+// N25-R16: عدّاد تعديلات الكاش المحلي (حفظ/تعديل/حذف محلي). قراءة بدأت قبل أي تعديل محلي لا تكتب نتيجتها فوقه.
+let _rosterLocalGen = 0;
 
-function saveStaffRosterMembersCache(members) { staffRosterMembersCache = members; localStorage.setItem(STAFF_ROSTER_MEMBERS_CACHE_KEY, JSON.stringify(members)); }
+function saveStaffRosterColumnsCache(cols) { _rosterLocalGen++; staffRosterColumnsCache = cols; localStorage.setItem(STAFF_ROSTER_COLUMNS_CACHE_KEY, JSON.stringify(cols)); }
+
+function saveStaffRosterMembersCache(members) { _rosterLocalGen++; staffRosterMembersCache = members; localStorage.setItem(STAFF_ROSTER_MEMBERS_CACHE_KEY, JSON.stringify(members)); }
+
+// N25-R16: العمليات المعلّقة بالطابور (إضافة/تعديل/حذف عضو، إضافة/حذف عمود) تبقى ظاهرة فوق نسخة الخادم المقروءة؛ لا تختفي حتى تُرفع.
+function rosterOverlayPending(cols, members) {
+  let q = []; try { q = getStaffRosterQueue(); } catch (e) {}
+  if (!Array.isArray(q) || !q.length) return { cols, members };
+  cols = cols.slice(); members = members.map(m => ({ ...m, values: m && m.values ? { ...m.values } : m.values }));
+  q.forEach(it => {
+    const p = it && it.payload; if (!p) return;
+    if (it.op === 'add_column') { if (!cols.some(c => c.key === p.key)) cols.push({ key: p.key, label: p.label }); }
+    else if (it.op === 'delete_column') { cols = cols.filter(c => c.key !== p.key); members.forEach(m => { if (m.values) delete m.values[p.key]; }); }
+    else if (it.op === 'add_member') {
+      const real = rosterResolveId(p.tempId);
+      if (real !== p.tempId && members.some(m => m.id === real)) return;                     // رُبط بالمعرّف الحقيقي وهو مقروء
+      if (p.sent_at && members.some(m => m.name === p.name && JSON.stringify(m.values || {}) === JSON.stringify(p.values || {}))) return;   // وصلت الخادم وضاع الردّ: لا تُعرض مرتين
+      members.push({ id: p.tempId, name: p.name, values: p.values || {}, _pending: true });
+    }
+    else if (it.op === 'edit_member') { const rid = rosterResolveId(p.id); const m = members.find(x => x.id === rid || x.id === p.id); if (m) { m.name = p.name; m.values = p.values; } }
+    else if (it.op === 'delete_member') { const rid = rosterResolveId(p.id); members = members.filter(x => x.id !== rid && x.id !== p.id); }
+  });
+  return { cols, members };
+}
 
 // يجلب أحدث نسخة من سوبابيس (لو متصل) ويحدّث الكاش المحلي، وإلا يستخدم الكاش المحفوظ
-async function fetchStaffRosterFromServer() {
-  try {
-    const [colsRes, membersRes] = await Promise.all([
-      sbFetch('staff_roster_columns?select=key,label&order=sort_order.asc'),
-      sbFetch('staff_roster_members?select=id,name,values&order=id.asc')
-    ]);
-    if (colsRes.ok && membersRes.ok) {
-      const cols = await colsRes.json();
-      const members = await membersRes.json();
-      saveStaffRosterColumnsCache(cols);
-      saveStaffRosterMembersCache(members);
-      return true;
-    }
-  } catch(e) { console.warn('[tower-app] فشل تحميل كشف الأسماء:', e); }
-  return false;
+// N25-R16: قراءتان متزامنتان لنفس الجلسة تتشاركان نفس الطلب (بدل زوج قراءات لكل فتح)؛ والنتيجة لا تُكتب إذا تغيّرت الجلسة أو عُدّل الكاش محلياً أثناء الجلب.
+// يُرجع true عند الكتابة، false عند الفشل، و'superseded' إذا سبقها تعديل محلي (لا فشل: أُهملت نتيجة أقدم).
+let _stRosterFetch = null;
+
+function fetchStaffRosterFromServer() {
+  const tag = staffSessionTag();
+  if (_stRosterFetch && _stRosterFetch.tag === tag) return _stRosterFetch.p;
+  const rec = { tag, p: null };
+  rec.p = (async () => {
+    const gen = _rosterLocalGen;
+    try {
+      const [colsRes, membersRes] = await Promise.all([
+        sbFetch('staff_roster_columns?select=key,label&order=sort_order.asc'),
+        sbFetch('staff_roster_members?select=id,name,values&order=id.asc')
+      ]);
+      if (colsRes.ok && membersRes.ok) {
+        const cols = await colsRes.json();
+        const members = await membersRes.json();
+        if (tag !== staffSessionTag()) return false;                 // جلسة أخرى: لا نكتب شيئاً
+        if (gen !== _rosterLocalGen) return 'superseded';            // عُدّل الكاش محلياً أثناء الجلب: النتيجة أقدم
+        const ov = rosterOverlayPending(cols, members);
+        saveStaffRosterColumnsCache(ov.cols); saveStaffRosterMembersCache(ov.members); _rosterLocalGen = gen;
+        return true;
+      }
+    } catch(e) { console.warn('[tower-app] فشل تحميل كشف الأسماء:', e); }
+    finally { if (_stRosterFetch === rec) _stRosterFetch = null; }
+    return false;
+  })();
+  _stRosterFetch = rec;
+  return rec.p;
 }
 
 // ---- رفع طابور كادر القسم المعلّق ----
@@ -10117,7 +10157,7 @@ function loadAccountPage() { return featRun(['acct'], () => loadAccountPageImpl(
 function saveAccountInfo() { return featRun(['acct'], () => saveAccountInfoImpl(), 'acct'); }
 function updateUsername() { return featRun(['acct'], () => updateUsernameImpl(), 'acct'); }
 function changeAccountPassword() { return featRun(['acct'], () => changeAccountPasswordImpl(), 'acct'); }
-function loadMembers() { return featRun(['acct'], (tok) => loadMembersImpl(tok), 'acct'); }
+function loadMembers(force) { return featRun(['acct'], (tok) => loadMembersImpl(tok, force === true), 'acct'); }   // N25-R16: force = بعد تعديل ناجح (لا ينضم لقراءة سبقته)
 function openAddMemberModal() { return featRun(['acct'], () => openAddMemberModalImpl(), 'acct'); }
 
 function switchDepTab(tab, btn) {

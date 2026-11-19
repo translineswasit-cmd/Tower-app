@@ -201,20 +201,55 @@ function promptAdminPassword() {
   return p ? p : null;
 }
 
-async function loadMembersImpl(tok) {
+// N25-R16: قائمة الأعضاء — تبقى القائمة المعروضة (لنفس الجلسة) أثناء التحديث بدل تفريغها، قراءة واحدة مشتركة للطلبات المتزامنة،
+// فشل برسالة بحسب الرمز مع إعادة محاولة، والردّ القديم (صفحة/جلسة أخرى) يُهمَل كما كان. لا تخزين دائم: allUsers بالذاكرة فقط وتُمسح مع الجلسة.
+let _membersFetch = null, _allUsersTag = '';
+function membersPurge() { _membersFetch = null; _allUsersTag = ''; }
+function membersStatus(kind, msg) {
+  let el = document.getElementById('membersStatus');
+  if (!el) { const tb = document.getElementById('membersBody'); const host = tb && tb.closest('table'); if (!host || !host.parentNode) return; el = document.createElement('div'); el.id = 'membersStatus'; el.setAttribute('role', 'status'); el.style.cssText = 'margin-bottom:8px;padding:8px 12px;border-radius:8px;font-size:0.85rem;align-items:center;gap:8px;flex-wrap:wrap'; host.parentNode.insertBefore(el, host); }
+  if (kind === 'ok') { el.style.display = 'none'; el.textContent = ''; return; }
+  el.style.display = 'flex'; el.textContent = '';
+  if (kind === 'loading') { el.style.background = '#EBF8FF'; el.style.color = '#2C5282'; el.textContent = '⏳ جاري تحديث القائمة…'; return; }
+  el.style.background = '#FFF5F5'; el.style.color = '#9B2C2C';
+  const t = document.createElement('span'); t.textContent = '⚠️ ' + msg + ' — المعروض آخر نسخة بهذه الجلسة';
+  const b = document.createElement('button'); b.className = 'btn btn-secondary btn-sm'; b.id = 'membersRetry'; b.textContent = '🔄 إعادة المحاولة'; b.onclick = () => loadMembers(true);
+  el.appendChild(t); el.appendChild(b);
+}
+function membersFetchOnce(force) {
+  const tag = featSessionTag();
+  if (!force && _membersFetch && _membersFetch.tag === tag) return _membersFetch.p;
+  const rec = { tag, p: null };
+  rec.p = csCall('app_users_list').finally(() => { if (_membersFetch === rec) _membersFetch = null; });
+  _membersFetch = rec; return rec.p;
+}
+async function loadMembersImpl(tok, force) {
   const tbody = document.getElementById('membersBody');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⏳ جاري التحميل...</td></tr>';
+  const tag = featSessionTag();
+  if (_allUsersTag !== tag) { allUsers = []; _allUsersTag = ''; }          // قائمة حساب/جلسة سابقة لا تُعرض ولا تُستعمل
+  const have = allUsers.length > 0;
+  if (have) { renderMembers(); membersStatus('loading'); }                 // القائمة الحالية تبقى (والتمرير) أثناء التحديث
+  else { membersStatus('ok'); tbody.innerHTML = '<tr><td colspan="7" class="empty-state">⏳ جاري التحميل...</td></tr>'; }
   try {
-    const out = await csCall('app_users_list');
+    const out = await membersFetchOnce(force);
     if (out && out.stale) return;
     if (!featEntryOk(tok)) return;   // غادر المستخدم الصفحة/تغيّرت الجلسة/صدر طلب أحدث أثناء الجلب
-    if (out.ok !== true || !Array.isArray(out.users)) throw new Error(out.code || 'users');
-    allUsers = out.users;
-    renderMembers();
+    if (out.ok !== true || !Array.isArray(out.users)) throw Object.assign(new Error(out.code || 'users'), { code: out.code || (out.net ? 'network' : 'failed') });
+    allUsers = out.users; _allUsersTag = tag;
+    renderMembers(); membersStatus('ok');
     document.getElementById('totalMembers').textContent = allUsers.length;
-  } catch {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">⚠️ تعذر تحميل الأعضاء</td></tr>';
+  } catch (e) {
+    if (!featEntryOk(tok)) return;
+    const msg = accountRpcMessage((e && e.code) || 'network');
+    if (allUsers.length) { membersStatus('failed', msg); return; }
+    membersStatus('ok');
+    tbody.innerHTML = '';
+    const tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 7; td.className = 'empty-state';
+    const box = document.createElement('div'); box.style.cssText = 'max-width:260px;margin:0 auto;white-space:normal;text-align:center';
+    box.appendChild(document.createTextNode('⚠️ تعذر تحميل الأعضاء — ' + msg + ' '));
+    const b = document.createElement('button'); b.className = 'btn btn-secondary btn-sm'; b.id = 'membersRetry'; b.style.marginTop = '8px'; b.textContent = '🔄 إعادة المحاولة'; b.onclick = () => loadMembers(true);
+    box.appendChild(b); td.appendChild(box); tr.appendChild(td); tbody.appendChild(tr);
   }
 }
 
@@ -313,7 +348,7 @@ async function toggleInventoryPerm(id, current) {
     if (out && out.stale) return;
     if (out.ok !== true) { showToast('❌ ' + accountRpcMessage(out.code), 'error'); return; }
     showToast(!current ? '📦 تم منح صلاحية المخزن' : '📦 تم سحب صلاحية المخزن');
-    loadMembers();
+    loadMembers(true);
   } catch { showToast('❌ خطأ', 'error'); }
 }
 
@@ -370,7 +405,7 @@ async function createMember() {
     document.getElementById('resultName').textContent = fullName;
     document.getElementById('newUserResult').style.display = 'block';
     showToast('✅ تم إنشاء العضو بنجاح');
-    loadMembers();
+    loadMembers(true);
   } catch {
     showToast('❌ خطأ، حاول مرة أخرى (تأكد الاسم غير مكرر)', 'error');
   }
@@ -382,7 +417,7 @@ async function toggleUserActive(id, currentActive) {
     if (out && out.stale) return;
     if (out.ok !== true) { showToast('❌ ' + accountRpcMessage(out.code), 'error'); return; }
     showToast(currentActive ? '⏸️ تم تعطيل الحساب' : '▶️ تم تفعيل الحساب');
-    loadMembers();
+    loadMembers(true);
   } catch { showToast('❌ خطأ', 'error'); }
 }
 
@@ -401,7 +436,7 @@ async function confirmDeleteUser() {
       closeDeleteUserModal();
       return;
     }
-    showToast('🗑️ تم حذف العضو'); loadMembers();
+    showToast('🗑️ تم حذف العضو'); loadMembers(true);
   } catch { showToast('❌ خطأ بالاتصال، تحقق من الإنترنت', 'error'); }
   closeDeleteUserModal();
 }
