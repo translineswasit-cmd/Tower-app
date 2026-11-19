@@ -682,6 +682,8 @@
     return { lay, canvases: lay.pages.map(p => drawPage(p, scale || 3)) };
   }
 
+  // N25-R18: هندسة صفحة Word معلنة صراحةً (A4 بهوامش ١ إنش = القيم الافتراضية السابقة نفسها) ومنها عرض النص؛ مصدر واحد بدل الرقم 9026 المضمَّن
+  const DOCX_PAGE = { w: 11906, h: 16838, m: 1440 }, TEXT_TW = DOCX_PAGE.w - 2 * DOCX_PAGE.m;
   // ---------------- Word (.docx) — uses the docx global (loaded lazily by index.html) ----------------
   function docxRuns(D, runs, base, extra) {
     const out = [];
@@ -731,8 +733,9 @@
       const line = { style: BorderStyle.SINGLE, size: 4, color: '000000' }, full = { top: line, bottom: line, left: line, right: line };
       // جدول عريض (مجموع الأعمدة الطبيعية > عرض المحتوى): أعمدة ثابتة بنفس نسب المعاينة/PDF وبمجموع = عرض نص الصفحة؛ غير ذلك يبقى كما كان (تلقائي)
       let cw = null, cwTw = null;     // N25-R15: جدول فيه دمج ولم يُقصّ بالهوامش: أعمدة ثابتة بنفس نسب PDF (تحافظ على الامتداد بدقة)؛ جدول بلا دمج يبقى كما كان
-      try { const f = await ensureFonts(neededFaces(state)); if (f.ok) { const lay = layoutDocument(state, hdr); cw = state.table.tw ? null : lay.tableCols; if (!cw && (state.table.tw || tableHasMerges(state.table)) && lay.tableColsAll) { cwTw = lay.tableColsAll.map(w => Math.max(300, Math.floor(w * 9026 / lay.contentW))); } } } catch (e) { cw = null; if (window.console) console.warn("memo word table", e); }
-      const wideOpts = cwTw && cwTw.length === state.table.c[0].length ? { cols: cwTw, total: cwTw.reduce((a, b) => a + b, 0) } : cw && cw.length === state.table.c[0].length ? (() => { const sum = cw.reduce((a, b) => a + b, 0), tw = D.WidthType.DXA, CONTENT_TW = 9026; const cols = cw.map(w => Math.max(300, Math.floor(w / sum * CONTENT_TW))); return { cols, total: cols.reduce((a, b) => a + b, 0) }; })() : null;
+      // N25-R18: كل جدول بعرض تلقائي أو صريح يُصدَّر بأعمدة ثابتة بقياسات المعاينة/PDF نفسها (كان غير المدموج بعرض تلقائي يخرج AUTO وgridCol=100 فينهار في LibreOffice)
+      try { const f = await ensureFonts(neededFaces(state)); if (f.ok) { const lay = layoutDocument(state, hdr); cw = state.table.tw ? null : lay.tableCols; if (!cw && lay.tableColsAll) { cwTw = lay.tableColsAll.map(w => Math.max(300, Math.floor(w * TEXT_TW / lay.contentW))); } } } catch (e) { cw = null; if (window.console) console.warn("memo word table", e); }
+      const wideOpts = cwTw && cwTw.length === state.table.c[0].length ? { cols: cwTw, total: cwTw.reduce((a, b) => a + b, 0) } : cw && cw.length === state.table.c[0].length ? (() => { const sum = cw.reduce((a, b) => a + b, 0), tw = D.WidthType.DXA, CONTENT_TW = TEXT_TW; const cols = cw.map(w => Math.max(300, Math.floor(w / sum * CONTENT_TW))); return { cols, total: cols.reduce((a, b) => a + b, 0) }; })() : null;
       const tblOpts = wideOpts ? { width: { size: wideOpts.total, type: WidthType.DXA }, columnWidths: wideOpts.cols, layout: D.TableLayoutType.FIXED } : { width: { size: 0, type: WidthType.AUTO } };
       // N25-R15: الخلايا المدموجة = columnSpan/rowSpan على الخلية الأساس؛ الخلايا المغطّاة لا تُصدَّر (مكتبة docx تُدخل خلايا vMerge المتابِعة تلقائياً)
       const own = tableOwners(state.table);
@@ -758,7 +761,7 @@
       if (lineHas(sT)) ch.push(P(docxRuns(D, sT.r, state.base.stitle || baseLegacy().stitle), { alignment: alOf(sT.a, 'c'), indent: { left: 4500 } }));
       if (lineHas(sN)) ch.push(P(docxRuns(D, sN.r, state.base.sname || baseLegacy().sname), { alignment: alOf(sN.a, 'c'), indent: { left: 4500 } }));
     }
-    return await Packer.toBlob(new Document({ sections: [{ properties: {}, children: ch }] }));
+    return await Packer.toBlob(new Document({ sections: [{ properties: { page: { size: { width: DOCX_PAGE.w, height: DOCX_PAGE.h }, margin: { top: DOCX_PAGE.m, right: DOCX_PAGE.m, bottom: DOCX_PAGE.m, left: DOCX_PAGE.m, header: 708, footer: 708 } } }, children: ch }] }));
   }
 
   // ---------------- .doc fallback (every user string escaped) ----------------
