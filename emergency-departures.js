@@ -73,15 +73,16 @@
 function emgReqOk(r) { return featEntryOk(r.tok) && r.depK === (_featSeq.dep || 0); }
 
 // N25-R4a: هوية البرج المختار تُلتقط لحظة اختياره وتبقى ثابتة حتى الحفظ (لا يُعاد تحميل الخريطة ولا حلّ الرقم عند الحفظ)
-let _emgPick = null, _emgPickSeq = 0;
+let _emgPick = null, _emgPickSeq = 0, _emgPickPending = false;
 async function onEmgTowerChange() {
-  const my = ++_emgPickSeq; _emgPick = null;
+  const my = ++_emgPickSeq; _emgPick = null; _emgPickPending = false;
   const line = document.getElementById('emg_line').value, num = document.getElementById('emg_tower').value;
   if (!line || !num) return;
+  const tag = featSessionTag();
   let sn = csIdentSnap(line, String(num), { mapOnly: true });
-  if (!sn && navigator.onLine) { await csLineIdentLoad(line); sn = csIdentSnap(line, String(num), { mapOnly: true }); }
+  if (!sn && navigator.onLine) { _emgPickPending = true; try { await csLineIdentLoad(line); } finally { if (my === _emgPickSeq) _emgPickPending = false; } sn = csIdentSnap(line, String(num), { mapOnly: true }); }   // N25-R19: الحفظ ينتظر التقاط الهوية
   if (my !== _emgPickSeq) return;
-  _emgPick = { line, num: String(num), snap: sn };
+  _emgPick = { line, num: String(num), snap: sn, tag };
 }
 function onEmgLineChange() {
   _emgPickSeq++; _emgPick = null;
@@ -105,8 +106,13 @@ function toggleEmgStatus() {
   document.getElementById('emg_status_pending_lbl').style.background = done ? '' : '#FFF3CD';
 }
 
+// N25-R19: «مسح» اليدوي يتجاهل أيضاً أي محاولة لم يصل تأكيدها (قد تكون حُفظت بالخادم)؛ مسح ما بعد النجاح يمرّ عبر emgResetForm
 function clearEmgForm() {
-  _emgPickSeq++; _emgPick = null;
+  if (_emgAttempt) { _emgAttempt = null; emgAttemptNote(); showToast('ℹ️ تُجوهلت المحاولة السابقة التي لم يصل تأكيدها — قد تكون حُفظت، راجع السجل قبل إعادة الإدخال'); }
+  emgResetForm();
+}
+function emgResetForm() {
+  _emgPickSeq++; _emgPick = null; _emgPickPending = false;
   document.getElementById('emg_line').value = '';
   document.getElementById('emg_tower').innerHTML = '<option value="">-- اختر الخط أولاً --</option>';
   document.getElementById('emg_tower').disabled = true;
@@ -116,48 +122,77 @@ function clearEmgForm() {
   toggleEmgStatus();
 }
 
+// N25-R19: ضغطة الحفظ تثبّت الحمولة والهوية ومعرّف الطلب في «محاولة» واحدة؛ لا ضغط مزدوج أثناء الإرسال، وضياع الرد يُبقي المحاولة نفسها (بلا UUID جديد)
+// وإعادة الضغط ترسل الحمولة الأصلية حرفياً. محاولة جلسة أخرى لا تُرسل ولا يُعرض لها أثر. بالذاكرة فقط (الواجهة لا تدّعي حفظاً على الجهاز).
+let _emgAttempt = null, _emgInflight = null;
+function emgFormSig() {
+  const g = id => (document.getElementById(id) || {}).value || '', st = document.querySelector('input[name="emg_status"]:checked');
+  return JSON.stringify([g('emg_line'), g('emg_tower'), g('emg_type').trim(), g('emg_details').trim(), st ? st.value : '']);
+}
+function emgBusyUi() {
+  const on = !!(_emgInflight && _emgInflight.tag === featSessionTag());
+  document.querySelectorAll('#depEmergencyView button[onclick="saveEmergencyDeparture()"]').forEach(b => { b.disabled = on; b.style.opacity = on ? '0.6' : ''; });
+}
+function emgAttemptNote() {
+  let el = document.getElementById('emgAttemptNote'); const on = _emgAttempt && _emgAttempt.state === 'unsettled' && _emgAttempt.tag === featSessionTag();
+  if (!el) { const btn = document.querySelector('#depEmergencyView button[onclick="saveEmergencyDeparture()"]'); if (!btn || !btn.parentNode) return; el = document.createElement('div'); el.id = 'emgAttemptNote'; el.setAttribute('role', 'status'); el.style.cssText = 'display:none;margin-bottom:10px;padding:8px 12px;border-radius:8px;background:#FFFAF0;color:#7B341E;font-size:0.85rem'; btn.parentNode.parentNode.insertBefore(el, btn.parentNode); }
+  el.style.display = on ? 'block' : 'none'; el.textContent = on ? '⚠️ لم يصل تأكيد حفظ المحاولة السابقة (قد يكون الخادم حفظها). بياناتك باقية: اضغط «حفظ» لإكمال المحاولة نفسها بالبيانات الأصلية دون تكرار، أو «مسح» لتجاهلها.' : '';
+}
 async function saveEmergencyDeparture() {
-  const lineName = document.getElementById('emg_line').value;
-  const towerNum = document.getElementById('emg_tower').value;
-  const depType = document.getElementById('emg_type').value.trim();
-  const details = document.getElementById('emg_details').value.trim();
-  const statusEl = document.querySelector('input[name="emg_status"]:checked');
-  const status = statusEl ? statusEl.value : 'قيد المعالجة';
-
-  if (!lineName || !towerNum || !depType) {
-    showToast('⚠️ الخط والبرج ونوع المغادرة مطلوبة', 'error'); return;
-  }
-
-  const now = new Date().toISOString().split('T')[0];
-  const rec = {
-    line_name: lineName,
-    tower_number: towerNum,
-    departure_type: depType,
-    details: details,
-    status: status,
-    treated_by: status === 'تمت المعالجة' ? currentUser.full_name : null,
-    treatment_date: status === 'تمت المعالجة' ? now : null,
-    created_by: currentUser.full_name,
-    client_uuid: genUUID()
-  };
-  // N25-R4: المغادرة تُربط بالهوية الدائمة للبرج (الرقم يبقى لقطة)؛ تُحدَّث الخريطة قبل الحفظ عند الاتصال
-  { const pk = _emgPick;
+  const tag = featSessionTag();
+  if (_emgInflight && _emgInflight.tag === tag) return;                   // طلب جارٍ لهذه الجلسة: لا حفظ متكرر
+  if (_emgAttempt && _emgAttempt.tag !== tag) _emgAttempt = null;          // محاولة حساب سابق: لا تُرسل أبداً باسم هذا الحساب
+  let at = _emgAttempt;
+  if (at) {                                                                 // محاولة لم يصل تأكيدها: نرسل حمولتها الأصلية فقط
+    if (at.sig !== emgFormSig()) { showToast('⚠️ عدّلت المدخلات بعد محاولة لم يصل تأكيدها: أعدها كما كانت لإكمال المحاولة الأصلية، أو اضغط «مسح» لتجاهلها', 'error'); return; }
+  } else {
+    const lineName = document.getElementById('emg_line').value;
+    const towerNum = document.getElementById('emg_tower').value;
+    const depType = document.getElementById('emg_type').value.trim();
+    const details = document.getElementById('emg_details').value.trim();
+    const statusEl = document.querySelector('input[name="emg_status"]:checked');
+    const status = statusEl ? statusEl.value : 'قيد المعالجة';
+    if (!lineName || !towerNum || !depType) { showToast('⚠️ الخط والبرج ونوع المغادرة مطلوبة', 'error'); return; }
+    if (_emgPickPending) { showToast('⏳ جارٍ التحقق من هوية البرج المختار — أعد الضغط بعد لحظة', 'error'); return; }
+    const now = new Date().toISOString().split('T')[0];
+    const rec = {
+      line_name: lineName, tower_number: towerNum, departure_type: depType, details: details, status: status,
+      treated_by: status === 'تمت المعالجة' ? currentUser.full_name : null,
+      treatment_date: status === 'تمت المعالجة' ? now : null,
+      created_by: currentUser.full_name,
+      client_uuid: genUUID()
+    };
+    // N25-R4: المغادرة تُربط بالهوية الدائمة للبرج (الرقم يبقى لقطة)؛ الهوية تُلتقط عند الاختيار وتُثبَّت هنا مرة واحدة للمحاولة كلها
+    const pk = _emgPick;
+    if (pk && pk.tag && pk.tag !== tag) { _emgPick = null; showToast('⚠️ اختر البرج من جديد (اختيار سابق من جلسة أخرى)', 'error'); return; }
     if (pk && pk.line === lineName && pk.num === String(towerNum) && pk.snap) {
       if (pk.snap.blocked) { showToast(csIdentBlockMsg(pk.snap.blocked), 'error'); return; }
       rec.tower_id = pk.snap.tower_id; rec.topology_rev = pk.snap.topology_rev;
-    } }
-
-  try {
-    const res = await sbFetch('emergency_departures?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: JSON.stringify(rec) });
-    if (!res.ok) {
-      let bt = ''; try { bt = await res.text(); } catch (e) {}
-      if (/identity_required|stale_topology_identity|tower_retired|unknown_tower_id|future_topology_revision/.test(bt)) { showToast('⚠️ تغيّر ترقيم هذا الخط أو لم يعد هذا البرج بهذا الرقم — حدّث الصفحة وأنت متصل ثم اختر البرج من جديد (لم يُحفظ شيء)', 'error'); return; }
-      throw new Error();
     }
-    showToast('✅ تم حفظ المغادرة الطارئة');
-    clearEmgForm();
+    at = _emgAttempt = { tag, uuid: rec.client_uuid, body: JSON.stringify(rec), sig: emgFormSig(), state: 'sending' };
+  }
+  _emgInflight = at; at.state = 'sending'; emgBusyUi(); emgAttemptNote();
+  const mine = () => featSessionTag() === at.tag;
+  try {
+    const res = await sbFetch('emergency_departures?on_conflict=client_uuid', { method: 'POST', headers:{'Prefer':'resolution=ignore-duplicates'}, body: at.body });
+    if (!mine()) { if (_emgAttempt === at) _emgAttempt = null; return; }   // الردّ لجلسة سابقة: لا رسالة ولا مسح ولا تحديث
+    if (!res.ok) {
+      if (res.status >= 500 || res.status === 408) throw new Error('unsettled');   // خطأ خادم/مهلة: لا نعرف هل حُفظ
+      let bt = ''; try { bt = await res.text(); } catch (e) {}
+      if (_emgAttempt === at) _emgAttempt = null;                                       // رفض مؤكد: لم يُحفظ شيء، المدخلات باقية
+      if (/identity_required|stale_topology_identity|tower_retired|unknown_tower_id|future_topology_revision/.test(bt)) { showToast('⚠️ تغيّر ترقيم هذا الخط أو لم يعد هذا البرج بهذا الرقم — حدّث الصفحة وأنت متصل ثم اختر البرج من جديد (لم يُحفظ شيء)', 'error'); }
+      else showToast('❌ رفض الخادم الحفظ ولم يُحفظ شيء — المدخلات باقية', 'error');
+      return;
+    }
+    if (_emgAttempt === at) _emgAttempt = null;
+    if (emgFormSig() === at.sig) { showToast('✅ تم حفظ المغادرة الطارئة'); emgResetForm(); }
+    else showToast('✅ حُفظت النسخة التي أُرسلت. التعديلات التي كتبتها بعد الضغط بقيت بالنموذج ولم تُحفظ بعد');
     renderEmergencyLog();
-  } catch { showToast('❌ تعذر الحفظ، حاول مرة أخرى', 'error'); }
+  } catch (e) {
+    if (!mine() || (e && e.stale)) { if (_emgAttempt === at) _emgAttempt = null; return; }
+    at.state = 'unsettled';
+    showToast('⚠️ لم يصل تأكيد الحفظ — قد يكون الخادم حفظ المغادرة. بياناتك باقية؛ اضغط «حفظ» لإكمال المحاولة نفسها دون تكرار', 'error');
+  } finally { if (_emgInflight === at) _emgInflight = null; emgBusyUi(); emgAttemptNote(); }
 }
 
 async function updateEmgStatus(id, newStatus) {
@@ -245,6 +280,7 @@ async function renderEmergencyLog() {
 
 function populateEmgLines() {   // N25-R6s3: الفهرس الموحّد؛ الاختيار يُحفظ بالاسم، وبعد تغيّر الإعدادات تُحدَّث أبراج الخط المختار بهويتها
   const sel = document.getElementById('emg_line'); if (!sel) return;
+  emgAttemptNote(); emgBusyUi();      // N25-R19: حالة المحاولة/الإرسال تخص الجلسة الحالية فقط
   const r = fillLineSelect(sel, { placeholder: '-- اختر الخط --', grouped: true });
   if (r.lost) { onEmgLineChange(); return; }
   emgRefreshTowerOptions();
@@ -272,7 +308,7 @@ function emgRefreshTowerOptions() {
       _emgPick = null; towerSel.value = '';
       showToast('⚠️ تغيّر ترقيم هذا الخط: الرقم ' + cur + ' صار لبرج آخر — اختر البرج من جديد قبل الحفظ', 'error'); return;
     }
-    _emgPick = { line, num: String(cur), snap: sn || (prev && prev.snap) || null };
+    _emgPick = { line, num: String(cur), snap: sn || (prev && prev.snap) || null, tag: featSessionTag() };
   })();
 }
 try { registerLineSelector('emergency', () => { if (document.getElementById('emg_line')) populateEmgLines(); }); } catch (e) {}
