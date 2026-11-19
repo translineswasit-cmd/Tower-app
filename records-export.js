@@ -65,6 +65,26 @@ function openExportModalImpl() {
   renderExportColumnPicker();
   updateExportResultCount();
   document.getElementById('exportModalBg').classList.add('show');
+  exportEnsureIdentity();   // N25-R20: دليل الأبراج للخطوط المعروضة (يُستعمل لتمييز اللقطة التاريخية عن الحالة الحالية في الملفات)
+}
+
+// N25-R20: ملفات التصدير = عرض «تاريخي»: كل صف يحتفظ بلقطة الخط/الرقم/التاريخ وقت الكشف، وتُضاف ملاحظة الهوية (الرقم الحالي / برج محذوف كان رقمه …)
+// من دليل الأبراج المعتمد (csRowNote) حيث يختلف الحال، فلا يُقرأ رقم لقطة على أنه رقم برج اليوم.
+async function exportEnsureIdentity(rows) {
+  const lines = [...new Set((rows || records || []).map(r => r.line_name).filter(Boolean))];
+  if (!lines.length) return;   // csDirsEnsure([]) تعني «كل الخطوط» — لا نريد ذلك
+  try { await csDirsEnsure(lines); } catch (e) {}
+}
+function exportIdNote(r) { try { return csRowNote(r) || ''; } catch (e) { return ''; } }
+// ترتيب الصفوف: الخط بترتيب القوائم المعتمد (400 ثم 132 ثم غير المعروف ثم أبجدياً) ← رقم اللقطة ← هوية البرج (لا يختلط تاريخ برجين حملا الرقم نفسه) ← التاريخ
+function exportSortRows(rows) {
+  const names = sortLineNames([...new Set(rows.map(r => r.line_name || ''))]);
+  const rank = new Map(names.map((n, i) => [n, i]));
+  return rows.slice().sort((a, b) =>
+    (rank.get(a.line_name || '') - rank.get(b.line_name || ''))
+    || ((parseInt(a.tower_number) || 0) - (parseInt(b.tower_number) || 0))
+    || String(csRowKey(a)).localeCompare(String(csRowKey(b)))
+    || String(a.inspection_date || '').localeCompare(String(b.inspection_date || '')));
 }
 
 function closeExportModal() {
@@ -81,7 +101,7 @@ function getExportFilteredRecords() {
     const mTo = !to || (r.inspection_date||'') <= to;
     return mLine && mFrom && mTo;
   });
-  return sortByLineThenTower(rows, 'tower_number');
+  return exportSortRows(rows);
 }
 
 function updateExportResultCount() {
@@ -117,6 +137,7 @@ function toggleExportColumnsSelectAll() {
 }
 
 async function confirmExportExcel() {
+  await exportEnsureIdentity(getExportFilteredRecords());   // N25-R20
   const rows = getExportFilteredRecords();
   if (!rows.length) { showToast('لا توجد بيانات مطابقة للتصدير', 'error'); return; }
   const cols = Array.from(document.querySelectorAll('.exportColChk:checked'))
@@ -127,6 +148,7 @@ async function confirmExportExcel() {
     cols.forEach(c => { o[c.label] = c.get(r); });
     return o;
   });
+  { const notes = rows.map(exportIdNote); if (notes.some(Boolean)) data.forEach((o, i) => { o['هوية البرج'] = notes[i]; }); }   // N25-R20: عمود يظهر فقط حيث يوجد لبس بين الرقم وقت الكشف والرقم اليوم
   await ensureXLSXLoaded(); // Lazy load: يضمن اكتمال تحميل XLSX قبل الاستخدام
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
@@ -137,6 +159,7 @@ async function confirmExportExcel() {
 }
 
 async function confirmExportPDF() {
+  await exportEnsureIdentity(getExportFilteredRecords());   // N25-R20
   const rows = getExportFilteredRecords();
   if (!rows.length) { showToast('لا توجد بيانات مطابقة للتصدير', 'error'); return; }
   showToast('⏳ جاري تحضير PDF...');
@@ -156,7 +179,7 @@ async function confirmExportPDF() {
     const titleImg = drawArabicTextPNG([
       { text: '📋 تقرير كشف الأبراج', fontSize: 17, fontWeight: 'bold', color: '#1a2e4a', padY: 4 },
       { text: `عدد السجلات: ${rows.length}  —  تاريخ التصدير: ${new Date().toLocaleDateString('en-GB')}`, fontSize: 11, color: '#555', padY: 3 }
-    ], 700, {});
+    ].concat(rows.some(r => exportIdNote(r)) ? [{ text: 'عرض تاريخي: رقم البرج وتاريخه هما لقطة وقت الكشف؛ الملاحظة تحت العنوان تبيّن رقمه الحالي أو أنه محذوف', fontSize: 9.5, color: '#7B341E', padY: 3 }] : []), 700, {});
     if (titleImg) {
       const h = usableW * (titleImg.h / titleImg.w);
       doc.addImage(titleImg.dataUrl, 'JPEG', margin, y, usableW, h);
@@ -170,6 +193,7 @@ async function confirmExportPDF() {
         { text: `🗼 ${r.line_name || '-'} — برج ${r.tower_number || '-'} — ${r.tower_type || '-'} — ${r.voltage || ''} ك.ف`, fontSize: 13, fontWeight: 'bold', color: '#1a2e4a', bg: '#eef2f7', padY: 4 },
         { text: `📅 تاريخ الكشف: ${r.inspection_date || '-'}   |   👤 ${r.created_by_name || '-'}`, fontSize: 10, color: '#666', padY: 3 }
       ];
+      { const idn = exportIdNote(r); if (idn) items.push({ text: `🔁 ${idn}`, fontSize: 10, color: '#7B341E', padY: 3 }); }   // N25-R20
       const addLine = (label, val, color) => {
         if (val && String(val).trim() && String(val).trim() !== 'سليم') {
           items.push({ text: `🔴 ${label}: ${val}`, fontSize: 10.5, color: color || '#922b21', padY: 3 });
