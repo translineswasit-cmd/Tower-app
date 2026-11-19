@@ -95,7 +95,11 @@
     const cols = Math.max(0, ...rows.map(r => r.length)); if (!rows.length || !cols) return null;
     rows.forEach(r => { while (r.length < cols) r.push({ r: [] }); });
     sanitizeSpans(rows);
-    return { c: rows };
+    const out = { c: rows };
+    // N25-R15a: محاذاة الجدول كله ta ('r' يمين/'c' وسط/'l' يسار؛ غيابها = وسط كما كان) وعرضه tw (٪ من عرض الطباعة بين الهوامش، 30..100؛ غيابه = تلقائي)
+    if (t.ta === 'r' || t.ta === 'c' || t.ta === 'l') out.ta = t.ta;
+    const tw = Math.round(Number(t.tw)); if (tw >= 30 && tw <= 100) out.tw = tw;
+    return out;
   }
   const cellSpan = cell => ({ cs: Math.max(1, (cell && cell.cs) | 0), rs: Math.max(1, (cell && cell.rs) | 0) });
   // own[r][c] = إحداثيات الخلية الأساس التي تملك الموضع (r,c) — للخلية العادية نفسها
@@ -210,7 +214,7 @@
     if (('sname' in layout) && row.sender_name != null && normPlain(runsText(st.sname.r)) !== normPlain(row.sender_name)) { st.sname = mkLine(row.sender_name ? [{ t: cleanText(row.sender_name, 2000) }] : []); st.notes.push('sname'); }
     if (row.table_data !== undefined) {
       const lp = JSON.stringify(tablePlain(st.table)), rp = JSON.stringify(Array.isArray(row.table_data) && row.table_data.length ? row.table_data.map(r => (r || []).map(c => String(c == null ? '' : c))) : null);
-      if (lp !== rp) { st.table = plainToTable(row.table_data); st.notes.push('table'); }
+      if (lp !== rp) { const old = st.table; st.table = plainToTable(row.table_data); if (st.table && old) { if (old.ta) st.table.ta = old.ta; if (old.tw) st.table.tw = old.tw; } st.notes.push('table'); }
     }
     return st;
   }
@@ -445,7 +449,7 @@
   }
   // hdr = {number,date,to,senderTitle,senderName,attachments}
   function layoutDocument(state, hdr) {
-    let tableCols = null, tableCapped = false;
+    let tableCols = null, tableCapped = false, tableAutoTotal = null;
     const pages = [{ ops: [] }]; let pg = pages[0], y = TOP;
     const addPage = () => { pg = { ops: [] }; pages.push(pg); y = TOP; };
     const need = h => { if (y + h > BOTTOM && y > TOP + 1) addPage(); };
@@ -546,7 +550,7 @@
       y = sy + (rN ? 0 : 0) + lh * 0;
     }
     pages.forEach((p, i) => { p.n = i + 1; });
-    return { pages, W, H, tableCols: tableCapped ? tableCols : null, tableColsAll: tableCols, contentW: W - SIDE * 2 };
+    return { pages, W, H, tableCols: tableCapped ? tableCols : null, tableColsAll: tableCols, contentW: W - SIDE * 2, tableAutoTotal };
 
     function trimPara(p) { // يحذف الفراغات الطرفية (كما trim() القديمة) دون المساس بالتنسيق
       const r = p.r.map(x => Object.assign({}, x)); while (r.length && /^\s*$/.test(r[0].t)) r.shift(); if (r.length) r[0].t = r[0].t.replace(/^\s+/, '');
@@ -567,7 +571,11 @@
         for (let it = 0; it < 40; it++) { const mid = (lo + hi) / 2; if (sumAt(mid) > CW) hi = mid; else lo = mid; }
         colW = colW.map(w => Math.min(w, lo));
       }
-      tableCols = colW.slice(); const total = colW.reduce((a, b) => a + b, 0), rightEdge = W / 2 + total / 2;
+      const autoTotal = colW.reduce((a, b) => a + b, 0);
+      if (state.table.tw) { const target = CW * state.table.tw / 100; colW = colW.map(w => w * target / autoTotal); }   // N25-R15a: عرض صريح = أعمدة متناسبة مع الطبيعية، المجموع = ٪ من عرض الطباعة (لا يتجاوز الهوامش)
+      tableCols = colW.slice(); const total = colW.reduce((a, b) => a + b, 0);
+      tableAutoTotal = autoTotal;
+      const tal = state.table.ta, rightEdge = tal === 'r' ? W - SIDE : tal === 'l' ? SIDE + total : W / 2 + total / 2;   // الحافة اليمنى الفيزيائية للجدول؛ العمود الأول عند اليمين (RTL) دائماً
       const xoff = []; { let acc = 0; colW.forEach(w => { xoff.push(acc); acc += w; }); }
       anchors.forEach(a => {
         a.w = 0; for (let k = 0; k < a.cs; k++) a.w += colW[a.c + k]; a.x = rightEdge - xoff[a.c] - a.w;
@@ -723,7 +731,7 @@
       const line = { style: BorderStyle.SINGLE, size: 4, color: '000000' }, full = { top: line, bottom: line, left: line, right: line };
       // جدول عريض (مجموع الأعمدة الطبيعية > عرض المحتوى): أعمدة ثابتة بنفس نسب المعاينة/PDF وبمجموع = عرض نص الصفحة؛ غير ذلك يبقى كما كان (تلقائي)
       let cw = null, cwTw = null;     // N25-R15: جدول فيه دمج ولم يُقصّ بالهوامش: أعمدة ثابتة بنفس نسب PDF (تحافظ على الامتداد بدقة)؛ جدول بلا دمج يبقى كما كان
-      try { const f = await ensureFonts(neededFaces(state)); if (f.ok) { const lay = layoutDocument(state, hdr); cw = lay.tableCols; if (!cw && tableHasMerges(state.table) && lay.tableColsAll) { cwTw = lay.tableColsAll.map(w => Math.max(300, Math.floor(w * 9026 / lay.contentW))); } } } catch (e) { cw = null; if (window.console) console.warn("memo word table", e); }
+      try { const f = await ensureFonts(neededFaces(state)); if (f.ok) { const lay = layoutDocument(state, hdr); cw = state.table.tw ? null : lay.tableCols; if (!cw && (state.table.tw || tableHasMerges(state.table)) && lay.tableColsAll) { cwTw = lay.tableColsAll.map(w => Math.max(300, Math.floor(w * 9026 / lay.contentW))); } } } catch (e) { cw = null; if (window.console) console.warn("memo word table", e); }
       const wideOpts = cwTw && cwTw.length === state.table.c[0].length ? { cols: cwTw, total: cwTw.reduce((a, b) => a + b, 0) } : cw && cw.length === state.table.c[0].length ? (() => { const sum = cw.reduce((a, b) => a + b, 0), tw = D.WidthType.DXA, CONTENT_TW = 9026; const cols = cw.map(w => Math.max(300, Math.floor(w / sum * CONTENT_TW))); return { cols, total: cols.reduce((a, b) => a + b, 0) }; })() : null;
       const tblOpts = wideOpts ? { width: { size: wideOpts.total, type: WidthType.DXA }, columnWidths: wideOpts.cols, layout: D.TableLayoutType.FIXED } : { width: { size: 0, type: WidthType.AUTO } };
       // N25-R15: الخلايا المدموجة = columnSpan/rowSpan على الخلية الأساس؛ الخلايا المغطّاة لا تُصدَّر (مكتبة docx تُدخل خلايا vMerge المتابِعة تلقائياً)
@@ -733,7 +741,7 @@
         const o = { borders: full, width: wideOpts ? { size: wsum, type: WidthType.DXA } : { size: 0, type: WidthType.AUTO }, children: [P(docxRuns(D, cell.r, state.base.table), { alignment: alOf(cell.a, 'c') })] };
         if (sp.cs > 1) o.columnSpan = sp.cs; if (sp.rs > 1) o.rowSpan = sp.rs;
         return new TableCell(o); }) }));
-      ch.push(new Table(Object.assign({}, tblOpts, { alignment: AlignmentType.CENTER, rows: tRows })));
+      ch.push(new Table(Object.assign({}, tblOpts, { alignment: state.table.ta === 'r' ? AlignmentType.RIGHT : state.table.ta === 'l' ? AlignmentType.LEFT : AlignmentType.CENTER, rows: tRows })));
     }
     if (afterHasText(state)) { ch.push(new Paragraph({ text: '' })); bodyParas(state.after, state.base.after, false); }
     ch.push(new Paragraph({ text: '' }));
@@ -770,7 +778,7 @@
       '<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="font-weight:700" align="right">' + e(hdr.to) + (fromLine(state, hdr) ? '<br>' + e(fromLine(state, hdr)) : '') + '</td><td align="left" style="white-space:nowrap">العدد&#160;:&#160;' + e(hdr.number) + '</td></tr><tr><td>&#160;</td><td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;' + e(hdr.date) + '</td></tr></table>' +
       '<p style="margin-top:14px;' + ta(state.subject.a, 'c') + '">' + runsHtml([{ t: 'م / ' }].concat(state.subject.r), state.base.subject) + '</p>' +
       '<div style="margin-top:18px;text-align:justify">' + state.body.map((p, i) => para(p, state.base.body, i === 0, 'j')).join('') + '</div>' +
-      (state.table ? (() => { const own = tableOwners(state.table); return '<table style="border-collapse:collapse;margin:18px auto 0;width:auto">' + state.table.c.map((row, ri) => '<tr>' + row.map((c, ci) => { if (own[ri][ci].r !== ri || own[ri][ci].c !== ci) return ''; const sp = cellSpan(c); return '<td' + (sp.cs > 1 ? ' colspan="' + sp.cs + '"' : '') + (sp.rs > 1 ? ' rowspan="' + sp.rs + '"' : '') + ' style="border:1px solid #000;padding:6px 14px;' + ta(c.a, 'c') + 'white-space:normal;word-wrap:break-word">' + runsHtml(c.r, state.base.table) + '</td>'; }).join('') + '</tr>').join('') + '</table>'; })() : '') +
+      (state.table ? (() => { const own = tableOwners(state.table); return '<table style="border-collapse:collapse;margin:18px ' + (state.table.ta === 'r' ? '0 0 auto' : state.table.ta === 'l' ? 'auto 0 0' : 'auto 0') + ';width:' + (state.table.tw ? state.table.tw + '%' : 'auto') + '">' + state.table.c.map((row, ri) => '<tr>' + row.map((c, ci) => { if (own[ri][ci].r !== ri || own[ri][ci].c !== ci) return ''; const sp = cellSpan(c); return '<td' + (sp.cs > 1 ? ' colspan="' + sp.cs + '"' : '') + (sp.rs > 1 ? ' rowspan="' + sp.rs + '"' : '') + ' style="border:1px solid #000;padding:6px 14px;' + ta(c.a, 'c') + 'white-space:normal;word-wrap:break-word">' + runsHtml(c.r, state.base.table) + '</td>'; }).join('') + '</tr>').join('') + '</table>'; })() : '') +
       (afterHasText(state) ? '<div style="margin-top:12px;text-align:justify">' + state.after.map(p => para(p, state.base.after, false, 'j')).join('') + '</div>' : '') +
       '<p style="margin-top:18px;' + ta(state.closing.a, 'c') + '">' + runsHtml(state.closing.r, state.base.closing) + '</p>' +
       (att.length ? '<div style="margin-top:18px;text-align:right"><div style="display:inline-block;font-weight:700;text-decoration:underline">المرفقات :</div><div style="margin-top:4px">' + att.map((p, i) => '<div style="' + ta(p.a, 'r') + '">' + e((i + 1) + '. ') + runsHtml(p.r, state.base.att || baseLegacy().att) + '</div>').join('') + '</div></div>' : '') +

@@ -1516,6 +1516,20 @@ tbody tr:hover { background: #F7FAFC; }
             <button class="btn-sm btn-secondary" id="memoMergeBtn" onclick="memoMergeCells()" style="background:#2B6CB0;color:#fff;border-color:#2B6CB0">🔗 دمج الخلايا</button>
             <button class="btn-sm btn-secondary" id="memoUnmergeBtn" onclick="memoUnmergeCell()">✂️ فك الدمج</button>
           </div>
+          <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:0.8rem;font-weight:700">محاذاة الجدول:</span>
+            <button class="btn-sm btn-secondary" id="memoTaR" onclick="memoSetTableAlign('r')">يمين</button>
+            <button class="btn-sm btn-secondary" id="memoTaC" onclick="memoSetTableAlign('c')">وسط</button>
+            <button class="btn-sm btn-secondary" id="memoTaL" onclick="memoSetTableAlign('l')">يسار</button>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:0.8rem;font-weight:700">عرض الجدول:</span>
+            <button class="btn-sm btn-secondary" onclick="memoTableWidthStep(-5)" aria-label="تضييق">➖</button>
+            <b id="memoTwLabel" style="font-size:0.8rem;min-width:110px;text-align:center">تلقائي</b>
+            <button class="btn-sm btn-secondary" onclick="memoTableWidthStep(5)" aria-label="توسيع">➕</button>
+            <button class="btn-sm btn-secondary" id="memoTwAuto" onclick="memoSetTableWidth(null)">↩️ تلقائي</button>
+            <input type="range" id="memoTwRange" min="30" max="100" step="5" value="60" style="flex:1 1 100%" oninput="memoSetTableWidth(this.value)">
+          </div>
           <div id="memoCellHint" style="font-size:0.74rem;color:#4A5568;margin-top:4px">اضغط داخل خلية لتحديد الصف/العمود المراد حذفه (يظهر مظلَّلاً).</div>
         </div>
       </div>

@@ -192,6 +192,29 @@ function memoMarkActiveCell() {
   if (hint) hint.textContent = memoSelMode ? (!memoSel ? 'وضع التحديد: اضغط الخلية الأولى ثم الأخيرة (نطاق مستطيل) ثم «دمج الخلايا».' : !memoSel.b ? 'اضغط الخلية الأخيرة لإكمال النطاق.' : 'النطاق المحدّد مظلَّل بالأزرق — اضغط «دمج الخلايا» أو اضغط خلية لبدء نطاق جديد.')
     : memoActiveCell ? 'الخلية المحدّدة: صف ' + (memoActiveCell.r + 1) + '، عمود ' + (memoActiveCell.c + 1) + (memoState && memoState.table && (memoSpanOfCell(memoActiveCell.r, memoActiveCell.c).rs > 1 || memoSpanOfCell(memoActiveCell.r, memoActiveCell.c).cs > 1) ? ' (مدموجة)' : '') + ' — «حذف الصف/العمود» يحذف المظلَّل فقط.' : 'اضغط داخل خلية لتحديد الصف/العمود المراد حذفه (يظهر مظلَّلاً).';
 }
+
+// ---- N25-R15a: محاذاة الجدول كله وعرضه (٪ من عرض الطباعة) — مستقلان عن محاذاة النص داخل الخلايا ----
+function memoApplyTableBox() {
+  const t = memoState && memoState.table, tbl = document.getElementById('memoTableEl'); if (!tbl) return;
+  const al = t && t.ta ? t.ta : 'c';
+  tbl.style.width = t && t.tw ? t.tw + '%' : '100%';
+  tbl.style.marginLeft = al === 'r' ? 'auto' : (al === 'c' ? 'auto' : '0'); tbl.style.marginRight = al === 'l' ? 'auto' : (al === 'c' ? 'auto' : '0');   // فيزيائي: يمين = الهامش الأيسر auto
+  [['r', 'memoTaR'], ['c', 'memoTaC'], ['l', 'memoTaL']].forEach(([k, id]) => { const b = document.getElementById(id); if (b) { b.style.background = al === k ? '#2B6CB0' : ''; b.style.color = al === k ? '#fff' : ''; } });
+  const lbl = document.getElementById('memoTwLabel'), rg = document.getElementById('memoTwRange');
+  if (lbl) lbl.textContent = t && t.tw ? t.tw + '٪ من عرض الطباعة' : 'تلقائي';
+  if (rg && t && t.tw) rg.value = t.tw;
+}
+function memoSetTableAlign(a) { const t = memoState && memoState.table; if (!t) return; t.ta = a; memoFlagTouched(); memoApplyTableBox(); memoOnChange(); }
+function memoSetTableWidth(v) {
+  const t = memoState && memoState.table; if (!t) return;
+  if (v == null) delete t.tw; else t.tw = Math.max(30, Math.min(100, Math.round(Number(v)) || 100));
+  memoFlagTouched(); memoApplyTableBox(); memoOnChange();
+}
+function memoTableWidthStep(d) {
+  const t = memoState && memoState.table; if (!t) return; let cur = t.tw;
+  if (!cur) { try { const D = memoMD(), lay = D.layoutDocument(memoOutputState(), memoHdr(false)); cur = Math.round(lay.tableAutoTotal / lay.contentW * 100); } catch (e) { cur = 60; } }
+  memoSetTableWidth(Math.max(30, Math.min(100, Math.round(cur / 5) * 5 + d)));
+}
 function renderMemoTableEditor() {
   const wrap = document.getElementById('memoTableWrap'), addBtn = document.getElementById('memoAddTableBtn'), afterWrap = document.getElementById('memoAfterWrap');
   memoCellEds.forEach(e => e.destroy()); memoCellEds = [];
@@ -214,7 +237,7 @@ function renderMemoTableEditor() {
     tbl.appendChild(tr);
   });
   if (memoActiveCell && (memoActiveCell.r >= t.c.length || memoActiveCell.c >= t.c[0].length)) memoActiveCell = null;
-  memoMarkActiveCell();
+  memoMarkActiveCell(); memoApplyTableBox();
   if (memoBar) memoBar.refresh();
   memoScheduleFonts();
 }
