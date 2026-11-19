@@ -17,6 +17,7 @@ let memoEdMap = {};            // area → Ed (subject/body/after/closing)
 let memoCellEds = [];          // محرّرات خلايا الجدول
 let memoBar = null;
 let memoActiveCell = null;     // {r,c}
+let memoSelMode = false, memoSel = null;   // N25-R15: وضع تحديد الخلايا للدمج؛ memoSel = {a:{r,c}, b:{r,c}|undefined}
 const memoMD = () => window.MemoDoc, memoME = () => window.MemoEditor;
 const MEMO_ALL_FACES = [['SA', 400], ['SA', 700], ['TA', 400], ['PT', 400], ['TNR', 400], ['TNR', 700]];
 let memoFacesDrawn = '';
@@ -96,7 +97,7 @@ async function removeMemoTable() {
     if (!confirm(msg)) return;
   }
   if (hasAfter) memoMoveAfterToBody();
-  memoState.table = null; memoActiveCell = null;
+  memoState.table = null; memoActiveCell = null; memoSelMode = false; memoSel = null;
   memoState.after = [{ r: [] }];
   renderMemoTableEditor();
   const ed = memoEdMap.body; if (ed) ed.draw();
@@ -126,39 +127,89 @@ function deleteMemoTableRow() {
   const t = memoState && memoState.table; if (!t) return;
   if (!memoActiveCell) { showToast('اضغط داخل خلية من الصف المراد حذفه أولاً', 'error'); return; }
   if (t.c.length <= 1) { showToast('⚠️ هذا آخر صف — استخدم «حذف الجدول» لإزالة الجدول', 'error'); return; }
-  const r = memoActiveCell.r, filled = t.c[r].filter(c => memoCellText(c) !== '').length;
-  if (filled && !confirm('🗑️ حذف الصف ' + (r + 1) + '؟ يحتوي ' + filled + ' خلية مكتوبة ولا يمكن التراجع. بقية الخلايا تبقى كما هي.')) return;
-  t.c.splice(r, 1); memoActiveCell = { r: Math.min(r, t.c.length - 1), c: memoActiveCell.c };
-  renderMemoTableEditor();
+  const D = memoMD(), r = memoActiveCell.r, filled = D.tableLineLoss(t, 'row', r);
+  if (filled && !confirm('🗑️ حذف الصف ' + (r + 1) + '؟ يحتوي ' + filled + ' خلية مكتوبة ولا يمكن التراجع. بقية الخلايا تبقى كما هي (الخلية المدموجة الممتدة لصفوف أخرى لا تُفقد: يقلّ امتدادها).')) return;
+  D.tableDeleteRow(t, r); memoActiveCell = { r: Math.min(r, t.c.length - 1), c: memoActiveCell.c };
+  memoSel = null; renderMemoTableEditor();
 }
 function deleteMemoTableCol() {
   const t = memoState && memoState.table; if (!t) return;
   if (!memoActiveCell) { showToast('اضغط داخل خلية من العمود المراد حذفه أولاً', 'error'); return; }
   if (t.c[0].length <= 1) { showToast('⚠️ هذا آخر عمود — استخدم «حذف الجدول» لإزالة الجدول', 'error'); return; }
-  const c = memoActiveCell.c, filled = t.c.filter(row => memoCellText(row[c]) !== '').length;
-  if (filled && !confirm('🗑️ حذف العمود ' + (c + 1) + '؟ يحتوي ' + filled + ' خلية مكتوبة ولا يمكن التراجع. بقية الخلايا تبقى كما هي.')) return;
-  t.c.forEach(row => row.splice(c, 1)); memoActiveCell = { r: memoActiveCell.r, c: Math.min(c, t.c[0].length - 1) };
-  renderMemoTableEditor();
+  const D = memoMD(), c = memoActiveCell.c, filled = D.tableLineLoss(t, 'col', c);
+  if (filled && !confirm('🗑️ حذف العمود ' + (c + 1) + '؟ يحتوي ' + filled + ' خلية مكتوبة ولا يمكن التراجع. بقية الخلايا تبقى كما هي (الخلية المدموجة الممتدة لأعمدة أخرى لا تُفقد: يقلّ امتدادها).')) return;
+  D.tableDeleteCol(t, c); memoActiveCell = { r: memoActiveCell.r, c: Math.min(c, t.c[0].length - 1) };
+  memoSel = null; renderMemoTableEditor();
+}
+// ---- N25-R15: دمج الخلايا (أفقي/عمودي/مستطيل) ----
+const memoSpanOfCell = (r, c) => { const x = memoState.table.c[r][c]; return { rs: Math.max(1, (x.rs | 0)), cs: Math.max(1, (x.cs | 0)) }; };
+function memoSelRect() {   // المستطيل المحيط بالخليتين المضغوطتين (بكامل امتداد أي خلية مدموجة مضغوطة)
+  if (!memoSel || !memoSel.a || !memoSel.b || !memoState || !memoState.table) return null;
+  const e = p => { const s = memoSpanOfCell(p.r, p.c); return { r0: p.r, r1: p.r + s.rs - 1, c0: p.c, c1: p.c + s.cs - 1 }; }, x = e(memoSel.a), y = e(memoSel.b);
+  return { r0: Math.min(x.r0, y.r0), r1: Math.max(x.r1, y.r1), c0: Math.min(x.c0, y.c0), c1: Math.max(x.c1, y.c1) };
+}
+function memoToggleSelMode(force) {
+  if (!memoState || !memoState.table) return;
+  memoSelMode = typeof force === 'boolean' ? force : !memoSelMode; memoSel = null; renderMemoTableEditor();
+}
+function memoSelTap(r, c) {
+  if (!memoSelMode) return;
+  if (!memoSel || memoSel.b) memoSel = { a: { r, c } }; else memoSel.b = { r, c };
+  memoMarkActiveCell();
+}
+function memoMergeCells() {
+  const t = memoState && memoState.table; if (!t) return;
+  if (!memoSelMode) { memoToggleSelMode(true); showToast('ℹ️ اضغط الخلية الأولى ثم الخلية الأخيرة للنطاق، ثم «دمج الخلايا»'); return; }
+  if (!memoSel || !memoSel.a) { showToast('اضغط الخلية الأولى ثم الخلية الأخيرة للنطاق', 'error'); return; }
+  if (!memoSel.b) { showToast('اضغط الخلية الأخيرة لإكمال النطاق', 'error'); return; }
+  const D = memoMD(), R = memoSelRect(), res = D.tableMerge(t, R.r0, R.c0, R.r1, R.c1);
+  if (!res.ok) {
+    showToast(res.code === 'single' ? '⚠️ اختر خليتين متجاورتين أو أكثر للدمج' : res.code === 'partial' ? '⚠️ لا يمكن الدمج: النطاق يقطع خلية مدموجة (صف ' + (res.at.r + 1) + '، عمود ' + (res.at.c + 1) + '). وسّع التحديد ليشملها كاملة أو اختر نطاقاً آخر' : '⚠️ نطاق غير صالح', 'error'); return;
+  }
+  memoFlagTouched(); memoSelMode = false; memoSel = null; memoActiveCell = { r: res.r0, c: res.c0 };
+  renderMemoTableEditor(); memoOnChange();
+  showToast('✅ تم دمج الخلايا' + (res.filled > 1 ? ' — نُقلت نصوص ' + res.filled + ' خلايا بترتيب القراءة (صف ثم عمود) في سطور متتالية' : '') + (res.mixedAlign ? ' — اختلفت المحاذاة فاعتُمدت محاذاة أول خلية مكتوبة' : ''));
+}
+function memoUnmergeCell() {
+  const t = memoState && memoState.table; if (!t) return;
+  const p = memoSelMode && memoSel && memoSel.a ? memoSel.a : memoActiveCell;
+  if (!p) { showToast('اضغط داخل الخلية المدموجة أولاً', 'error'); return; }
+  if (!memoMD().tableUnmerge(t, p.r, p.c)) { showToast('الخلية المحدّدة غير مدموجة', 'error'); return; }
+  memoFlagTouched(); memoSel = null; memoActiveCell = { r: p.r, c: p.c }; renderMemoTableEditor(); memoOnChange();
+  showToast('✅ فُكّ الدمج — النص كله بقي في الخلية العليا اليمنى');
 }
 function memoMarkActiveCell() {
   const tbl = document.getElementById('memoTableEl'); if (!tbl) return;
-  tbl.querySelectorAll('td').forEach(td => { td.classList.toggle('mc-row', !!memoActiveCell && +td.dataset.r === memoActiveCell.r); td.classList.toggle('mc-col', !!memoActiveCell && +td.dataset.c === memoActiveCell.c); });
-  const hint = document.getElementById('memoCellHint');
-  if (hint) hint.textContent = memoActiveCell ? 'الخلية المحدّدة: صف ' + (memoActiveCell.r + 1) + '، عمود ' + (memoActiveCell.c + 1) + ' — «حذف الصف/العمود» يحذف المظلَّل فقط.' : 'اضغط داخل خلية لتحديد الصف/العمود المراد حذفه (يظهر مظلَّلاً).';
+  const R = memoSelRect(), A = memoSelMode && memoSel && memoSel.a && !memoSel.b ? memoSel.a : null;
+  tbl.querySelectorAll('td').forEach(td => {
+    const r = +td.dataset.r, c = +td.dataset.c, sp = memoState && memoState.table ? memoSpanOfCell(r, c) : { rs: 1, cs: 1 };
+    td.classList.toggle('mc-row', !memoSelMode && !!memoActiveCell && r === memoActiveCell.r); td.classList.toggle('mc-col', !memoSelMode && !!memoActiveCell && c === memoActiveCell.c);
+    const inRect = !!R && !(r + sp.rs - 1 < R.r0 || r > R.r1 || c + sp.cs - 1 < R.c0 || c > R.c1);
+    td.classList.toggle('mc-sel', inRect || (!!A && A.r === r && A.c === c));
+  });
+  const hint = document.getElementById('memoCellHint'), sb = document.getElementById('memoSelBtn');
+  if (sb) sb.textContent = memoSelMode ? '✖️ إنهاء التحديد' : '☑️ تحديد خلايا';
+  if (hint) hint.textContent = memoSelMode ? (!memoSel ? 'وضع التحديد: اضغط الخلية الأولى ثم الأخيرة (نطاق مستطيل) ثم «دمج الخلايا».' : !memoSel.b ? 'اضغط الخلية الأخيرة لإكمال النطاق.' : 'النطاق المحدّد مظلَّل بالأزرق — اضغط «دمج الخلايا» أو اضغط خلية لبدء نطاق جديد.')
+    : memoActiveCell ? 'الخلية المحدّدة: صف ' + (memoActiveCell.r + 1) + '، عمود ' + (memoActiveCell.c + 1) + (memoState && memoState.table && (memoSpanOfCell(memoActiveCell.r, memoActiveCell.c).rs > 1 || memoSpanOfCell(memoActiveCell.r, memoActiveCell.c).cs > 1) ? ' (مدموجة)' : '') + ' — «حذف الصف/العمود» يحذف المظلَّل فقط.' : 'اضغط داخل خلية لتحديد الصف/العمود المراد حذفه (يظهر مظلَّلاً).';
 }
 function renderMemoTableEditor() {
   const wrap = document.getElementById('memoTableWrap'), addBtn = document.getElementById('memoAddTableBtn'), afterWrap = document.getElementById('memoAfterWrap');
   memoCellEds.forEach(e => e.destroy()); memoCellEds = [];
   const t = memoState && memoState.table;
-  if (!t) { wrap.style.display = 'none'; addBtn.style.display = ''; if (afterWrap) afterWrap.style.display = 'none'; memoActiveCell = null; return; }
+  if (!t) { wrap.style.display = 'none'; addBtn.style.display = ''; if (afterWrap) afterWrap.style.display = 'none'; memoActiveCell = null; memoSelMode = false; memoSel = null; return; }
   addBtn.style.display = 'none'; wrap.style.display = 'block'; if (afterWrap) afterWrap.style.display = '';
   const E = memoME(), tbl = document.getElementById('memoTableEl'); tbl.textContent = '';
+  const own = memoMD().tableOwners(t);
+  tbl.classList.toggle('mc-selmode', memoSelMode);
   t.c.forEach((row, r) => {
     const tr = document.createElement('tr');
     row.forEach((cell, c) => {
+      if (own[r][c].r !== r || own[r][c].c !== c) return;                    // خلية مغطّاة بدمج: لا td ولا محرّر
       const td = document.createElement('td'); td.style.cssText = 'border:1px solid #ddd;padding:2px'; td.dataset.r = r; td.dataset.c = c;
+      const sp = memoSpanOfCell(r, c); if (sp.cs > 1) td.colSpan = sp.cs; if (sp.rs > 1) td.rowSpan = sp.rs;
       const div = document.createElement('div'); div.className = 'memo-ed memo-cell'; td.appendChild(div); tr.appendChild(td);
-      memoCellEds.push(new E.Ed(div, { area: 'table', single: true, row: r, col: c, getBase: () => memoState.base.table, getParas: () => [memoState.table.c[r][c]], setParas: ps => { memoState.table.c[r][c] = ps[0].a ? { r: ps[0].r, a: ps[0].a } : { r: ps[0].r }; }, onChange: memoOnChange, onActive: () => { memoActiveCell = { r, c }; memoMarkActiveCell(); } }));
+      memoCellEds.push(new E.Ed(div, { area: 'table', single: true, row: r, col: c, getBase: () => memoState.base.table, getParas: () => [memoState.table.c[r][c]], setParas: ps => { const old = memoState.table.c[r][c], nc = { r: ps[0].r }; if (ps[0].a) nc.a = ps[0].a; if (old && old.cs > 1) nc.cs = old.cs; if (old && old.rs > 1) nc.rs = old.rs; memoState.table.c[r][c] = nc; }, onChange: memoOnChange, onActive: () => { memoActiveCell = { r, c }; memoMarkActiveCell(); } }));
+      if (memoSelMode) { div.setAttribute('contenteditable', 'false'); div.style.pointerEvents = 'none'; td.addEventListener('click', () => memoSelTap(r, c)); }
     });
     tbl.appendChild(tr);
   });
@@ -251,7 +302,7 @@ async function showMemoNew() {
   ensureMemoNumberUI(); memoSetStatus('');
   document.getElementById('memo_number').value = '';
   document.getElementById('memo_to').value = 'الى / السيـد المـديـر الـمحتـرم...';
-  memoActiveCell = null;
+  memoActiveCell = null; memoSelMode = false; memoSel = null;
   memoSetState(memoMD().newState(), null);
   memoSuggestedNumber = null; memoUpdateNumberHint();
   memoSuggestedNumber = await generateNextMemoNumber();     // اقتراح فقط، يُعرض ولا يُحجز ولا يُملأ بالحقل
@@ -590,7 +641,7 @@ function memoEnterEdit(rec) {
     numberField.value = wantNumber != null ? String(wantNumber) : (pend && pend.payload.number_mode === 'manual' ? String(pend.payload.memo_number) : (official !== null ? official : ''));
     document.getElementById('memo_date').value = m.memo_date || '';
     document.getElementById('memo_to').value = m.memo_to || 'الى / السيـد المـديـر الـمحتـرم...';
-    memoActiveCell = null;
+    memoActiveCell = null; memoSelMode = false; memoSel = null;
     memoSetState(st, st.mode === 'legacy' ? { content: m.content, subject: m.subject, table_data: m.table_data, attachments: m.attachments, sender_title: m.sender_title, sender_name: m.sender_name } : null);
     memoSetStatus(pend ? docqStatusHTML(pend.rejected ? 'rejected' : 'pending', pend.rejected && pend.rejected.code) : '');
     memoUpdateNumberHint();

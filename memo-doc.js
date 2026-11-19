@@ -73,12 +73,95 @@
     (Array.isArray(arr) ? arr : []).slice(0, max || 2000).forEach(p => { const o = { r: cleanRuns(p && p.r) }, a = cleanA(p && p.a); if (a) o.a = a; out.push(o); });
     return out.length ? out : [{ r: [] }];
   }
+  // N25-R15: خلية مدموجة = الخلية العليا-اليمنى (الأساس) تحمل cs (أعمدة) و/أو rs (صفوف) > 1، والخلايا المغطّاة تبقى في الشبكة فارغة {r:[]}.
+  // الشبكة تبقى كاملة (صفوف × أعمدة) فيبقى table_data النصي وفحوص الاتساق كما هي؛ وثيقة بلا cs/rs = كما كانت تماماً.
+  function sanitizeSpans(rows) {
+    const R = rows.length, C = rows[0].length, used = rows.map(r => r.map(() => false));
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      const cell = rows[r][c]; let cs = cell.cs | 0, rs = cell.rs | 0; delete cell.cs; delete cell.rs;
+      if (cs < 1) cs = 1; if (rs < 1) rs = 1; cs = Math.min(cs, C - c); rs = Math.min(rs, R - r);
+      if (cs === 1 && rs === 1) continue;
+      if (used[r][c]) continue;                                           // داخل منطقة مدموجة سابقة: لا تتداخل مناطق
+      let ok = true;
+      for (let i = r; i < r + rs && ok; i++) for (let j = c; j < c + cs && ok; j++) { if (i === r && j === c) continue; if (used[i][j] || rows[i][j].r.some(x => String(x.t).trim() !== '')) ok = false; }   // لا يُخفى نص أبداً
+      if (!ok) continue;
+      for (let i = r; i < r + rs; i++) for (let j = c; j < c + cs; j++) { used[i][j] = true; if (i !== r || j !== c) { rows[i][j].r = []; delete rows[i][j].a; } }
+      if (cs > 1) cell.cs = cs; if (rs > 1) cell.rs = rs;
+    }
+  }
   function cleanTable(t) {
     if (!t || typeof t !== 'object' || !Array.isArray(t.c)) return null;
-    const rows = t.c.slice(0, 60).map(row => (Array.isArray(row) ? row : []).slice(0, 12).map(cell => { const o = { r: cleanRuns(cell && cell.r) }, a = cleanA(cell && cell.a); if (a) o.a = a; return o; }));
+    const rows = t.c.slice(0, 60).map(row => (Array.isArray(row) ? row : []).slice(0, 12).map(cell => { const o = { r: cleanRuns(cell && cell.r) }, a = cleanA(cell && cell.a); if (a) o.a = a; if (cell && cell.cs > 1) o.cs = cell.cs; if (cell && cell.rs > 1) o.rs = cell.rs; return o; }));
     const cols = Math.max(0, ...rows.map(r => r.length)); if (!rows.length || !cols) return null;
     rows.forEach(r => { while (r.length < cols) r.push({ r: [] }); });
+    sanitizeSpans(rows);
     return { c: rows };
+  }
+  const cellSpan = cell => ({ cs: Math.max(1, (cell && cell.cs) | 0), rs: Math.max(1, (cell && cell.rs) | 0) });
+  // own[r][c] = إحداثيات الخلية الأساس التي تملك الموضع (r,c) — للخلية العادية نفسها
+  function tableOwners(t) {
+    const R = t.c.length, C = t.c[0].length, own = t.c.map((row, r) => row.map((_, c) => ({ r, c })));
+    t.c.forEach((row, r) => row.forEach((cell, c) => { const s = cellSpan(cell); if (s.cs > 1 || s.rs > 1) for (let i = r; i < Math.min(R, r + s.rs); i++) for (let j = c; j < Math.min(C, c + s.cs); j++) own[i][j] = { r, c }; }));
+    return own;
+  }
+  const tableHasMerges = t => !!t && t.c.some(row => row.some(cell => cellSpan(cell).cs > 1 || cellSpan(cell).rs > 1));
+  const cellFilled = cell => !!cell && cell.r.some(x => String(x.t).trim() !== '');
+  // نطاق مستطيل [r0..r1]×[c0..c1]: يُرجع {ok:true} أو {ok:false, code:'single'|'partial'|'range'}
+  function tableMergeCheck(t, r0, c0, r1, c1) {
+    const R = t.c.length, C = t.c[0].length;
+    if (r0 > r1) { const x = r0; r0 = r1; r1 = x; } if (c0 > c1) { const x = c0; c0 = c1; c1 = x; }
+    if (r0 < 0 || c0 < 0 || r1 >= R || c1 >= C) return { ok: false, code: 'range' };
+    if (r0 === r1 && c0 === c1) return { ok: false, code: 'single' };
+    for (let r = 0; r < R; r++) for (let c = 0; c < C; c++) {
+      const s = cellSpan(t.c[r][c]); if (s.cs === 1 && s.rs === 1) continue;
+      const rr = r + s.rs - 1, cc = c + s.cs - 1, inter = !(rr < r0 || r > r1 || cc < c0 || c > c1), inside = r >= r0 && rr <= r1 && c >= c0 && cc <= c1;
+      if (inter && !inside) return { ok: false, code: 'partial', at: { r, c } };
+    }
+    return { ok: true, r0, c0, r1, c1 };
+  }
+  // يدمج النطاق في الخلية العليا-اليمنى (أول عمود = اليمين في الجدول RTL). المحتوى: الخلايا غير الفارغة بترتيب القراءة العربي (صف ثم عمود) يفصل بينها سطر جديد، بتنسيق كل مقطع كما هو.
+  function tableMerge(t, r0, c0, r1, c1) {
+    const chk = tableMergeCheck(t, r0, c0, r1, c1); if (!chk.ok) return chk;
+    ({ r0, c0, r1, c1 } = chk);
+    let runs = [], n = 0, al = null, mixed = false;
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const cell = t.c[r][c]; if (!cellFilled(cell)) continue;
+      if (n) runs.push({ t: '\n' }); runs = runs.concat(cell.r.map(x => Object.assign({}, x))); n++;
+      if (al === null) al = cell.a || ''; else if ((cell.a || '') !== al) mixed = true;
+    }
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) t.c[r][c] = { r: [] };
+    const a = al === null ? (t.c[r0][c0].a || '') : al, anchor = { r: cleanRuns(runs) };
+    if (a) anchor.a = a; if (c1 > c0) anchor.cs = c1 - c0 + 1; if (r1 > r0) anchor.rs = r1 - r0 + 1;
+    t.c[r0][c0] = anchor;
+    return { ok: true, r0, c0, r1, c1, filled: n, mixedAlign: mixed };
+  }
+  function tableUnmerge(t, r, c) { const cell = t.c[r] && t.c[r][c]; if (!cell) return false; const s = cellSpan(cell); if (s.cs === 1 && s.rs === 1) return false; delete cell.cs; delete cell.rs; return true; }
+  // عدد الخلايا المكتوبة التي ستُفقد فعلاً عند حذف الصف/العمود (الخلية المدموجة الممتدّة خارجه تنجو وتنتقل)
+  function tableLineLoss(t, axis, idx) {
+    let n = 0; const R = t.c.length, C = t.c[0].length;
+    if (axis === 'row') for (let c = 0; c < C; c++) { const cell = t.c[idx][c]; if (cellFilled(cell) && cellSpan(cell).rs === 1) n++; }
+    else for (let r = 0; r < R; r++) { const cell = t.c[r][idx]; if (cellFilled(cell) && cellSpan(cell).cs === 1) n++; }
+    return n;
+  }
+  function tableDeleteRow(t, r) {
+    const R = t.c.length, C = t.c[0].length; if (R <= 1 || r < 0 || r >= R) return false;
+    const snap = t.c.map(row => row.map(cell => ({ cell, s: cellSpan(cell) })));
+    for (let ar = 0; ar < R; ar++) for (let ac = 0; ac < C; ac++) {
+      const { cell, s } = snap[ar][ac]; if (s.rs < 2 || r < ar || r > ar + s.rs - 1) continue;
+      if (ar === r) { const m = Object.assign({}, cell); m.rs = s.rs - 1; if (m.rs < 2) delete m.rs; t.c[r + 1][ac] = m; }   // صف الأساس يُحذف: الأساس ينزل للصف التالي بمحتواه
+      else { if (s.rs - 1 < 2) delete cell.rs; else cell.rs = s.rs - 1; }
+    }
+    t.c.splice(r, 1); return true;
+  }
+  function tableDeleteCol(t, c) {
+    const R = t.c.length, C = t.c[0].length; if (C <= 1 || c < 0 || c >= C) return false;
+    const snap = t.c.map(row => row.map(cell => ({ cell, s: cellSpan(cell) })));
+    for (let ar = 0; ar < R; ar++) for (let ac = 0; ac < C; ac++) {
+      const { cell, s } = snap[ar][ac]; if (s.cs < 2 || c < ac || c > ac + s.cs - 1) continue;
+      if (ac === c) { const m = Object.assign({}, cell); m.cs = s.cs - 1; if (m.cs < 2) delete m.cs; t.c[ar][c + 1] = m; }
+      else { if (s.cs - 1 < 2) delete cell.cs; else cell.cs = s.cs - 1; }
+    }
+    t.c.forEach(row => row.splice(c, 1)); return true;
   }
   const tablePlain = t => (t && t.c) ? t.c.map(row => row.map(cell => runsText(cell.r).replace(/\n/g, ' '))) : null;
   function plainToParas(text) { return cleanParas(String(text == null ? '' : text).split('\n').map(l => ({ r: l === '' ? [] : [{ t: l }] }))); }
@@ -463,21 +546,21 @@
       y = sy + (rN ? 0 : 0) + lh * 0;
     }
     pages.forEach((p, i) => { p.n = i + 1; });
-    return { pages, W, H, tableCols: tableCapped ? tableCols : null };
+    return { pages, W, H, tableCols: tableCapped ? tableCols : null, tableColsAll: tableCols, contentW: W - SIDE * 2 };
 
     function trimPara(p) { // يحذف الفراغات الطرفية (كما trim() القديمة) دون المساس بالتنسيق
       const r = p.r.map(x => Object.assign({}, x)); while (r.length && /^\s*$/.test(r[0].t)) r.shift(); if (r.length) r[0].t = r[0].t.replace(/^\s+/, '');
       while (r.length && /^\s*$/.test(r[r.length - 1].t)) r.pop(); if (r.length) r[r.length - 1].t = r[r.length - 1].t.replace(/\s+$/, ''); return { r };
     }
     function layoutTable() {
-      const rowsData = state.table.c, cols = rowsData[0].length, pad = 16, minW = 50, maxW = 200;
-      const baseT = state.base.table, tblSt = resolve({}, baseT);
-      // عرض العمود = أعرض خلية بلا لفّ (كالقديم) بحدّ 200
-      const natural = new Array(cols).fill(minW);
-      rowsData.forEach(row => row.forEach((cell, ci) => {
-        const rows1 = layoutPara({ r: cell.r }, baseT, () => 1e6); let w = 0; rows1.forEach(r => { w = Math.max(w, r.w); });
-        natural[ci] = Math.max(natural[ci], w + pad);
-      }));
+      const rowsData = state.table.c, R = rowsData.length, cols = rowsData[0].length, pad = 16, minW = 50, maxW = 200;
+      const baseT = state.base.table, tblSt = resolve({}, baseT), own = tableOwners(state.table);
+      // الخلايا الأساس (عادية أو مدموجة cs/rs): الخلايا المغطّاة لا تُرسم ولا تُقاس
+      const anchors = []; rowsData.forEach((row, r) => row.forEach((cell, c) => { if (own[r][c].r === r && own[r][c].c === c) { const s = cellSpan(cell); anchors.push({ r, c, cs: s.cs, rs: s.rs, cell }); } }));
+      // عرض العمود = أعرض خلية بلا لفّ (كالقديم) بحدّ 200؛ الخلية الممتدة على أعمدة تزيد أعمدتها بالتساوي فقط إن لم تتسع
+      const natural = new Array(cols).fill(minW), wideA = [];
+      anchors.forEach(a => { const rows1 = layoutPara({ r: a.cell.r }, baseT, () => 1e6); let w = 0; rows1.forEach(r => { w = Math.max(w, r.w); }); a.nat = w + pad; if (a.cs === 1) natural[a.c] = Math.max(natural[a.c], a.nat); else wideA.push(a); });
+      wideA.forEach(a => { let sum = 0; for (let k = 0; k < a.cs; k++) sum += natural[a.c + k]; if (a.nat > sum) { const add = (a.nat - sum) / a.cs; for (let k = 0; k < a.cs; k++) natural[a.c + k] += add; } });
       let colW = natural.map(w => Math.min(w, maxW)); const CW = W - SIDE * 2;
       if (colW.reduce((a, b) => a + b, 0) > CW) {      tableCapped = true; // الجدول لا يتجاوز الهوامش: «مستوى مائي» t يقصّ الأعمدة الأعرض فقط حتى يبلغ المجموع 640
         let lo = minW, hi = maxW; const sumAt = t => colW.reduce((a, w) => a + Math.min(w, t), 0);
@@ -485,29 +568,84 @@
         colW = colW.map(w => Math.min(w, lo));
       }
       tableCols = colW.slice(); const total = colW.reduce((a, b) => a + b, 0), rightEdge = W / 2 + total / 2;
-      const prepared = rowsData.map(row => row.map((cell, ci) => layoutPara({ r: cell.r }, baseT, () => colW[ci] - pad).map((r, ri, arr) => { r._last = ri === arr.length - 1; r._a = cell.a || AL_DEFAULT.table; r.h = Math.max(18, r.words.length ? Math.max(...r.words.map(w => Math.max(...w.segs.map(s => s.st.px * 1.2)))) : tblSt.px * 1.2); return r; })));
-      prepared.forEach(cells => {
+      const xoff = []; { let acc = 0; colW.forEach(w => { xoff.push(acc); acc += w; }); }
+      anchors.forEach(a => {
+        a.w = 0; for (let k = 0; k < a.cs; k++) a.w += colW[a.c + k]; a.x = rightEdge - xoff[a.c] - a.w;
+        a.lines = layoutPara({ r: a.cell.r }, baseT, () => a.w - pad).map((r, ri, arr) => { r._last = ri === arr.length - 1; r._a = a.cell.a || AL_DEFAULT.table; r.h = Math.max(18, r.words.length ? Math.max(...r.words.map(w => Math.max(...w.segs.map(s => s.st.px * 1.2)))) : tblSt.px * 1.2); return r; });
+        a.th = a.lines.reduce((s2, r) => s2 + r.h, 0);
+      });
+      const emptyLine = () => { const r = layoutPara({ r: [] }, baseT, () => 1e6)[0]; r._last = true; r._a = AL_DEFAULT.table; r.h = Math.max(18, tblSt.px * 1.2); return r; };
+      // صف واحد/قطعة صف: cells = [{x, w, lines, span}]؛ يقطّع بالأسطر عبر الصفحات كالقديم تماماً
+      const spanSt = new Map();      // حالة رسم حدود الخلايا الممتدة في نطاق أطول من صفحة
+      const placeRow = cells => {
         let idx = cells.map(() => 0), guard = 0;
-        while (cells.some((c, i) => idx[i] < c.length) && guard++ < 1000) {
-          const full = Math.max(...cells.map((c, i) => c.slice(idx[i]).reduce((a, r) => a + r.h, 0)), 18) + 12, left = BOTTOM - y;
+        while (cells.some((c, i) => idx[i] < c.lines.length) && guard++ < 1000) {
+          const full = Math.max(...cells.map((c, i) => c.lines.slice(idx[i]).reduce((a, r) => a + r.h, 0)), 18) + 12, left = BOTTOM - y;
           let take;
-          if (full <= left) take = cells.map((c, i) => c.length - idx[i]);                       // الصف كله يتّسع
+          if (full <= left) take = cells.map((c, i) => c.lines.length - idx[i]);                  // الصف كله يتّسع
           else if (full <= BOTTOM - TOP) { addPage(); continue; }                                  // يتّسع بصفحة فارغة: يُنقل كاملاً
           else if (y > TOP + 1 && left < 18 + 12 + 18) { addPage(); continue; }                    // صف أكبر من صفحة وما بقي لا يكفي سطراً
-          else take = cells.map((c, i) => { let n = 0, h = 0; while (idx[i] + n < c.length && (n === 0 || h + c[idx[i] + n].h <= left - 12)) { h += c[idx[i] + n].h; n++; } return n; });   // قطعة بقدر المتاح (سطر على الأقل)
-          const frag = cells.map((c, i) => c.slice(idx[i], idx[i] + take[i]));
+          else take = cells.map((c, i) => { let n = 0, h = 0; while (idx[i] + n < c.lines.length && (n === 0 || h + c.lines[idx[i] + n].h <= left - 12)) { h += c.lines[idx[i] + n].h; n++; } return n; });   // قطعة بقدر المتاح (سطر على الأقل)
+          const frag = cells.map((c, i) => c.lines.slice(idx[i], idx[i] + take[i]));
           const fh = Math.max(...frag.map(f => f.reduce((a, r) => a + r.h, 0)), 18) + 12;
-          let cx = rightEdge;
           frag.forEach((lines, ci) => {
-            const w = colW[ci]; cx -= w;
-            op({ t: 'rect', x: cx, y, w, h: fh });
+            const c = cells[ci];
+            if (c.span) {                                                  // خلية ممتدة في نطاق أطول من صفحة: بلا خط أفقي داخلي بين قطعها على نفس الصفحة؛ الحدّان العلوي/السفلي عند بداية/نهاية كل مقطع صفحة
+              const S = spanSt.get(c.a) || {};
+              if (S.pend && S.pend.pg === pg && Math.abs(S.pend.y - y) < 0.01) S.pend = null;
+              else { if (S.pend) { S.pend.pg.ops.push({ t: 'line', x1: c.x, y1: S.pend.y, x2: c.x + c.w, y2: S.pend.y }); S.pend = null; } op({ t: 'line', x1: c.x, y1: y, x2: c.x + c.w, y2: y }); }
+              op({ t: 'line', x1: c.x, y1: y, x2: c.x, y2: y + fh }); op({ t: 'line', x1: c.x + c.w, y1: y, x2: c.x + c.w, y2: y + fh });
+              S.pend = { pg, y: y + fh }; spanSt.set(c.a, S);
+            } else
+            op({ t: 'rect', x: c.x, y, w: c.w, h: fh });
             const th = lines.reduce((a, r) => a + r.h, 0); let ty = y + (fh - th) / 2;
-            lines.forEach(r => { emitA(r, r._last, cx + w - pad / 2, w - pad, ty, r._a); ty += r.h; });
+            lines.forEach(r => { emitA(r, r._last, c.x + c.w - pad / 2, c.w - pad, ty, r._a); ty += r.h; });
           });
           y += fh; idx = idx.map((v, i) => v + take[i]);
-          if (cells.some((c, i) => idx[i] < c.length)) addPage();
+          if (cells.some((c, i) => idx[i] < c.lines.length)) addPage();
         }
-      });
+      };
+      let i0 = 0;
+      while (i0 < R) {
+        // نطاق صفوف مترابط بدمج عمودي (يبقى معاً)؛ صف بلا دمج عمودي = المسار القديم نفسه
+        let e = i0; for (let k = i0; k <= e; k++) anchors.forEach(a => { if (a.r === k) e = Math.max(e, a.r + a.rs - 1); });
+        const band = anchors.filter(a => a.r >= i0 && a.r <= e), n = e - i0 + 1;
+        if (n === 1) { placeRow(band.map(a => ({ x: a.x, w: a.w, lines: a.lines }))); i0 = e + 1; continue; }
+        const rowH = new Array(n).fill(18 + 12);
+        band.filter(a => a.rs === 1).forEach(a => { rowH[a.r - i0] = Math.max(rowH[a.r - i0], Math.max(a.th, 18) + 12); });
+        band.filter(a => a.rs > 1).sort((p, q) => (p.r + p.rs) - (q.r + q.rs)).forEach(a => {
+          let have = 0; for (let k = a.r; k < a.r + a.rs; k++) have += rowH[k - i0];
+          const need2 = Math.max(a.th, 18) + 12; if (need2 > have) rowH[a.r + a.rs - 1 - i0] += need2 - have;          // العجز يُضاف لآخر صف في النطاق
+        });
+        const Hb = rowH.reduce((p, q) => p + q, 0);
+        if (Hb <= BOTTOM - TOP) {                                         // النطاق كله يتّسع بصفحة: يُنقل كتلة واحدة (بلا قصّ ولا تكرار)
+          if (Hb > BOTTOM - y) addPage();
+          band.forEach(a => {
+            let yt = y; for (let k = i0; k < a.r; k++) yt += rowH[k - i0]; let hh = 0; for (let k = a.r; k < a.r + a.rs; k++) hh += rowH[k - i0];
+            op({ t: 'rect', x: a.x, y: yt, w: a.w, h: hh });
+            let ty = yt + (hh - a.th) / 2; a.lines.forEach(r => { emitA(r, r._last, a.x + a.w - pad / 2, a.w - pad, ty, r._a); ty += r.h; });
+          });
+          y += Hb;
+        } else {                                                          // نطاق أطول من صفحة كاملة: صف بصف؛ نص الخلية الممتدة يُوزَّع على صفوفها ثم الباقي يتابع في آخر صف عبر الصفحات (كل سطر مرة واحدة)
+          const cursor = new Map(); band.filter(a => a.rs > 1).forEach(a => cursor.set(a, 0));
+          for (let k = i0; k <= e; k++) {
+            const cells = [];
+            band.forEach(a => {
+              if (a.rs === 1 && a.r === k) cells.push({ x: a.x, w: a.w, lines: a.lines, c: a.c });
+              else if (a.rs > 1 && a.r <= k && k <= a.r + a.rs - 1) {
+                const from = cursor.get(a); let take = 0;
+                if (k === a.r + a.rs - 1) take = a.lines.length - from;
+                else { let cap = 0; band.filter(b => b.rs === 1 && b.r === k).forEach(b => { cap = Math.max(cap, b.th); }); cap = Math.max(cap, 18); let h = 0; while (from + take < a.lines.length && h + a.lines[from + take].h <= cap) { h += a.lines[from + take].h; take++; } }
+                const ls = a.lines.slice(from, from + take); cursor.set(a, from + take);
+                cells.push({ x: a.x, w: a.w, lines: ls.length ? ls : [emptyLine()], c: a.c, a, span: true });
+              }
+            });
+            cells.sort((p, q) => p.c - q.c); placeRow(cells);
+          }
+          band.filter(a => a.rs > 1).forEach(a => { const S = spanSt.get(a); if (S && S.pend) { S.pend.pg.ops.push({ t: 'line', x1: a.x, y1: S.pend.y, x2: a.x + a.w, y2: S.pend.y }); S.pend = null; } });
+        }
+        i0 = e + 1;
+      }
     }
   }
 
@@ -584,11 +722,18 @@
       ch.push(new Paragraph({ text: '' }));
       const line = { style: BorderStyle.SINGLE, size: 4, color: '000000' }, full = { top: line, bottom: line, left: line, right: line };
       // جدول عريض (مجموع الأعمدة الطبيعية > عرض المحتوى): أعمدة ثابتة بنفس نسب المعاينة/PDF وبمجموع = عرض نص الصفحة؛ غير ذلك يبقى كما كان (تلقائي)
-      let cw = null;
-      try { const f = await ensureFonts(neededFaces(state)); if (f.ok) { cw = layoutDocument(state, hdr).tableCols; } } catch (e) { cw = null; if (window.console) console.warn("memo word table", e); }
-      const wideOpts = cw && cw.length === state.table.c[0].length ? (() => { const sum = cw.reduce((a, b) => a + b, 0), tw = D.WidthType.DXA, CONTENT_TW = 9026; const cols = cw.map(w => Math.max(300, Math.floor(w / sum * CONTENT_TW))); return { cols, total: cols.reduce((a, b) => a + b, 0) }; })() : null;
+      let cw = null, cwTw = null;     // N25-R15: جدول فيه دمج ولم يُقصّ بالهوامش: أعمدة ثابتة بنفس نسب PDF (تحافظ على الامتداد بدقة)؛ جدول بلا دمج يبقى كما كان
+      try { const f = await ensureFonts(neededFaces(state)); if (f.ok) { const lay = layoutDocument(state, hdr); cw = lay.tableCols; if (!cw && tableHasMerges(state.table) && lay.tableColsAll) { cwTw = lay.tableColsAll.map(w => Math.max(300, Math.floor(w * 9026 / lay.contentW))); } } } catch (e) { cw = null; if (window.console) console.warn("memo word table", e); }
+      const wideOpts = cwTw && cwTw.length === state.table.c[0].length ? { cols: cwTw, total: cwTw.reduce((a, b) => a + b, 0) } : cw && cw.length === state.table.c[0].length ? (() => { const sum = cw.reduce((a, b) => a + b, 0), tw = D.WidthType.DXA, CONTENT_TW = 9026; const cols = cw.map(w => Math.max(300, Math.floor(w / sum * CONTENT_TW))); return { cols, total: cols.reduce((a, b) => a + b, 0) }; })() : null;
       const tblOpts = wideOpts ? { width: { size: wideOpts.total, type: WidthType.DXA }, columnWidths: wideOpts.cols, layout: D.TableLayoutType.FIXED } : { width: { size: 0, type: WidthType.AUTO } };
-      ch.push(new Table(Object.assign({}, tblOpts, { alignment: AlignmentType.CENTER, rows: state.table.c.map(row => new TableRow({ children: row.map((cell, ci) => new TableCell({ borders: full, width: wideOpts ? { size: wideOpts.cols[ci], type: WidthType.DXA } : { size: 0, type: WidthType.AUTO }, children: [P(docxRuns(D, cell.r, state.base.table), { alignment: alOf(cell.a, 'c') })] })) })) })));
+      // N25-R15: الخلايا المدموجة = columnSpan/rowSpan على الخلية الأساس؛ الخلايا المغطّاة لا تُصدَّر (مكتبة docx تُدخل خلايا vMerge المتابِعة تلقائياً)
+      const own = tableOwners(state.table);
+      const tRows = state.table.c.map((row, ri) => new TableRow({ children: row.map((cell, ci) => ({ cell, ci })).filter(x => own[ri][x.ci].r === ri && own[ri][x.ci].c === x.ci).map(({ cell, ci }) => {
+        const sp = cellSpan(cell); let wsum = 0; if (wideOpts) for (let k = 0; k < sp.cs; k++) wsum += wideOpts.cols[ci + k];
+        const o = { borders: full, width: wideOpts ? { size: wsum, type: WidthType.DXA } : { size: 0, type: WidthType.AUTO }, children: [P(docxRuns(D, cell.r, state.base.table), { alignment: alOf(cell.a, 'c') })] };
+        if (sp.cs > 1) o.columnSpan = sp.cs; if (sp.rs > 1) o.rowSpan = sp.rs;
+        return new TableCell(o); }) }));
+      ch.push(new Table(Object.assign({}, tblOpts, { alignment: AlignmentType.CENTER, rows: tRows })));
     }
     if (afterHasText(state)) { ch.push(new Paragraph({ text: '' })); bodyParas(state.after, state.base.after, false); }
     ch.push(new Paragraph({ text: '' }));
@@ -625,7 +770,7 @@
       '<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="font-weight:700" align="right">' + e(hdr.to) + (fromLine(state, hdr) ? '<br>' + e(fromLine(state, hdr)) : '') + '</td><td align="left" style="white-space:nowrap">العدد&#160;:&#160;' + e(hdr.number) + '</td></tr><tr><td>&#160;</td><td align="left" style="white-space:nowrap">التاريخ&#160;:&#160;' + e(hdr.date) + '</td></tr></table>' +
       '<p style="margin-top:14px;' + ta(state.subject.a, 'c') + '">' + runsHtml([{ t: 'م / ' }].concat(state.subject.r), state.base.subject) + '</p>' +
       '<div style="margin-top:18px;text-align:justify">' + state.body.map((p, i) => para(p, state.base.body, i === 0, 'j')).join('') + '</div>' +
-      (state.table ? '<table style="border-collapse:collapse;margin:18px auto 0;width:auto">' + state.table.c.map(row => '<tr>' + row.map(c => '<td style="border:1px solid #000;padding:6px 14px;' + ta(c.a, 'c') + 'white-space:normal;word-wrap:break-word">' + runsHtml(c.r, state.base.table) + '</td>').join('') + '</tr>').join('') + '</table>' : '') +
+      (state.table ? (() => { const own = tableOwners(state.table); return '<table style="border-collapse:collapse;margin:18px auto 0;width:auto">' + state.table.c.map((row, ri) => '<tr>' + row.map((c, ci) => { if (own[ri][ci].r !== ri || own[ri][ci].c !== ci) return ''; const sp = cellSpan(c); return '<td' + (sp.cs > 1 ? ' colspan="' + sp.cs + '"' : '') + (sp.rs > 1 ? ' rowspan="' + sp.rs + '"' : '') + ' style="border:1px solid #000;padding:6px 14px;' + ta(c.a, 'c') + 'white-space:normal;word-wrap:break-word">' + runsHtml(c.r, state.base.table) + '</td>'; }).join('') + '</tr>').join('') + '</table>'; })() : '') +
       (afterHasText(state) ? '<div style="margin-top:12px;text-align:justify">' + state.after.map(p => para(p, state.base.after, false, 'j')).join('') + '</div>' : '') +
       '<p style="margin-top:18px;' + ta(state.closing.a, 'c') + '">' + runsHtml(state.closing.r, state.base.closing) + '</p>' +
       (att.length ? '<div style="margin-top:18px;text-align:right"><div style="display:inline-block;font-weight:700;text-decoration:underline">المرفقات :</div><div style="margin-top:4px">' + att.map((p, i) => '<div style="' + ta(p.a, 'r') + '">' + e((i + 1) + '. ') + runsHtml(p.r, state.base.att || baseLegacy().att) + '</div>').join('') + '</div></div>' : '') +
@@ -634,7 +779,7 @@
 
   window.MemoDoc = {
     U, W, H, FONTS, PICK, KEYS, SIZE_MIN, SIZE_MAX, CLOSING_TEXT, SKEW,
-    baseDefaults, baseLegacy, legacyState, newState, stateFromLayout, layoutFromState, plainTableData,
+    baseDefaults, baseLegacy, legacyState, newState, stateFromLayout, layoutFromState, plainTableData, tableOwners, tableHasMerges, tableMergeCheck, tableMerge, tableUnmerge, tableLineLoss, tableDeleteRow, tableDeleteCol, cellFilled,
     KEYS_ALL: KEYS, AL, AL_DEFAULT, cleanA, mkLine, attPlainList, normList, fromLine, attOf, lineHas, cleanRuns, cleanParas, cleanTable, cleanText, cleanStyle, cleanBase, clampS, runsText, paraText, parasPlain, tablePlain, plainToParas, plainToTable, afterHasText, normPlain,
     resolve, fontString, ensureFonts, neededFaces, layoutDocument, drawPage, renderPages, buildDocxBlob, buildDocHtml, escHtml, runsHtml,
     _meas: meas, _joinsNext: joinsNext, _joinsPrev: joinsPrev, _prepWord: prepWord, _tokens: tokens

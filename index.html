@@ -160,6 +160,7 @@ nav button:disabled { opacity: 0.3; cursor: not-allowed; }
 .memo-ed-line .mp { text-align: center; }
 .memo-ed-body { min-height: 220px; } .memo-ed-after { min-height: 90px; }
 .memo-cell { min-height: 34px; padding: 4px 6px; min-width: 70px; border: none; border-radius: 0; line-height: 1.5; text-align: center; } .memo-cell .mp { text-align: center; } .memo-cell.is-empty::before { display: none; }
+#memoTableEl td.mc-sel { background: #BEE3F8 !important; outline: 2px solid #2B6CB0; outline-offset: -2px; } #memoTableEl.mc-selmode td { cursor: pointer; }
 #memoTableEl td.mc-row { background: #FFF8E1; } #memoTableEl td.mc-col { background: #FFF8E1; } #memoTableEl td.mc-row.mc-col { background: #FFE9A8; }
 .tower-info-box { background: #EBF8FF; border: 1.5px solid #90CDF4; border-radius: 10px; padding: 10px 14px; margin-top: 8px; display: none; }
 .tower-info-box .type-value { font-size: 1.2rem; font-weight: 800; color: #1a365d; }
@@ -1509,6 +1510,11 @@ tbody tr:hover { background: #F7FAFC; }
             <button class="btn-sm btn-del" id="memoDelRowBtn" onclick="deleteMemoTableRow()">➖ حذف الصف</button>
             <button class="btn-sm btn-del" id="memoDelColBtn" onclick="deleteMemoTableCol()">➖ حذف العمود</button>
             <button class="btn-sm btn-del" onclick="removeMemoTable()">🗑️ حذف الجدول</button>
+          </div>
+          <div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn-sm btn-secondary" id="memoSelBtn" onclick="memoToggleSelMode()">☑️ تحديد خلايا</button>
+            <button class="btn-sm btn-secondary" id="memoMergeBtn" onclick="memoMergeCells()" style="background:#2B6CB0;color:#fff;border-color:#2B6CB0">🔗 دمج الخلايا</button>
+            <button class="btn-sm btn-secondary" id="memoUnmergeBtn" onclick="memoUnmergeCell()">✂️ فك الدمج</button>
           </div>
           <div id="memoCellHint" style="font-size:0.74rem;color:#4A5568;margin-top:4px">اضغط داخل خلية لتحديد الصف/العمود المراد حذفه (يظهر مظلَّلاً).</div>
         </div>
