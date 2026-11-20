@@ -69,20 +69,57 @@ function closeDepLogExportModal() {
 
 function cancelDepLogExport() { if (_lexpRun) { _lexpRun.cancelled = true; depLogExportUi(true, '⛔ جاري الإلغاء...'); } }
 
-// قائمة أبراج الخط المختار (من بيانات الخطوط المحلية، بلا قراءة شبكة) — كلها محددة افتراضياً؛ preselect = برج فلتر الصفحة
-function updateDepLogExportTowerList(preselect) {
+// قائمة أبراج الخط المختار. N25-R22: عند وجود دليل ترقيم متماسك (خريطة) تُبنى القائمة من دليل الأبراج (app_tower_directory — قراءة صغيرة، لا تاريخ) فتضم الفعّال والمؤرشف،
+// وقيمة كل خانة = الهوية الدائمة (tower_id) لحظة العرض لا رقمه؛ وإلا (نسخة 0 مثبتة / دليل غير متاح) تبقى قائمة الأرقام كما كانت. كلها محددة افتراضياً؛ preselect = برج فلتر الصفحة.
+let _lexpListSeq = 0;
+// N25-R22a: الصفوف المعروضة تُبنى من دليل هوية صالح فقط (الخريطة المتماسكة لنسخة > 0، أو دليل نسخة 0 المثبتة)، ولكل صف هويته من الدليل نفسه لحظة الرسم.
+// بغياب الدليل لا تُعرض خانات أبراج (تحديد أبراج بعينها غير متاح حتى يصل)، ولا تُلصق هوية من دليل أحدث بخانة كانت بلا هوية؛ برج الفلتر المكتوب (preselect) لا يُحوَّل لتحديد صريح بعد وصول متأخر.
+function depLogDirList(line) {   // {rev, act, arc, byNum} أو null
+  try {
+    const d = csDirGet(line); if (!d || !d.byId) return null;
+    const rev = Number(d.rev);
+    if (rev > 0) { const m = csMap(line); if (csIdentState(line) !== 'map' || !m || !m.full || Number(m.rev) !== rev) return null; }
+    else if (!csIsZero(line)) return null;
+    const ent = Object.keys(d.byId).map(tid => ({ tid, n: d.byId[tid].n, r: !!d.byId[tid].r, rn: d.byId[tid].rn }));
+    const num = v => parseInt(v) || 0;
+    const act = ent.filter(e => !e.r && e.n != null).sort((x, y) => num(x.n) - num(y.n) || String(x.n).localeCompare(String(y.n)));
+    const byNum = {}; act.forEach(e => { byNum[String(e.n)] = e.tid; });
+    return { rev, act, arc: ent.filter(e => e.r).sort((x, y) => num(x.rn) - num(y.rn) || String(x.tid).localeCompare(String(y.tid))), byNum };
+  } catch (e) { return null; }
+}
+function updateDepLogExportTowerList(preselect, keep) {
   const wrap = document.getElementById('depLogExportTowersWrap');
   const line = document.getElementById('depLogExportFilterLine').value;
-  if (!line) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">اختر خطاً لتحديد أبراج بعينها — بدون خط تُصدَّر كل المعالجات المطابقة للتاريخ</div>'; return; }
-  const nums = [...new Set((getLineTowers(line) || []).map(tw => String(tw.num)).filter(v => v !== '' && v !== 'undefined' && v !== 'null'))];
-  if (preselect && nums.indexOf(String(preselect)) < 0) nums.push(String(preselect));
-  nums.sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0) || String(a).localeCompare(String(b)));
-  if (!nums.length) { wrap.innerHTML = '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">لا توجد قائمة أبراج لهذا الخط — تُصدَّر كل أبراجه المطابقة</div>'; return; }
-  wrap.innerHTML = nums.map(tn => `
-    <label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0">
-      <input type="checkbox" class="depLogExportTowerChk" value="${escapeHtml(tn)}" ${(!preselect || String(preselect) === tn) ? 'checked' : ''}>
-      <span>برج ${escapeHtml(tn)}</span>
-    </label>`).join('');
+  const seq = ++_lexpListSeq;
+  const msg = (t) => '<div style="font-size:0.8rem;color:#718096;grid-column:1/-1">' + t + '</div>';
+  if (!line) { delete wrap.dataset.pending; delete wrap.dataset.pre; wrap.innerHTML = msg('اختر خطاً لتحديد أبراج بعينها — بدون خط تُصدَّر كل المعالجات المطابقة للتاريخ'); return; }
+  const wasPending = !!keep && wrap.dataset.pending === '1';
+  const prevBoxes = keep && !wasPending ? Array.from(document.querySelectorAll('.depLogExportTowerChk')) : [];
+  const prevByTid = new Map(); prevBoxes.forEach(b => { const k = b.dataset.mode === 'id' ? b.value : (b.dataset.tid || ''); if (k) prevByTid.set(k, b.checked); });   // التحديد يتبع الهوية الملتقطة وقت العرض لا رقم صاحبها الآن
+  const prevAll = prevBoxes.length > 0 && prevBoxes.every(b => b.checked);
+  const L = depLogDirList(line);
+  if (L) {
+    const lateWithPre = wasPending && !!(wrap.dataset.pre || preselect);
+    const pre = (!prevBoxes.length && !wasPending && preselect) ? (L.byNum[String(preselect)] || null) : null;
+    const chk = tid => prevBoxes.length ? (prevByTid.has(tid) ? !!prevByTid.get(tid) : prevAll) : (wasPending ? !lateWithPre : (preselect ? tid === pre : true));
+    const idMode = L.rev > 0;
+    const lbl = (e, txt) => `<label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:2px 0"><input type="checkbox" class="depLogExportTowerChk" data-mode="${idMode ? 'id' : 'num'}" data-tid="${escapeHtml(e.tid)}" data-ret="${e.r ? 1 : 0}" value="${escapeHtml(idMode ? e.tid : String(e.n))}" ${chk(e.tid) ? 'checked' : ''}><span>${txt}</span></label>`;
+    let h = (lateWithPre ? msg('وصل دليل الأبراج الآن — راجع القائمة واختر البرج المطلوب صراحةً (لم يُحدَّد شيء تلقائياً)') : '') + L.act.map(e => lbl(e, 'برج ' + escapeHtml(e.n))).join('');
+    if (L.arc.length) h += '<div style="grid-column:1/-1;font-size:0.74rem;font-weight:700;color:#7B341E;border-bottom:1px solid #E2E8F0;padding:3px 0;margin-top:4px">أبراج مؤرشفة (خرجت من الخط — سجلها محفوظ)</div>' + L.arc.map(e => lbl(e, 'برج مؤرشف — كان رقمه ' + escapeHtml(e.rn == null ? '؟' : e.rn))).join('');
+    if (!L.act.length && !L.arc.length) h = msg('لا توجد قائمة أبراج لهذا الخط — تُصدَّر كل أبراجه المطابقة');
+    wrap.innerHTML = h; wrap.dataset.rev = String(L.rev); delete wrap.dataset.pending; delete wrap.dataset.pre;
+  } else {
+    // لا دليل هوية صالح: لا خانات ولا تحديد خاص؛ «كل الخط» يبقى متاحاً (لا يعتمد على الأرقام). فلتر برج مكتوب مع غياب الدليل = رفض عند التصدير
+    wrap.innerHTML = msg('⏳ جارٍ تحميل دليل أبراج الخط… تحديد أبراج بعينها غير متاح حتى يصل (تصدير كل الخط متاح)');
+    wrap.dataset.pending = '1'; if (preselect) wrap.dataset.pre = String(preselect); else if (!wasPending) delete wrap.dataset.pre; delete wrap.dataset.rev;
+  }
+  // قراءة الدليل (مخزَّنة ≤15 ث): عند وصوله بعد الرسم أو تغيّر نسخته تُعاد الرسم من الدليل نفسه مع حفظ التحديد بالهوية؛ ولا تُعاد أثناء تصدير جارٍ
+  Promise.resolve().then(() => csDirLoad(line, 15000)).then(() => {
+    if (seq !== _lexpListSeq || _lexpRun || document.getElementById('depLogExportFilterLine').value !== line) return;
+    const L2 = depLogDirList(line);
+    if (L2 && (wrap.dataset.pending === '1' || String(L2.rev) !== wrap.dataset.rev)) updateDepLogExportTowerList(preselect, true);
+    else if (!L2 && wrap.dataset.pending === '1') wrap.innerHTML = msg('تعذّر تحميل دليل أبراج الخط — تحديد أبراج بعينها غير متاح الآن (تصدير كل الخط متاح)');
+  }).catch(() => {});
 }
 
 function toggleAllDepLogExportTowers() {
@@ -101,6 +138,9 @@ function getDepLogExportFilters() {
     from: document.getElementById('depLogExportFilterFrom').value,
     to: document.getElementById('depLogExportFilterTo').value,
     towers: (boxes.length && chosen.length < boxes.length) ? chosen : null,
+    idMode: !!(boxes.length && boxes.every(b => b.dataset.mode === 'id')),   // N25-R22: القيم هويات دائمة لا أرقام
+    tids: boxes.filter(b => b.checked).map(b => b.dataset.tid || ''),
+    pendingPre: !!(document.getElementById('depLogExportTowersWrap').dataset.pending === '1' && document.getElementById('depLogExportTowersWrap').dataset.pre),   // N25-R22a: فلتر برج مكتوب والدليل لم يصل
     noTower: !!(boxes.length && !chosen.length)
   };
 }
@@ -136,7 +176,21 @@ async function depLogExportCollect(run) {
   let rows = [];
   // N25-R5: على خط أُعيد ترقيمه يُحلّ كل رقم مختار إلى هويته الدائمة فتُجلب معالجاته بأرقامه السابقة ولا تُجلب معالجات من حمل رقمه سابقاً
   let idents = null;
-  if (f.towers && f.line) { idents = []; for (const tn of f.towers) idents.push(await csHistIdent(f.line, tn)); }
+  if (f.pendingPre) { const e = new Error('identity_stale'); e.idStale = true; throw e; }   // N25-R22a: لا يتحول غياب الدليل إلى «كل الأبراج» ولا إلى رقم دون هوية
+  if (f.towers && f.line) {
+    // N25-R22: تحديد أبراج بعينها = هويات ثُبّتت عند العرض؛ لا يُحلّ الرقم لصاحبه وقت الضغط. الدليل يُقرأ طازجاً (فشل القراءة ≠ دليل قديم صالح).
+    const t0 = Date.now(); let d = await csDirLoad(f.line, 0);
+    if (!d || !(d.at >= t0)) d = await csDirLoad(f.line, 0);
+    if (!d || !(d.at >= t0) || !d.byId) { const e = new Error('identity_unavailable'); e.idUnavailable = true; throw e; }
+    const rev = Number(d.rev);
+    if (f.idMode) {
+      if (f.towers.some(t => !d.byId[t])) { const e = new Error('identity_stale'); e.idStale = true; throw e; }
+      idents = f.towers.map(t => ({ mode: 'id', tid: String(t), rev }));
+    } else if (rev > 0) {   // قائمة أرقام رُسمت عند نسخة 0 ثم أُعيد ترقيم الخط: لا انتقال لصاحب الرقم الجديد؛ الهوية الملتقطة وحدها أو لا تصدير
+      if (!f.tids || f.tids.length !== f.towers.length || f.tids.some(t => !t || !d.byId[t])) { const e = new Error('identity_stale'); e.idStale = true; throw e; }
+      idents = f.tids.map(t => ({ mode: 'id', tid: String(t), rev }));
+    } else { idents = []; for (const tn of f.towers) idents.push(await csHistIdent(f.line, tn)); }   // نسخة 0 مثبتة طازجاً: المسار القديم بالرقم كما كان
+  }
   if (idents && idents.some(x => x.mode === 'unavailable')) { const e = new Error('identity_unavailable'); e.idUnavailable = true; throw e; }   // لا تصدير بالرقم حين تُجهَل هوية الأبراج: لا ملف ناقص ولا مخلوط
   const byId = idents && idents.some(x => x.mode === 'id' || x.mode === 'none');
   if (f.towers && byId) {
@@ -167,11 +221,15 @@ async function depLogExportCollect(run) {
   const lines = [...new Set(rows.map(t => t.line_name).filter(Boolean))];
   for (const ln of lines) await csDirLoad(ln, 15000);
   rows.forEach(t => { try { t._idNote = csRowNote(t); } catch (e) { t._idNote = ''; } });
-  return sortTreatmentsByLineTowerThenDate(rows);
+  // N25-R22: ترتيب الخطوط بترتيب المشروع (400 ثم 132 ثم المجهول وأبجدياً داخل المجموعة) بالدالة المشتركة؛ الترتيب الثابت يُبقي الأبراج ثم التاريخ داخل كل خط كما كانا
+  const sorted = sortTreatmentsByLineTowerThenDate(rows);
+  const rk = new Map(sortLineNames([...new Set(sorted.map(t => t.line_name).filter(Boolean))]).map((n, i) => [n, i]));
+  return sorted.sort((a, b) => (rk.has(a.line_name) ? rk.get(a.line_name) : 1e9) - (rk.has(b.line_name) ? rk.get(b.line_name) : 1e9));
 }
 
 function depLogExportFail(err, what) {
   if (err && err.idUnavailable) { showToast('⛔ ' + CS_IDENT_UNAVAILABLE_TEXT + ' — لم يُنشأ أي ملف', 'error'); return; }
+  if (err && err.idStale) { showToast('⛔ تغيّر ترقيم الخط أو لم يعد أحد الأبراج المحددة معروفاً — حدّث الاختيار (أعد فتح النافذة) — لم يُنشأ أي ملف', 'error'); return; }
   if (err && (err.aborted || err.stale)) { showToast('⛔ أُلغي التصدير (تغيّر الفلتر/الجلسة أو أُلغي) — لم يُنشأ أي ملف'); return; }
   console.error(err);
   showToast('❌ تعذر تجهيز ' + what + ' — البيانات غير مكتملة فلم يُنشأ أي ملف', 'error');
@@ -179,7 +237,7 @@ function depLogExportFail(err, what) {
 
 (() => {   // v335-C5r8: الوحدة تُحمَّل بعد DOMContentLoaded؛ تُربط المستمعات فوراً بعد تركيب النافذة
   const ln = document.getElementById('depLogExportFilterLine');
-  if (ln) ln.addEventListener('change', () => updateDepLogExportTowerList(''));
+  if (ln) ln.addEventListener('change', () => updateDepLogExportTowerList('', false));
 })();
 
 // عنوان PDF عربي عبر مسار الرسم العربي الموجود (doc.text لا يدعم العربية)؛ يُرسم بمحاذاة اليمين، والتاريخ باليسار
