@@ -2,18 +2,16 @@
    طباعة/PDF أرشيف الكشف الحراري الخام. تعتمد على isHotRecord/fmtTemp/filteredThermal من thermal-archive.js (يُحمَّل معها دائماً).
    يُحمَّل ويُنفَّذ مرة واحدة فقط عند أول طلب فعلي؛ لا يعمل شيء منه عند بدء التطبيق ولا عند فتح قائمة الكشف الحراري.
    سكربت كلاسيكي: يشارك الربط العام (let/const/function) مع index.html. */
+function thPlainTemp(v) { return (v === null || v === undefined || v === '') ? '—' : String(v); }   // N25-R23: خلايا PDF نص عادي (fmtTemp يعيد وسم HTML فكان يظهر حرفياً داخل الجدول)
 async function printThermalArchiveImpl() {
+  if (_thBusy) { showToast(TH_BUSY_MSG, 'error'); return; }   // N25-R23a
+  const prSeq = _thLoadSeq;
+  if (_thPending.length) { showToast('⛔ لم يُثبَّت البرج المحدد بعد (' + _thPending.join('، ') + ') — اعتمده صراحةً من اللوحة أعلاه قبل الطباعة؛ لم يُنشأ ملف', 'error'); return; }   // N25-R23
   if (!filteredThermal || !filteredThermal.length) { showToast('⚠️ لا توجد بيانات لطباعتها بالفلتر الحالي', 'error'); return; }
   showToast('⏳ جاري تحضير ملف PDF...');
 
   try {
-    const byDate = {};
-    filteredThermal.forEach(r => {
-      byDate[r.inspection_date] = byDate[r.inspection_date] || {};
-      byDate[r.inspection_date][r.line_name] = byDate[r.inspection_date][r.line_name] || [];
-      byDate[r.inspection_date][r.line_name].push(r);
-    });
-    const dates = Object.keys(byDate).sort((a,b) => b.localeCompare(a));
+    const groups = thermalGroups(filteredThermal);   // N25-R23: نفس صفوف العرض المثبَّتة وترتيب الخطوط (400 ثم 132) والتواريخ
 
     const columns = [
       { label: 'النقطة', pct: 22 },
@@ -24,23 +22,23 @@ async function printThermalArchiveImpl() {
     ];
 
     let allPages = [];
-    dates.forEach(date => {
-      const lines = Object.keys(byDate[date]).sort((a,b) => a.localeCompare(b,'ar'));
-      lines.forEach(line => {
-        const rows = byDate[date][line].slice().sort((a,b) => (a.tower_number||0) - (b.tower_number||0));
+    groups.forEach(g => {
+      const date = g.date;
+      g.lines.forEach(({ line, rows }) => {
         const ambient = rows[0].ambient_temp ?? '—';
         const title = `🌡️ ${line} — ${date} (حرارة الجو: ${ambient}°C)`;
         const tableRows = rows.map(r => [
           (isHotRecord(r) ? '🔴 ' : '') + (r.point_label || '') + (csRowNote(r) ? ' (' + csRowNote(r) + ')' : ''),   // N25-R5
-          fmtTemp(r, r.r1), fmtTemp(r, r.r2),
-          fmtTemp(r, r.s1), fmtTemp(r, r.s2),
-          fmtTemp(r, r.t1), fmtTemp(r, r.t2),
+          thPlainTemp(r.r1), thPlainTemp(r.r2),
+          thPlainTemp(r.s1), thPlainTemp(r.s2),
+          thPlainTemp(r.t1), thPlainTemp(r.t2),
           r.created_by_name || '—'
         ]);
         allPages = allPages.concat(buildTableReportPages(title, columns, tableRows));
       });
     });
 
+    if (_thBusy || prSeq !== _thLoadSeq) { showToast(TH_BUSY_MSG, 'error'); return; }   // بدأ تحديث أثناء التحضير: لا PDF من صفوف قد لم تعد معروضة
     await exportCanvasReportPDF(allPages, 'الكشف_الحراري_' + new Date().toISOString().split('T')[0] + '.pdf', 'landscape');
     showToast('✅ تم تجهيز ملف PDF');
   } catch (e) {
