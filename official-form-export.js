@@ -9,9 +9,9 @@ function buildOfficialFormBodyHTML(stampSrc = STAMP_IMG_SRC) {
     <tr>
       <td style="border:1px solid #000;padding:6px;text-align:center">${row.tower_number??''}</td>
       <td style="border:1px solid #000;padding:6px;text-align:center">${row.distance??''}</td>
-      <td style="border:1px solid #000;padding:6px;text-align:center">${row.t??''}</td>
-      <td style="border:1px solid #000;padding:6px;text-align:center">${row.s??''}</td>
-      <td style="border:1px solid #000;padding:6px;text-align:center">${row.r??''}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${ofCellText(row,'t')}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${ofCellText(row,'s')}</td>
+      <td style="border:1px solid #000;padding:6px;text-align:center">${ofCellText(row,'r')}</td>
       <td style="border:1px solid #000;padding:6px;text-align:center">${row.load_mw??''}</td>
       <td style="border:1px solid #000;padding:6px;text-align:center">${row.ambient??''}</td>
       <td style="border:1px solid #000;padding:6px;text-align:center">${row.notes??''}</td>
@@ -54,6 +54,7 @@ function buildOfficialFormBodyHTML(stampSrc = STAMP_IMG_SRC) {
       </thead>
       <tbody>${rowsHTML || '<tr><td colspan="8" style="border:1px solid #000;padding:6px">لا توجد أبراج</td></tr>'}</tbody>
     </table>
+    ${ofAnyMark(officialFormRows) ? '<div id="ofSrcLegend" style="margin-top:6px;font-size:11px;color:#333;text-align:right">' + OF_SRC_LEGEND + '</div>' : ''}
     <div style="display:flex;justify-content:space-between;margin-top:110px;font-size:13px;color:#333">
       <div>اسم وتوقيع الفاحص: </div>
       <div style="margin-left:2cm">مصادقة رئيس القسم: </div>
@@ -191,7 +192,7 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
   // جدول قراءات الأبراج — أعمدة بعرض المحتوى، من اليمين لليسار، يشمل عمود درجة حرارة الجو
   const headers = ['رقم برج الشد', 'مسافة الفحص', 'T', 'S', 'R', 'حمل الخط MW', 'درجة حرارة الجو', 'الملاحظات'];
   const rowsData = (rowsForPage && rowsForPage.length)
-    ? rowsForPage.map(r => [r.tower_number, r.distance, r.t, r.s, r.r, r.load_mw, r.ambient, r.notes].map(x => x==null?'':String(x)))
+    ? rowsForPage.map(r => [r.tower_number, r.distance, ofCellText(r,'t'), ofCellText(r,'s'), ofCellText(r,'r'), r.load_mw, r.ambient, r.notes].map(x => x==null?'':String(x)))
     : [['','','','','','','','']];
   mctx.font = 'bold 11px Tahoma, Arial';
   const cellPad = 14, minColW = 46, rowH = 24;
@@ -225,6 +226,8 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
     y += rowH;
   });
 
+  // N25-R24: مفتاح مصادر الدرجات بالصفحة التي تحمل علامات
+  if (ofAnyMark(rowsForPage)) { y += 14; ops.push({ type:'text', text: OF_SRC_LEGEND, x: widthCss-sidePad, y, font:'10px Tahoma, Arial', align:'right' }); }
   // التوقيعات — فقط بالصفحة الأخيرة: سطرين تحت الجدول (يمين/يسار)، وسطرين إضافيين لـ"لجنة الكشف الحراري"
   if (pageNum === totalPages) {
     y += lh*5;
@@ -294,9 +297,24 @@ async function exportOfficialFormPDFImpl() {
     showToast('❌ تعذر تجهيز الملف: ' + (e && e.message ? e.message : 'خطأ غير معروف'), 'error');
   }
 }
+// محمّل docx محلي معزول للاستمارة الرسمية: ./vendor/docx-9.7.1.iife.js عند الطلب مع تحقق SHA-256 (بلا unpkg وبلا متغير docx عام)
+const OF_DOCX_URL = './vendor/docx-9.7.1.iife.js', OF_DOCX_SHA256 = 'd5ec4f5a8b99740845974f5f6f020d6e5b1b6c27026195befc67eb37035c84c7';
+let _ofDocxP = null;
+function ofLoadDocx() {
+  if (_ofDocxP) return _ofDocxP;
+  _ofDocxP = (async () => {
+    const res = await fetch(OF_DOCX_URL); if (!res.ok) throw new Error('docx HTTP ' + res.status);
+    const buf = await res.arrayBuffer();
+    if (window.crypto && crypto.subtle) { const h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf))).map(x => x.toString(16).padStart(2, '0')).join(''); if (h !== OF_DOCX_SHA256) throw new Error('docx hash'); }
+    const lib = (new Function(new TextDecoder().decode(buf) + '\n;return docx;'))();
+    if (!lib || !lib.Packer || !lib.Document) throw new Error('docx invalid');
+    return lib;
+  })().catch(e => { _ofDocxP = null; throw e; });
+  return _ofDocxP;
+}
 // ملف Word حقيقي (تنسيق .docx أصلي عبر مكتبة docx) — موثوق بأي برنامج وبأي طريقة فتح
-async function buildOfficialFormDocxBlob() {
-  await ensureDocxLoaded(); // Lazy load: يضمن اكتمال تحميل docx قبل الاستخدام
+async function buildOfficialFormDocxBlob(lib) {
+  const docx = lib || await ofLoadDocx();
   const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, AlignmentType, BorderStyle, WidthType, ImageRun, HorizontalPositionRelativeFrom, VerticalPositionRelativeFrom, TextWrappingType, convertInchesToTwip } = docx;
   const v = id => document.getElementById(id).value || '';
   const rtlRun = (text, opts) => new TextRun({ text, rightToLeft: true, ...opts });
@@ -350,13 +368,14 @@ async function buildOfficialFormDocxBlob() {
   if (officialFormRows.length) {
     officialFormRows.forEach(row => {
       tableRows.push(new TableRow({ children: [
-        cell(row.tower_number), cell(row.distance), cell(row.t), cell(row.s), cell(row.r), cell(row.load_mw), cell(row.ambient), cell(row.notes)
+        cell(row.tower_number), cell(row.distance), cell(ofCellText(row,'t')), cell(ofCellText(row,'s')), cell(ofCellText(row,'r')), cell(row.load_mw), cell(row.ambient), cell(row.notes)
       ]}));
     });
   } else {
     tableRows.push(new TableRow({ children: [new TableCell({ borders: fullBorders, columnSpan: 8, children: [rtlP([rtlRun('لا توجد أبراج')], { alignment: AlignmentType.CENTER })] })] }));
   }
   children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: tableRows }));
+  if (ofAnyMark(officialFormRows)) children.push(rtlP([rtlRun(OF_SRC_LEGEND, { size: 18 })], { alignment: AlignmentType.RIGHT }));   // N25-R24: مفتاح مصادر الدرجات
   children.push(new Paragraph({ text: '' }), new Paragraph({ text: '' }), new Paragraph({ text: '' }), new Paragraph({ text: '' }));
 
   const footerTable = new Table({
@@ -375,8 +394,8 @@ async function buildOfficialFormDocxBlob() {
 async function shareOfficialFormWordImpl() {
   showToast('⏳ جاري تحضير ملف Word...');
   try {
-    try { await ensureDocxLoaded(); } catch (e) { throw new Error('LIB_MISSING'); } // نفس سلوك الفحص القديم بالضبط، بس بمحاولة تحميل فعلية أولاً بدل الاكتفاء بالفحص
-    const blob = await buildOfficialFormDocxBlob();
+    let lib; try { lib = await ofLoadDocx(); } catch (e) { throw new Error('LIB_MISSING'); } // محمّل محلي معزول
+    const blob = await buildOfficialFormDocxBlob(lib);
     const filename = 'استمارة_الكشف_الحراري_' + (document.getElementById('tf_h_date').value || '') + '.docx';
     await shareOrDownloadFile(blob, filename, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     showToast('✅ تم تجهيز ملف Word');

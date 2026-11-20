@@ -93,6 +93,17 @@ let editingOfficialFormId = null;
 let officialFormRows = [];
 let tfTensionTowerOptions = []; // أرقام أبراج الشد المتاحة للخط المختار
 
+// ===== N25-R24: مصدر كل درجة (T/S/R) داخل الصف نفسه: row.src = {t,s,r} بقيم measured|estimated|manual؛ غيابه لخلية ذات قيمة = «غير موثق» (استمارة قديمة) =====
+// row.tower_id/meas_id/id_rev: هوية القياس المرتبط (تُحفظ فقط حين يوفّرها القياس نفسه؛ لا تُخمَّن لاستمارة قديمة).
+const OF_SRC = { measured: { w: 'مقاس', m: 'م', c: '#1e8449' }, estimated: { w: 'تقديري', m: 'ت', c: '#B7791F' }, manual: { w: 'يدوي', m: 'ي', c: '#2B6CB0' }, undoc: { w: 'غير موثق', m: '؟', c: '#718096' } };
+const OF_SRC_LEGEND = 'م = مقاس   ت = تقديري   ي = مُدخل يدوياً   ؟ = غير موثق المصدر (استمارة قديمة)';
+function ofHasVal(v) { return v !== '' && v !== null && v !== undefined && !(typeof v === 'number' && isNaN(v)); }
+function ofSrcKey(row, key) { if (!row || !ofHasVal(row[key])) return null; const k = row.src && row.src[key]; return (k === 'measured' || k === 'estimated' || k === 'manual') ? k : 'undoc'; }
+function ofSrcMark(row, key) { const k = ofSrcKey(row, key); return k ? OF_SRC[k].m : ''; }
+function ofCellText(row, key) { const v = row ? row[key] : ''; if (!ofHasVal(v)) return ''; return String(v) + ' ' + ofSrcMark(row, key); }
+function ofAnyMark(rows) { return (rows || []).some(r => ['t', 's', 'r'].some(k => ofSrcKey(r, k))); }
+function ofSetSrc(row, key, k) { row.src = row.src || {}; if (k) row.src[key] = k; else delete row.src[key]; }
+
 function showThermalOfficialFormNewImpl() {
   pushLevel(showThermalOfficialFormHome);
   thermalShowView('thermalOfficialFormView');
@@ -132,16 +143,21 @@ async function onTfLineChange() {
     if (data.length) document.getElementById('tf_date').value = data[0].inspection_date;
   } catch (e) { /* تجاهل، التاريخ يبقى كما هو ويتعدّل يدويًا */ }
 }
+let _ofLoadSeq = 0;   // N25-R24a: رقم الطلب الأحدث؛ الرد القديم لا يستبدل أحدث استمارة
 async function loadOfficialFormData() {
   const line = document.getElementById('tf_line_name').value;
   const date = document.getElementById('tf_date').value;
   if (!line || !date) { showToast('⚠️ اختر الخط والتاريخ', 'error'); return; }
-  tfTensionTowerOptions = getTensionTowersForLine(line);
+  const seq = ++_ofLoadSeq;
+  const towers = getTensionTowersForLine(line).slice();   // قائمة أبراج مثبّتة لهذا الطلب (لا تُقرأ من العام بعد أي await)
+  const stale = () => seq !== _ofLoadSeq;
   try {
     const res = await sbFetch(`thermal_inspections?line_name=eq.${encodeURIComponent(line)}&inspection_date=eq.${date}&point_type=eq.tower`);
     const data = await res.json();
+    if (stale()) return;
     const byTower = {};
-    try { await csDirLoad(line, 15000); } catch (e) {}
+    try { await csDirLoad(line, 0); } catch (e) {}
+    if (stale()) return;   // N25-R24: دليل طازج لمطابقة الهوية عند جلب قياس لاستمارة جديدة
     let tfSkipped = 0;
     // N25-R5: القراءة تُنسب للبرج الحالي بهويتها الدائمة؛ قراءة محذوف/غير محلول على خط أُعيد ترقيمه لا تُعبّأ في برج يحمل رقمها الآن
     data.forEach(r => { const n = csFilterNumber(r); if (n == null) { tfSkipped++; return; } byTower[n] = r; });
@@ -156,14 +172,21 @@ async function loadOfficialFormData() {
     const firstAmbient = data.find(r => r.ambient_temp !== null && r.ambient_temp !== undefined);
     const ambient = firstAmbient ? parseFloat(firstAmbient.ambient_temp) : null;
 
-    officialFormRows = tfTensionTowerOptions.map((num, i) => {
+    tfTensionTowerOptions = towers;   // يُثبَّت عند الاعتماد فقط (طلب أحدث ساري)
+    officialFormRows = towers.map((num, i) => {
       const r = byTower[num];
       if (r) {
-        return { tower_number: num, distance: '', t: avg(r.t1, r.t2), s: avg(r.s1, r.s2), r: avg(r.r1, r.r2), load_mw: '', ambient: i===0 ? (ambient ?? '') : '', notes: '', inspected: true };
+        const mrow = { tower_number: num, distance: '', t: avg(r.t1, r.t2), s: avg(r.s1, r.s2), r: avg(r.r1, r.r2), load_mw: '', ambient: i===0 ? (ambient ?? '') : '', notes: '', inspected: true };
+        ['t', 's', 'r'].forEach(k => { if (ofHasVal(mrow[k])) ofSetSrc(mrow, k, 'measured'); });
+        if (r.tower_id) { mrow.tower_id = String(r.tower_id); if (r.topology_rev != null) mrow.id_rev = r.topology_rev; }   // هوية القياس كما سجّلها القياس نفسه (لا تُخمَّن)
+        if (r.id != null) mrow.meas_id = r.id;
+        return mrow;
       }
       // برج غير مكشوف: يتعبى تلقائيًا بحرارة الجو + 7 إلى 10 لكل فيز بشكل مستقل (إذا توفرت حرارة الجو)
       const gen = () => ambient !== null ? Math.round(ambient + 7 + Math.random() * 3) : '';
-      return { tower_number: num, distance: '', t: gen(), s: gen(), r: gen(), load_mw: '', ambient: i===0 ? (ambient ?? '') : '', notes: '', inspected: false };
+      const erow = { tower_number: num, distance: '', t: gen(), s: gen(), r: gen(), load_mw: '', ambient: i===0 ? (ambient ?? '') : '', notes: '', inspected: false };
+      ['t', 's', 'r'].forEach(k => { if (ofHasVal(erow[k])) ofSetSrc(erow, k, 'estimated'); });
+      return erow;
     });
     padOfficialFormRowsToMinimum();
 
@@ -176,9 +199,11 @@ async function loadOfficialFormData() {
     renderOfficialFormTable();
     document.getElementById('officialFormEditArea').style.display = 'block';
   } catch (e) {
+    if (stale()) return;
     // v335-C5r4: بلا اتصال: استمارة بأبراج الخط (من بيانات الجهاز) بلا قياسات تقديرية؛ تُدخل القياسات يدوياً وتُحفظ على الجهاز
     if (!(e && e.name === 'TypeError') && navigator.onLine !== false) { showToast('❌ تعذر تحميل القياسات', 'error'); return; }
-    officialFormRows = tfTensionTowerOptions.map(num => ({ tower_number: num, distance: '', t: '', s: '', r: '', load_mw: '', ambient: '', notes: '', inspected: false }));
+    tfTensionTowerOptions = towers;
+    officialFormRows = towers.map(num => ({ tower_number: num, distance: '', t: '', s: '', r: '', load_mw: '', ambient: '', notes: '', inspected: false }));
     padOfficialFormRowsToMinimum();
     editingOfficialFormId = null;
     document.getElementById('tf_h_line').value = line;
@@ -206,9 +231,7 @@ function applyAmbientAutoFill(ambient) {
     // تجاهل صفوف الحشو الفاضية (بلا رقم برج) — هذي فقط لإكمال 23 سطر بالشكل الرسمي وما يجوز تتعبى بقيم وهمية
     if (row.tower_number === '' || row.tower_number === null || row.tower_number === undefined) return;
     if (!row.inspected) {
-      if (row.t === '' || row.t === null || row.t === undefined) row.t = Math.round(ambient + 7 + Math.random() * 3);
-      if (row.s === '' || row.s === null || row.s === undefined) row.s = Math.round(ambient + 7 + Math.random() * 3);
-      if (row.r === '' || row.r === null || row.r === undefined) row.r = Math.round(ambient + 7 + Math.random() * 3);
+      ['t', 's', 'r'].forEach(k => { if (row[k] === '' || row[k] === null || row[k] === undefined) { row[k] = Math.round(ambient + 7 + Math.random() * 3); ofSetSrc(row, k, 'estimated'); } });
     }
   });
   renderOfficialFormTable();
@@ -242,6 +265,10 @@ function placeOfficialFormStampLive() {
     img.style.visibility = 'visible';
   } catch (e) { console.warn('[tower-app] فشل تموضع ختم الاستمارة (شاشة التعبئة المباشرة)', e); }
 }
+function ofSrcTag(idx, row, key) { const k = ofSrcKey(row, key); return `<div id="of_src_${idx}_${key}" class="of-src" data-src="${k || ''}" style="font-size:0.62rem;line-height:1.1;color:${k ? OF_SRC[k].c : '#718096'}">${k ? OF_SRC[k].w : ''}</div>`; }
+function ofIdNote(row) {   // معلومة فقط (لا تغيّر القيم): هل ما زال رقم الصف هو رقم هوية القياس المحفوظ؟
+  try { if (!row || !row.tower_id) return ''; const ln = (document.getElementById('tf_h_line') || {}).value; const n = (ln && csIdentState(ln) === 'map') ? csRowNote({ tower_id: row.tower_id, tower_number: row.tower_number, line_name: ln }, ln) : ''; return n ? '<div class="of-idnote" style="font-size:0.62rem;color:#7B341E">' + String(n).replace(/</g, '&lt;') + '</div>' : ''; } catch (e) { return ''; }
+}
 function renderOfficialFormTable() {
   placeOfficialFormStampLive();
   const tbody = document.getElementById('officialFormBody');
@@ -253,11 +280,11 @@ function renderOfficialFormTable() {
   const ambientCell = (idx, val, w) => `<input type="number" step="0.1" value="${val??''}" oninput="updateOfficialFormRow(${idx},'ambient',this.value)" onblur="applyAmbientAutoFill(this.value)" style="width:${w}px;text-align:center;border:1px solid #ddd;border-radius:4px;padding:4px">`;
   tbody.innerHTML = officialFormRows.map((row, idx) => `
     <tr class="${row.inspected ? 'of-inspected-row' : ''}">
-      <td>${towerSelectHTML(idx, row.tower_number)}</td>
+      <td>${towerSelectHTML(idx, row.tower_number)}${ofIdNote(row)}</td>
       <td>${cell(idx,'distance',row.distance,70)}</td>
-      <td>${cell(idx,'t',row.t,55)}</td>
-      <td>${cell(idx,'s',row.s,55)}</td>
-      <td>${cell(idx,'r',row.r,55)}</td>
+      <td>${cell(idx,'t',row.t,55)}${ofSrcTag(idx,row,'t')}</td>
+      <td>${cell(idx,'s',row.s,55)}${ofSrcTag(idx,row,'s')}</td>
+      <td>${cell(idx,'r',row.r,55)}${ofSrcTag(idx,row,'r')}</td>
       <td>${cell(idx,'load_mw',row.load_mw,65)}</td>
       <td>${ambientCell(idx,row.ambient,65)}</td>
       <td>${cell(idx,'notes',row.notes,110)}</td>
@@ -265,9 +292,28 @@ function renderOfficialFormTable() {
     </tr>`).join('');
 }
 function updateOfficialFormRow(idx, key, val) {
-  if (!officialFormRows[idx]) return;
-  if (key === 'distance' || key === 'notes') officialFormRows[idx][key] = val;
-  else officialFormRows[idx][key] = val === '' ? '' : (key === 'tower_number' ? parseInt(val) : parseFloat(val));
+  const row = officialFormRows[idx]; if (!row) return;
+  if (key === 'tower_number') {
+    const nv = val === '' ? '' : parseInt(val);
+    if (String(nv) !== String(row.tower_number ?? '')) {
+      // N25-R24: تبدّل البرج في صف معبّأ: لا تنتقل القياسات المقاسة (ولا هويتها) إلى البرج الآخر. التقديري واليدوي (قيم المستخدم) يبقيان.
+      let cleared = 0;
+      ['t', 's', 'r'].forEach(k => { const sk = ofSrcKey(row, k); if (sk === 'measured' || (sk === 'undoc' && row.inspected)) { row[k] = ''; ofSetSrc(row, k, null); cleared++; } });
+      delete row.tower_id; delete row.meas_id; delete row.id_rev; row.inspected = false;
+      row.tower_number = nv;
+      renderOfficialFormTable();
+      if (cleared) showToast('⚠️ تغيّر رقم البرج: مُسحت ' + cleared + ' قيمة مقاسة ولم تُنقل إلى البرج الجديد — أدخلها يدوياً أو حمّل القياسات من جديد', 'error');
+      return;
+    }
+    row.tower_number = nv; return;
+  }
+  if (key === 'distance' || key === 'notes') { row[key] = val; return; }
+  row[key] = val === '' ? '' : parseFloat(val);
+  if (key === 't' || key === 's' || key === 'r') {   // تعديل الخلية يدوياً يحدّث مصدرها
+    ofSetSrc(row, key, ofHasVal(row[key]) ? 'manual' : null);
+    const el = document.getElementById('of_src_' + idx + '_' + key), k = ofSrcKey(row, key);
+    if (el) { el.textContent = k ? OF_SRC[k].w : ''; el.dataset.src = k || ''; el.style.color = k ? OF_SRC[k].c : '#718096'; }
+  }
 }
 function addOfficialFormRow() {
   if (!document.getElementById('tf_line_name').value) { showToast('⚠️ اختر اسم الخط أولاً', 'error'); return; }
@@ -322,6 +368,7 @@ function openOfficialFormRecordInEditor(f, pend, source) {
   document.getElementById('tf_h_time').value = f.inspection_time || '';
   editingOfficialFormId = (pend && pend.action === 'create') ? docqLocalId(pend.client_uuid) : f.id; // showThermalOfficialFormNew يصفّرها، نعيد ضبطها بعده
   renderOfficialFormTable();
+  { const _ref = editingOfficialFormId, _ln = f.line_name; try { csDirLoad(_ln, 15000).then(() => { if (editingOfficialFormId === _ref && document.getElementById('tf_h_line').value === _ln) renderOfficialFormTable(); }); } catch (e) {} }   // N25-R24: ملاحظة «رقمه الحالي» بعد وصول الدليل فقط؛ القيم والأرقام كما حُفظت (الصفوف في الذاكرة لا تُلمس)
   document.getElementById('officialFormEditArea').style.display = 'block';
   setOfficialFormStatus(source === 'cache' ? '<span style="color:#7B5B00;font-weight:700">⚠️ نسخة محلية قديمة من ذاكرة الجهاز (لم تُقرأ من الخادم الآن)</span>' : (source === 'server' ? '<span style="color:#1e8449;font-weight:700">✅ مؤكَّدة بالخادم</span>' : docqStatusHTML(source === 'rejected' ? 'rejected' : 'pending', pend && pend.rejected && pend.rejected.code)));
   showToast('📂 تم تحميل الاستمارة، تكدر تعدّلها');
