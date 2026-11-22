@@ -119,6 +119,26 @@ function findLineInfo(lineName) {
   return found || null;
 }
 
+// N25-R25a: مفتاح برج خاص بالتقرير (لا يستعمل csGroupKey الذي يدمج بالرقم عند الصفر): tower_id عند وجوده، وإلا مفتاح قديم منفصل خط+رقم — لا يُدمج سجل قديم مع موثّق أبداً
+function drTowerKey(r) { return r.tower_id ? 'T:' + r.tower_id : 'U:' + String(r.line_name == null ? '' : r.line_name).replace(/\s+/g, ' ').trim() + '||' + String(r.tower_number); }
+// N25-R25: ترتيب أرقام الأبراج ثابت (عددي ثم نصي) + حروف تمييز الأرقام المشتركة
+const DR_LETTERS = ['أ', 'ب', 'ج', 'د', 'هـ', 'و', 'ز', 'ح'];
+function drNumCmp(a, b) { const x = Number(a), y = Number(b); if (Number.isFinite(x) && Number.isFinite(y) && x !== y) return x - y; return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0; }
+// جلب كل الصفحات بترتيب ثابت (الخادم يرفض limit أكبر من حدّه فلا اقتطاع صامت)؛ آخر صفحة أقصر من الحجم؛ أي فشل يرمي
+const DR_FETCH_STATS = {};
+async function drFetchAllPages(table, query, order) {
+  const PAGE = 1000; let off = 0, pages = 0, last = -1; const all = [];
+  while (true) {
+    const res = await sbFetch(`${table}?${query}&order=${order}&limit=${PAGE}&offset=${off}`);
+    if (!res.ok) throw new Error(table + ' HTTP ' + res.status);
+    const ch = await res.json(); if (!Array.isArray(ch)) throw new Error(table + ' bad response');
+    pages++; last = ch.length; for (const r of ch) all.push(r);
+    if (ch.length < PAGE) break;
+    off += PAGE; if (pages > 500) throw new Error(table + ' too many pages');
+  }
+  DR_FETCH_STATS[table] = { pages, rows: all.length, lastPageRows: last };
+  return all;
+}
 async function generateDailyReport() {
   const date = document.getElementById('dr_date').value;
   if (!date) { showToast('⚠️ اختر التاريخ أولاً', 'error'); return; }
@@ -134,20 +154,20 @@ async function generateDailyReport() {
   document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">⏳ جاري التوليد...</div>';
   try {
     try { await csDirsEnsure(); } catch (e) {}   // N25-R5: ترقيم الخطوط (لمفاتيح الهوية)
-    const [inspRes, thermRes, lineThermRes, treatRes] = await Promise.all([
-      sbFetch(`inspections?select=line_name,tower_number,tower_id&inspection_date=eq.${date}`),
-      sbFetch(`thermal_inspections?select=line_name,tower_number,tower_id&inspection_date=eq.${date}`),
-      sbFetch(`line_entry_thermal?select=line_name&inspection_date=eq.${date}`),
-      sbFetch(`treatments?select=line_name,tower_number,tower_id,items_treated&treatment_date=eq.${date}`)
-    ]);
+    // N25-R25: جلب كل صفحات كل مصدر بترتيب ثابت؛ أي صفحة تفشل = فشل التوليد كله (لا تقرير جزئي)
     const [insp, therm, lineTherm, treat] = await Promise.all([
-      inspRes.json(), thermRes.json(), lineThermRes.json(), treatRes.json()
+      drFetchAllPages('inspections', `select=line_name,tower_number,tower_id&inspection_date=eq.${date}`, 'id.asc'),
+      drFetchAllPages('thermal_inspections', `select=line_name,tower_number,tower_id&inspection_date=eq.${date}`, 'id.asc'),
+      drFetchAllPages('line_entry_thermal', `select=line_name&inspection_date=eq.${date}`, 'created_at.asc'),
+      drFetchAllPages('treatments', `select=line_name,tower_number,tower_id,items_treated&treatment_date=eq.${date}`, 'id.asc')
     ]);
 
     const byLine = {};
-    // N25-R5: مجموعة أبراج بهوية: عدّها = عدد الأبراج الفعلية (لا عدد الأرقام المتميزة) — برجان بنفس رقم اللقطة في اليوم نفسه يُعدّان برجين
-    class IdSet { constructor() { this.m = new Map(); } add(k, n) { this.m.set(k, n); return this; } get size() { return this.m.size; }
-      dupNote() { const c = {}; for (const n of this.m.values()) c[n] = (c[n] || 0) + 1; const d = Object.keys(c).filter(n => c[n] > 1); return d.length ? ' (ملاحظة: برجان مختلفان حملا الرقم ' + d.join('، ') + ' في ذلك اليوم بسبب إعادة الترقيم)' : ''; } [Symbol.iterator]() { return this.m.values(); } }
+    // N25-R25: مجموعة أبراج بهوية: كل هوية تُعد مرة واحدة ولو سُجّلت بأكثر من رقم ذلك اليوم؛ الأرقام تُحفظ كما سُجّلت (مرتّبة ثابتاً)
+    class IdSet { constructor() { this.m = new Map(); }
+      add(k, n) { let e = this.m.get(k); if (!e) { e = new Set(); this.m.set(k, e); } e.add(String(n)); return this; }
+      get size() { return this.m.size; }
+      entries() { return [...this.m].map(([key, set]) => ({ key, nums: [...set].sort(drNumCmp) })).sort((a, b) => drNumCmp(a.nums[0], b.nums[0]) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)); } }
     function ensure(line) {
       if (!byLine[line]) byLine[line] = {
         visualTowers: new IdSet(),
@@ -170,13 +190,13 @@ async function generateDailyReport() {
     insp.forEach(r => {
       if (!r.line_name) return;
       const e = ensure(r.line_name);
-      if (r.tower_number != null) e.visualTowers.add(csGroupKey(r), String(r.tower_number));
+      if (r.tower_number != null) e.visualTowers.add(drTowerKey(r), String(r.tower_number));
     });
     therm.forEach(r => {
       if (!r.line_name) return;
       const e = ensure(r.line_name);
       e.hasThermal = true;
-      if (r.tower_number != null) e.thermalTowers.add(csGroupKey(r), String(r.tower_number));
+      if (r.tower_number != null) e.thermalTowers.add(drTowerKey(r), String(r.tower_number));
     });
     lineTherm.forEach(r => {
       if (!r.line_name) return;
@@ -191,7 +211,7 @@ async function generateDailyReport() {
       let items = r.items_treated;
       if (typeof items === 'string') { try { items = JSON.parse(items); } catch { items = []; } }
       if (!Array.isArray(items)) return;
-      const tNum = r.tower_number != null ? String(r.tower_number) : null, tKey = csGroupKey(r);
+      const tNum = r.tower_number != null ? String(r.tower_number) : null, tKey = drTowerKey(r);
       items.forEach(it => {
         const k = (it.key || '').toLowerCase();
         if (k.startsWith('ins'))  { if (tNum) e.insulatorTowers.add(tKey, tNum); }
@@ -212,45 +232,34 @@ async function generateDailyReport() {
       const noOutageTypes = info.ironTowers.size > 0 || info.foundationTowers.size > 0;
       const hasFire = info.fireTowers.size > 0;
 
-      // ترتيب الأبراج تصاعدياً للعرض
-      const sortT = s => [...s].sort((a,b) => Number(a)-Number(b));
+      // N25-R25: الأرقام المشتركة على مستوى الخط لذلك اليوم عبر كل الفئات: رقم واحد لأكثر من هوية → حرف تمييز ثابت (أ، ب…)
+      const sets = [info.visualTowers, info.thermalTowers, info.ironTowers, info.insulatorTowers, info.wireTowers, info.groundTowers, info.foundationTowers, info.fireTowers];
+      const byNum = new Map();
+      sets.forEach(st => st.m.forEach((nums, key) => nums.forEach(n => { if (!byNum.has(n)) byNum.set(n, new Set()); byNum.get(n).add(key); })));
+      const shared = {};   // رقم -> { key -> حرف }
+      [...byNum].filter(([, ks]) => ks.size > 1).sort((a, b) => drNumCmp(a[0], b[0])).forEach(([n, ks]) => {
+        shared[n] = {}; [...ks].sort().forEach((k, i) => { shared[n][k] = DR_LETTERS[i] || String(i + 1); });
+      });
+      const lbl = (n, key) => (shared[n] && shared[n][key]) ? n + ' (' + shared[n][key] + ')' : n;
+      const tok = e => e.nums.map(n => lbl(n, e.key)).join('/');
+      const span = (e, tail) => e.nums.map(n => { const m = Number(n); return Number.isFinite(m) ? lbl(n, e.key) + '-' + (m + 1) : lbl(n, e.key); }).join(' / ');
 
-      // بناء الملاحظات
+      // بناء الملاحظات (النص الواحد نفسه يُعرض ويُحفظ ويُصدَّر)
       const notesParts = [];
-
-      // كشف بصري
-      if (info.visualTowers.size > 0) {
-        const nums = sortT(info.visualTowers).join('، ');
-        notesParts.push(`تم الكشف البصري على الأبراج التالية: ${nums}${info.visualTowers.dupNote()}`);
-      }
-      // كشف حراري بأبراج
-      if (info.thermalTowers.size > 0) {
-        const nums = sortT(info.thermalTowers).join('، ');
-        notesParts.push(`تم الكشف الحراري على الأبراج: ${nums}${info.thermalTowers.dupNote()}`);
-      }
-      // معالجة حديد
-      if (info.ironTowers.size > 0) {
-        sortT(info.ironTowers).forEach(t => notesParts.push(`تم تعويض تقاطعات حديد على البرج ${t}`));
-      }
-      // معالجة عوازل
-      if (info.insulatorTowers.size > 0) {
-        sortT(info.insulatorTowers).forEach(t => notesParts.push(`العمل على تبديل عوازل البرج رقم ${t}`));
-      }
-      // معالجة أسلاك
-      if (info.wireTowers.size > 0) {
-        sortT(info.wireTowers).forEach(t => notesParts.push(`تم معالجة قطوعات جزئية بين الأبراج ${t}-${Number(t)+1}`));
-      }
-      // معالجة أرضي
-      if (info.groundTowers.size > 0) {
-        sortT(info.groundTowers).forEach(t => notesParts.push(`تم معالجة قطوعات جزئية بين الأبراج ${t}-${Number(t)+1}`));
-      }
-      // معالجة قواعد
-      if (info.foundationTowers.size > 0) {
-        sortT(info.foundationTowers).forEach(t => notesParts.push(`تم معالجة قواعد البرج ${t}`));
-      }
-      // معالجة حرائق
-      if (hasFire) {
-        sortT(info.fireTowers).forEach(t => notesParts.push(`تم إزالة مسببات الحرائق وقطع الأشجار بين الأبراج ${t}-${Number(t)+1}`));
+      if (info.visualTowers.size > 0) notesParts.push(`تم الكشف البصري على الأبراج التالية: ${info.visualTowers.entries().map(tok).join('، ')}`);
+      if (info.thermalTowers.size > 0) notesParts.push(`تم الكشف الحراري على الأبراج: ${info.thermalTowers.entries().map(tok).join('، ')}`);
+      info.ironTowers.entries().forEach(e => notesParts.push(`تم تعويض تقاطعات حديد على البرج ${tok(e)}`));
+      info.insulatorTowers.entries().forEach(e => notesParts.push(`العمل على تبديل عوازل البرج رقم ${tok(e)}`));
+      info.wireTowers.entries().forEach(e => notesParts.push(`تم معالجة قطوعات جزئية بين الأبراج ${span(e)}`));
+      info.groundTowers.entries().forEach(e => notesParts.push(`تم معالجة قطوعات جزئية بين الأبراج ${span(e)}`));
+      info.foundationTowers.entries().forEach(e => notesParts.push(`تم معالجة قواعد البرج ${tok(e)}`));
+      info.fireTowers.entries().forEach(e => notesParts.push(`تم إزالة مسببات الحرائق وقطع الأشجار بين الأبراج ${span(e)}`));
+      const sn = Object.keys(shared).sort(drNumCmp);
+      if (sn.length) {
+        const notes = sn.map(n => { const ks = Object.keys(shared[n]), legacy = ks.some(k => k.indexOf('U:') === 0), lets = ks.map(k => shared[n][k]).sort().join('، ');
+          return legacy ? 'الرقم ' + n + ' مشترك بين سجل موثّق بهوية وسجل قديم بلا هوية (لا يُعرف إن كانا البرج نفسه، فلم يُدمجا) ويتميزان بالحرف ' + lets
+                        : 'برجان مختلفان حملا الرقم ' + n + ' في ذلك اليوم ويتميزان بالحرف ' + lets + ' (إعادة ترقيم)'; });
+        notesParts.push('ملاحظة: ' + notes.join('؛ '));
       }
 
       const row = buildDailyReportRow(lineName, {
@@ -278,7 +287,9 @@ async function generateDailyReport() {
     if (shareBtn) shareBtn.style.display = (navigator.canShare && navigator.share) ? '' : 'none';
     if (!dailyReportRows.length) showToast('ℹ️ ما لقينا أي نشاط مسجل بهذا التاريخ، تكدر تضيف خط يدوياً');
   } catch (e) {
-    document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">❌ تعذر توليد التقرير</div>';
+    dailyReportRows = []; editingDailyReportId = null;   // N25-R25: لا يُعتمد تقرير جزئي ولا يبقى تقرير قديم قابلاً للحفظ
+    document.getElementById('dailyReportActions').style.display = 'none'; document.getElementById('dailyReportSaveBar').style.display = 'none';
+    document.getElementById('dailyReportRowsWrap').innerHTML = '<div class="empty-state">❌ تعذر توليد التقرير (فشل تحميل بعض البيانات) — لم يُعتمد تقرير جزئي، أعد المحاولة</div>';
   }
 }
 
