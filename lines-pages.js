@@ -390,6 +390,22 @@ function openTowerHistory(lineName, towerNum) {
   return featRun(['thist'], () => towerHistOpen(lineName, towerNum), 'thist');
 }
 
+// N25-R26: لقطة تفاصيل برج صالحة للعرض الفوري فقط (من الكاش الموجود، بلا أي طلب إضافي). تُقبل فقط إذا: مفتاح الحساب الحالي (الكاش لكل حساب ويُمسح عند الخروج)،
+// غلاف صالح لنفس الخط والبرج بتفاصيل تشغيلية، وهوية/نسخة الترقيم مطابقة لنسخة الخط المعروفة الآن (برج بهويته في خريطة الخط؛ أو صفر مثبَت). غير ذلك: null = حالة التحميل المعتادة.
+let _tdOpenSeq = 0;
+function _tdSnapshotFor(lineName, towerNum) {
+  try {
+    if (!csLiveEnabled() || !currentUser || !CS_AUTH || !CS_AUTH.token) return null;
+    const ent = _csMem.get(csKey(lineName, towerNum)), env = ent && ent.env;
+    if (!env || ent.line !== lineName || String(ent.tower) !== String(towerNum) || !csEnvValid(env, lineName, towerNum)) return null;
+    if (env.resolution !== 'resolved' || env.basis !== 'operations' || !Array.isArray(env.components) || !env.row || typeof env.row !== 'object') return null;
+    if (env.status === 'uninitialized' || env.status === 'no_source' || !hasValidInspectionId(env.row.id)) return null;
+    const known = csKnownRev(lineName); if (known == null) return null;
+    if ((Number(env.topology_rev) || 0) !== known) return null;
+    if (known > 0) { const m = csMap(lineName); if (!m || !env.tower_id || String(m.byNum[String(towerNum)]) !== String(env.tower_id)) return null; }
+    return env;
+  } catch (e) { return null; }
+}
 async function openTowerDetail(lineName, towerNum) {
   const tok = featTok('lpg', true);
   _tlScrollSave(lineName);
@@ -401,11 +417,18 @@ async function openTowerDetail(lineName, towerNum) {
   document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>';
   // v335-C6r2: برج واحد = قراءة حالة هذا البرج وحدها (لا loadTreatments ولا إعادة تحميل خط/خطوط). المعالجة تأتي من حالة البرج نفسها.
   if (csLiveEnabled()) {
+    const mySeq = ++_tdOpenSeq;
+    let previewed = false;
+    if (_tdSnapshotFor(lineName, towerNum)) {   // N25-R26: لقطة صالحة تُعرض فوراً (للعرض فقط)، والقراءة الحيّة أدناه نفسها دون طلب إضافي
+      _towerDetailCtx = { line: lineName, tower: String(towerNum), live: false, verifying: true };
+      try { renderTowerDetail(lineName, towerNum); previewed = true; } catch (e) { previewed = false; document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>'; }
+    }
     let f = null; try { f = await _fetchFullTowerRecord(lineName, towerNum); } catch (e) { f = null; }
-    if (!featEntryOk(tok)) return;
+    if (!featEntryOk(tok) || mySeq !== _tdOpenSeq) return;
     const live = !!(f && f.ok && f.cs && f.cs.ok && f.cs.source !== 'cache');
     _towerDetailCtx = { line: lineName, tower: String(towerNum), live };
     if (live) _applyConfirmedTowerEnv(lineName, towerNum, f.cs.env);
+    else if (previewed) { try { showToast('⚠️ تعذّر التحقق من الخادم — المعروض لقطة محفوظة لم تُؤكَّد', 'error'); } catch (e) {} }   // تبقى اللقطة بوسم «لم تُؤكَّد» (يُعاد الرسم بالوسم غير المتحقَّق)
     else if (!getLatestRecordForTower(lineName, towerNum)) {
       document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⚠️ تعذّرت قراءة حالة هذا البرج من الخادم — تحقق من الاتصال وحاول مرة أخرى</div>';
       return;
@@ -628,7 +651,8 @@ function renderTowerDetail(lineName, towerNum) {
   const [stA, stB] = lineEndpoints(lineName);
   let pendingN = 0; try { const rd = opsRead(); if (rd.ok) pendingN = rd.items.filter(e => e.line === lineName && String(e.tower) === String(towerNum)).length; } catch (e) {}
   let html = '';
-  if (!(ctx && ctx.live)) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #ED8936;font-size:0.8rem;color:#7B341E">📴 آخر حالة محفوظة على الجهاز — لم تُؤكَّد من الخادم في هذا الفتح (الأعداد والمواضع أدناه من هذه النسخة المحفوظة)</div>';
+  if (ctx && ctx.verifying) html += '<div class="form-card" id="towerSnapBanner" style="margin-bottom:10px;border-right:4px solid #ED8936;font-size:0.8rem;color:#7B341E">📴 محفوظة — قيد التحقق (للعرض فقط؛ تُحدَّث عند وصول القراءة الحيّة)</div>';
+  else if (!(ctx && ctx.live)) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #ED8936;font-size:0.8rem;color:#7B341E">📴 آخر حالة محفوظة على الجهاز — لم تُؤكَّد من الخادم في هذا الفتح (الأعداد والمواضع أدناه من هذه النسخة المحفوظة)</div>';
   if (env.status === 'needs_review') html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #E53E3E;font-size:0.8rem;color:#822727">⚠️ حالة هذا البرج تحتاج مراجعة' + ((env.unresolved_reasons || []).length ? ': ' + _tdEsc(env.unresolved_reasons.join('، ')) : '') + '</div>';
   if (pendingN) html += '<div class="form-card" style="margin-bottom:10px;border-right:4px solid #F6C23E;font-size:0.8rem;color:#7C4A03">⏳ ' + pendingN + ' عملية معلّقة لهذا البرج لم تُؤكَّد بعد — <strong>لا تنعكس</strong> على مواضع العوازل وأعدادها أدناه (المؤكَّد على الخادم فقط)، وقد تختلف بطاقة البرج لأنها تُظهر المعلّق. البنود النصية المتأثرة بعملية معلّقة موسومة ⏳.</div>';
   html += `<div class="form-card" style="margin-bottom:14px">
@@ -639,7 +663,7 @@ function renderTowerDetail(lineName, towerNum) {
     <div style="font-size:0.85rem;color:#4A5568;margin-top:6px">نوع البرج: <strong>${_tdEsc(_tdCurrentType(lineName, towerNum) || TOWER_TYPES[r.tower_type] || r.tower_type || 'غير معروف')}</strong> | الجهد: <strong>${vv != null ? _tdEsc(vv) + ' ك.ف' : 'غير معروف'}</strong></div>
   </div>`;
   html += `<button class="btn btn-secondary" id="towerHistoryBtn" style="width:100%;margin-bottom:14px" onclick="openTowerHistory(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">📜 سجل البرج</button>`;
-  if (currentUser && currentUser.role === 'admin') html += `<button class="btn btn-secondary" id="towerSpecBtn" style="width:100%;margin-bottom:14px" onclick="openTowerSpec(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">⚙️ مواصفات البرج (تصحيح)</button>`;   // N25-R6   // v335-C6r24 (P02)
+  if (currentUser && currentUser.role === 'admin') html += `<button class="btn btn-secondary" id="towerSpecBtn" style="width:100%;margin-bottom:14px"${ctx && ctx.verifying ? ' disabled title="يتاح بعد التحقق من الخادم"' : ''} onclick="openTowerSpec(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">⚙️ مواصفات البرج (تصحيح)</button>`;   // N25-R6   // v335-C6r24 (P02)
   const draws = [], geoGaps = [];
   model.circuits.forEach(c => {
     if (c.applicability === 'not_applicable') { html += '<div class="form-card" style="margin-bottom:14px;color:#718096;font-size:0.82rem">🔘 الدائرة الثانية: غير منطبقة على هذا البرج</div>'; return; }
