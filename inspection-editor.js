@@ -1670,7 +1670,7 @@ async function checkPreviousInspection(lineName, towerNumber) {
     // v334: لا نجلب/نحدّث شبكة الخط هنا إطلاقاً — طلب واحد بسجل واحد هو المرجع الأحدث لهذا البرج
     // v335: القراءة تمر بالمحوّل الموحّد (حالة حيّة محلولة بالخادم)، وعند انقطاع الاتصال لقطة مخزّنة بالجهاز موسومة بذلك
     if (navigator.onLine || csLiveEnabled()) {
-      const fetched = await _fetchFullTowerRecord(lineName, towerNumber);
+      const fetched = await (_takeEarlyTowerRead(lineName, towerNumber) || _fetchFullTowerRecord(lineName, towerNumber));   // N25-R27: قراءة بدأت عند الضغط أثناء تحميل الوحدة (نفس الطلب)
       if (!_prefillIsCurrent(token, lineName, towerNumber)) return;
       const csEnv = fetched.cs && fetched.cs.ok ? fetched.cs.env : null;
       towerEnv = csEnv;

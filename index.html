@@ -10104,8 +10104,24 @@ function featSchedulePreload(names) {
 }
 
 // نقاط الدخول (الأسماء العامة كما كانت): تحمّل وحدتها ثم تنفّذ النسخة الفعلية <name>Impl
+// N25-R27: وحدة المحرر لم تُحمَّل بعد (فتح أول قبل التحميل المسبق): قراءة حالة البرج الحيّة تبدأ عند الضغط بالتوازي مع تحميل الوحدة بدل انتظارها،
+// ويتسلّمها checkPreviousInspection نفسها (طلب واحد لا ثانٍ). صالحة 30 ثانية ولنفس الحساب/الكتابات المحلية؛ وإلا تُهمل ويُجلب كالمعتاد. للقراءة السابقة فقط لا للحفظ.
+const _earlyTowerReads = new Map();
+function _earlyTowerRead(lineName, towerNum) {
+  try {
+    if (!csLiveEnabled() || !navigator.onLine) return;
+    const now = Date.now(); _earlyTowerReads.forEach((v, k) => { if (now - v.t > 30000) _earlyTowerReads.delete(k); });
+    const key = lineName + '\u0001' + String(towerNum); if (_earlyTowerReads.has(key)) return;
+    _earlyTowerReads.set(key, { t: now, gen: _csAuthGen, wgen: _csWriteGen, lseq: _localSeq, p: _fetchFullTowerRecord(lineName, towerNum).catch(() => ({ ok: false })) });
+  } catch (e) { /* UI only */ }
+}
+function _takeEarlyTowerRead(lineName, towerNum) {
+  const key = lineName + '\u0001' + String(towerNum), v = _earlyTowerReads.get(key); _earlyTowerReads.delete(key);
+  return (v && Date.now() - v.t <= 30000 && v.gen === _csAuthGen && v.wgen === _csWriteGen && v.lseq === _localSeq) ? v.p : null;
+}
 function openTowerModal(lineName, towerNum) {
   const y = window.scrollY;      // موضع الشبكة لحظة الضغط (لا لحظة اكتمال التحميل)
+  if (!featReady(['insp'])) _earlyTowerRead(lineName, towerNum);
   return featRun(['insp'], (tok, deferred) => {
     if (deferred && currentGridLine !== lineName) return;   // تغيّر الخط المعروض أثناء التحميل: لا نفتح برجاً لخط آخر
     return openTowerModalImpl(lineName, towerNum, y);
