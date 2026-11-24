@@ -2466,6 +2466,59 @@ function csSnapPurgeAll() {
   try { csSnapIdbOp('readwrite', st => st.clear()); } catch (e) {}
 }
 
+// ---- N25-R28: مخزن «حزمة الخط» (تنزيل خط واحد بطلب المستخدم). قاعدة IndexedDB مستقلة تماماً: لا هي كاش آخر 40 برجاً (localStorage) ولا لقطات البطاقات (tower_cs_cards) ولا طابور العمليات المعلّقة (DB_KEY).
+// السجل: { key: uid\u0001line, fmt, uid, line, rev, lineIdent, dir, cfg, envs:{num:env}, noInspection:[], counts, asOf, startedAt, completedAt, complete:true }.
+// يُكتب سجل واحد كامل بمعاملة واحدة (put) فيبقى السابق كما هو إن فشلت المعاملة. تُقرأ فقط لحساب المفتاح نفسه؛ لا تدخل أبداً في _csDirs/_csLineId/_csMem ولا في أساس الحفظ/التعبئة المسبقة.
+const LPK_DB = 'tower_line_pack', LPK_STORE = 'packs', LPK_V = 1, LPK_FMT = 1;
+let _lpkDbP = null;
+function lpkOpen() {
+  if (_lpkDbP) return _lpkDbP;
+  _lpkDbP = new Promise(res => {
+    try {
+      if (typeof indexedDB === 'undefined' || !indexedDB) return res(null);
+      const rq = indexedDB.open(LPK_DB, LPK_V);
+      rq.onupgradeneeded = () => { try { const db = rq.result; if (!db.objectStoreNames.contains(LPK_STORE)) db.createObjectStore(LPK_STORE, { keyPath: 'key' }); } catch (e) {} };
+      rq.onsuccess = () => { const db = rq.result; db.onversionchange = () => { try { db.close(); } catch (e) {} _lpkDbP = null; }; res(db); };
+      rq.onerror = () => { _lpkDbP = null; res(null); };
+      rq.onblocked = () => res(null);
+    } catch (e) { _lpkDbP = null; res(null); }
+  });
+  return _lpkDbP;
+}
+function lpkKey(uid, line) { return String(uid) + '\u0001' + String(line); }
+function lpkIdb(mode, fn) {                 // يحلّ { ok, value, code } ولا يرمي أبداً
+  return lpkOpen().then(db => new Promise(res => {
+    if (!db) return res({ ok: false, code: 'unsupported' });
+    try {
+      const tx = db.transaction(LPK_STORE, mode); let val;
+      const rq = fn(tx.objectStore(LPK_STORE)); if (rq) rq.onsuccess = () => { val = rq.result; };
+      tx.oncomplete = () => res({ ok: true, value: val });
+      tx.onabort = () => res({ ok: false, code: (tx.error && tx.error.name === 'QuotaExceededError') ? 'quota' : 'abort' });
+    } catch (e) { res({ ok: false, code: (e && e.name === 'QuotaExceededError') ? 'quota' : 'error' }); }
+  })).catch(() => ({ ok: false, code: 'error' }));
+}
+// حزمة سليمة ومرتبطة بالحساب الحالي والخط فقط (وإلا null). stale=true: نسخة ترقيم الخط المعروفة الآن أحدث من نسخة الحزمة (لا تُعرض أبراجها).
+async function lpkGet(line) {
+  try {
+    if (!line || !currentUser || !CS_AUTH || !CS_AUTH.token || String(CS_AUTH.uid) !== String(currentUser.id)) return null;
+    const uid = String(currentUser.id), gen = _csAuthGen;
+    const r = await lpkIdb('readonly', st => st.get(lpkKey(uid, line)));
+    if (!r.ok || !r.value) return null;
+    if (gen !== _csAuthGen || !currentUser || String(currentUser.id) !== uid) return null;   // الحساب/الجلسة تغيّرت أثناء القراءة
+    const p = r.value;
+    if (p.fmt !== LPK_FMT || p.complete !== true || !p.counts || Object.keys(p.envs || {}).length !== p.counts.total || !Array.isArray(p.cfg && p.cfg.towers) || p.cfg.towers.length !== p.counts.total || String(p.uid) !== uid || p.line !== line || !p.envs || typeof p.envs !== 'object' || !p.cfg || !Array.isArray(p.cfg.towers)) return null;
+    const known = typeof csKnownRev === 'function' ? csKnownRev(line) : null;
+    return Object.assign({}, p, { stale: known != null && known > (Number(p.rev) || 0) });
+  } catch (e) { return null; }
+}
+function lpkDelete(line) {                   // يحذف حزمة هذا الحساب لهذا الخط فقط؛ لا يمسّ كاش الـ40 ولا الطابور المعلّق
+  if (!currentUser) return Promise.resolve({ ok: false });
+  return lpkIdb('readwrite', st => st.delete(lpkKey(currentUser.id, line)));
+}
+function lpkSweep(keepUid) {                 // تبديل الحساب: تُحذف كل حزمة لا تخص الحساب الجديد (keepUid=null: كلها)
+  return lpkIdb('readwrite', st => { const rq = st.openCursor(); rq.onsuccess = () => { const c = rq.result; if (!c) return; const v = c.value; if (keepUid == null || !v || String(v.uid) !== String(keepUid)) c.delete(); c.continue(); }; return null; });
+}
+
 function csKey(line, tower) { return String(line) + '\u0001' + String(tower); }
 
 // ---- العلم: يعمل افتراضياً. ?cs_live=0 على رابط التطبيق يوقفه على هذا الجهاز (يعود مسار القراءة القديم كما كان)، ?cs_live=1 يعيده.
@@ -2540,7 +2593,7 @@ function csAuthLost(code) {
       showToast('⚠️ ' + (CS_AUTH_MSG[code] || CS_AUTH_MSG.invalid_session), 'error');
       logout(true);
     } else {
-      csPurgeUserData(); csClearToken();
+      csPurgeUserData(); csClearToken(); try { lpkSweep(null); } catch (e) {}
     }
   } finally { _csHandlingAuthLoss = false; }
 }
@@ -3530,7 +3583,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         // v335: الملف الشخصي المحفوظ وحده ليس جلسة. لا بد من رمز جلسة أصدره الخادم لنفس الحساب، وإلا يُطلب الدخول من جديد
         if (!csLoadToken() || (CS_AUTH.uid && String(CS_AUTH.uid) !== String(parsed.id))) {
-          csPurgeUserData(); csClearToken();
+          csPurgeUserData(); csClearToken(); try { lpkSweep(null); } catch (e) {}
           localStorage.removeItem(SESSION_KEY);
           showLogin();
           const eb = document.getElementById('loginError');
@@ -3615,6 +3668,7 @@ async function doLogin() {
     if (!user || !user.id || typeof out.token !== 'string' || !/^[0-9a-f]{64}$/.test(out.token)) { fail('⚠️ ردّ غير متوقع من السيرفر'); return; }
     if (typeof memoSessionEnd === 'function') memoSessionEnd();   // استبدال الجلسة: أبطل أي معاينة/طباعة معلّقة للمستخدم السابق
     csPurgeUserData(); // تبديل الحساب: لا تنتقل بيانات الحالة الحيّة المخزّنة لمستخدم آخر
+    try { lpkSweep(user.id); } catch (e) {}   // N25-R28: حزم الخطوط المنزّلة لحساب آخر تُحذف؛ حزمة الحساب نفسه تبقى
     csStoreToken(out.token, out.expires_at, user.id);
     currentUser = { id: user.id, username: user.username, full_name: user.full_name, role: user.role, department: user.department, phone: user.phone, can_manage_inventory: !!user.can_manage_inventory, _ts: Date.now() };
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
