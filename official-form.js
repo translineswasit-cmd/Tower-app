@@ -100,7 +100,7 @@ const OF_SRC_LEGEND = 'م = مقاس   ت = تقديري   ي = مُدخل يد�
 function ofHasVal(v) { return v !== '' && v !== null && v !== undefined && !(typeof v === 'number' && isNaN(v)); }
 function ofSrcKey(row, key) { if (!row || !ofHasVal(row[key])) return null; const k = row.src && row.src[key]; return (k === 'measured' || k === 'estimated' || k === 'manual') ? k : 'undoc'; }
 function ofSrcMark(row, key) { const k = ofSrcKey(row, key); return k ? OF_SRC[k].m : ''; }
-function ofCellText(row, key) { const v = row ? row[key] : ''; if (!ofHasVal(v)) return ''; return String(v) + ' ' + ofSrcMark(row, key); }
+function ofCellText(row, key) { const v = row ? row[key] : ''; if (!ofHasVal(v)) return ''; return String(v); }   // N25-R30a: المخرجات (PDF/طباعة/Word) درجة وحدها؛ المصدر يبقى في row.src وظاهراً بالمحرر فقط
 function ofAnyMark(rows) { return (rows || []).some(r => ['t', 's', 'r'].some(k => ofSrcKey(r, k))); }
 function ofSetSrc(row, key, k) { row.src = row.src || {}; if (k) row.src[key] = k; else delete row.src[key]; }
 

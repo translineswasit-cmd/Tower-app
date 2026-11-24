@@ -54,7 +54,6 @@ function buildOfficialFormBodyHTML(stampSrc = STAMP_IMG_SRC) {
       </thead>
       <tbody>${rowsHTML || '<tr><td colspan="8" style="border:1px solid #000;padding:6px">لا توجد أبراج</td></tr>'}</tbody>
     </table>
-    ${ofAnyMark(officialFormRows) ? '<div id="ofSrcLegend" style="margin-top:6px;font-size:11px;color:#333;text-align:right">' + OF_SRC_LEGEND + '</div>' : ''}
     <div style="display:flex;justify-content:space-between;margin-top:110px;font-size:13px;color:#333">
       <div>اسم وتوقيع الفاحص: </div>
       <div style="margin-left:2cm">مصادقة رئيس القسم: </div>
@@ -226,8 +225,6 @@ function buildOfficialFormPagePNG(widthCss, rowsForPage, pageNum, totalPages) {
     y += rowH;
   });
 
-  // N25-R24: مفتاح مصادر الدرجات بالصفحة التي تحمل علامات
-  if (ofAnyMark(rowsForPage)) { y += 14; ops.push({ type:'text', text: OF_SRC_LEGEND, x: widthCss-sidePad, y, font:'10px Tahoma, Arial', align:'right' }); }
   // التوقيعات — فقط بالصفحة الأخيرة: سطرين تحت الجدول (يمين/يسار)، وسطرين إضافيين لـ"لجنة الكشف الحراري"
   if (pageNum === totalPages) {
     y += lh*5;
@@ -375,7 +372,6 @@ async function buildOfficialFormDocxBlob(lib) {
     tableRows.push(new TableRow({ children: [new TableCell({ borders: fullBorders, columnSpan: 8, children: [rtlP([rtlRun('لا توجد أبراج')], { alignment: AlignmentType.CENTER })] })] }));
   }
   children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: tableRows }));
-  if (ofAnyMark(officialFormRows)) children.push(rtlP([rtlRun(OF_SRC_LEGEND, { size: 18 })], { alignment: AlignmentType.RIGHT }));   // N25-R24: مفتاح مصادر الدرجات
   children.push(new Paragraph({ text: '' }), new Paragraph({ text: '' }), new Paragraph({ text: '' }), new Paragraph({ text: '' }));
 
   const footerTable = new Table({
