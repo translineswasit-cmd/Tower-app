@@ -73,7 +73,7 @@ async function refCacheGet(uid) {
   return new Promise((resolve) => { try { const rq = db.transaction('lines', 'readonly').objectStore('lines').get(uid + '|__ref__'); rq.onsuccess = () => resolve(rq.result || null); rq.onerror = () => resolve(null); } catch (e) { resolve(null); } });
 }
 // ---------- state ----------
-const S = { open: false, mode: 'single', sel: [], rows: [], info: { source: null, at: null, missing: [], total: 0, withLoc: 0 }, user: null, locMsg: '', bg: false, frameUser: false, ref: { on: {}, data: null, at: null, src: null, err: '' }, seq: 0, locTok: 0, streets: null, streetsAsk: false, towers: [], towerById: new Map(), labelCount: 0, labelTexts: [], view: { lat: 32.5, lon: 45.8, z: 8 }, drawn: [], pop: null, loading: false, uid: null, gen: null, tiles: new Map(), raf: 0, nearest: [], hl: null, pend: [] };
+const S = { open: false, mode: 'single', sel: [], rows: [], info: { source: null, at: null, missing: [], total: 0, withLoc: 0 }, user: null, locMsg: '', bg: false, frameUser: false, ref: { on: {}, data: null, at: null, src: null, err: '' }, seq: 0, locTok: 0, typeMemo: new Map(), streets: null, streetsAsk: false, towers: [], towerById: new Map(), labelCount: 0, labelTexts: [], view: { lat: 32.5, lon: 45.8, z: 8 }, drawn: [], pop: null, loading: false, uid: null, gen: null, tiles: new Map(), raf: 0, nearest: [], hl: null, pend: [] };
 let CARD = null;
 
 // ---------- map view ----------
@@ -87,6 +87,31 @@ function resize() {
 function toScreen(lat, lon) { const z = S.view.z; return { x: S.W / 2 + lonToX(lon, z) - lonToX(S.view.lon, z), y: S.H / 2 + latToY(lat, z) - latToY(S.view.lat, z) }; }
 function toGeo(x, y) { const z = S.view.z; return { lon: xToLon(lonToX(S.view.lon, z) + (x - S.W / 2), z), lat: yToLat(latToY(S.view.lat, z) + (y - S.H / 2), z) }; }
 function requestDraw() { if (S.raf) return; S.raf = requestAnimationFrame(() => { S.raf = 0; draw(); }); }
+// N25-R38: تلوين علامات خطوط 132 ك.ف حسب النوع (من تكوين التطبيق الفعلي: getLineTowers = التكوين المخصص أولاً ثم المدمج) — بشرط إثبات أن سجل البرج المطابق هو نفس هوية النقطة؛ غير ذلك علامة محايدة. لا استنتاج من تسمية KMZ.
+const TYPE_META = { S: { n: 'تعليق', c: '#2b6cb0' }, T: { n: 'شد', c: '#2f9e44' }, R: { n: 'عبور', c: '#d62828' }, E: { n: 'نهائي', c: '#f2c200' }, K: { n: 'عبور أسفل الخط', c: '#ffffff' } }, NEUTRAL_C = '#a0aec0', DARK_EDGE = ['E', 'K'];
+function is132(line) { try { const v = (typeof lineVoltageByName === 'function' ? lineVoltageByName(line) : null) || (typeof _configuredVoltage === 'function' ? _configuredVoltage(line) : 0); return Number(v) === 132; } catch (e) { return false; } }
+function rowType(r) {   // {v132, code|null, why}
+  if (S.cfgRef !== lineTowersCache) { S.typeMemo = new Map(); S.cfgRef = lineTowersCache; }   // تكوين الخطوط استُبدل (تحديث من الخادم): تُعاد حسابات الأنواع
+  const k = String(r.id) + '|' + r.line + '|' + r.number, m = S.typeMemo.get(k); if (m) return m;
+  let o;
+  if (!is132(r.line)) o = { v132: false };
+  else {
+    let sn = null; try { sn = csIdentSnap(r.line, String(r.number), { mapOnly: true }); } catch (e) { sn = null; }
+    if (!sn || sn.blocked || sn.tower_id == null || String(sn.tower_id) !== String(r.id)) o = { v132: true, code: null, why: 'تعذّر إثبات مطابقة سجل البرج لهوية النقطة' };
+    else {
+      let ent = null; try { ent = (getLineTowers(r.line) || []).find(t => String(t.num) === String(r.number)) || null; } catch (e) { ent = null; }
+      let code = ent ? String(ent.type_code || '').trim().toUpperCase() : '';   // الرمز له الأولوية (K يغلب وصف «عبور أسفل الخط»)
+      if (ent && !code) { try { code = (TYPE_TEXT_TO_CODE_132[String(ent.type || '').trim()] || ''); } catch (e) { code = ''; } }   // نص النوع من التكوين نفسه (لا من KMZ)
+      o = TYPE_META[code] ? { v132: true, code } : { v132: true, code: null, why: ent ? 'نوع البرج في التكوين غير معروف' : 'لا سجل لهذا الرقم في التكوين' };
+    }
+  }
+  S.typeMemo.set(k, o); return o;
+}
+function towerType(t) {
+  if (t && t.rows.some(x => !is132(x.line))) return { v132: false };   // برج مشترك مع خط 400/غير 132: يبقى بلون الخط (ألوان 400 محفوظة)؛ نوع 132 يظهر في البطاقة
+  const rs = (t ? t.rows : []).map(rowType).filter(x => x.v132); if (!rs.length) return { v132: false };
+  const cs = new Set(rs.map(x => x.code || '?')); return cs.size === 1 && !cs.has('?') ? { v132: true, code: Array.from(cs)[0] } : { v132: true, code: null, why: (rs.find(x => !x.code) || {}).why || 'أنواع متعارضة بين خطوط البرج المشترك' };
+}
 function lineColor(line) { const k = lineKey(line); let i = S.colorIdx && S.colorIdx.get(k); if (i == null) { let h = 0; for (let j = 0; j < k.length; j++) h = (h * 31 + k.charCodeAt(j)) >>> 0; i = h; } return COLORS[i % COLORS.length]; }
 function bgNote() { const n = el('tmBgNote'); if (!n) return; n.textContent = streetsOn() ? '🗺️ الشوارع ظاهرة بموافقتك: مزود البلاطات (OpenStreetMap) يرى المنطقة المعروضة.' : S.frameUser ? '⛔ الخلفية موقوفة: إطار الخريطة مشتق من موقعك (حتى لو أخفيت العلامة). اضغط «⤢» أو غيّر الاختيار للحصول على إطار مستقل، ثم فعّل الخلفية بنفسك إن رغبت.' : (S.bg ? '' : 'الخلفية مطفأة افتراضياً: لا طلبات خارجية.'); const c = el('tmBg'); if (c) { c.checked = S.bg && !S.frameUser; c.disabled = S.frameUser; } const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
 function frameFromUser() { S.frameUser = true; S.bg = false; bgNote(); }   // يُستدعى قبل تحريك الإطار: لا طلب بلاطات بعد الآن
@@ -127,13 +152,13 @@ function draw() {
     vis.forEach(v => { const k = Math.floor(v.x / CELL) + ',' + Math.floor(v.y / CELL); let c = cells.get(k); if (!c) cells.set(k, c = { n: 0, sx: 0, sy: 0, items: [] }); c.n++; c.sx += v.x; c.sy += v.y; c.items.push(v.r); });
     cells.forEach(c => {
       const x = c.sx / c.n, y = c.sy / c.n;
-      if (c.n === 1) { dot(ctx, x, y, c.items[0]); S.drawn.push({ x, y, r: 9, kind: 't', row: c.items[0] }); return; }
+      if (c.n === 1) { const fl = dot(ctx, x, y, c.items[0]); S.drawn.push({ x, y, r: 9, kind: 't', row: c.items[0], fill: fl }); return; }
       const rad = Math.min(24, 11 + Math.log2(c.n) * 2.6);
       ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fillStyle = 'rgba(26,82,118,0.88)'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.stroke();
       ctx.fillStyle = '#fff'; ctx.font = '700 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(c.n), x, y + 0.5);
       S.drawn.push({ x, y, r: rad, kind: 'c', items: c.items });
     });
-  } else vis.forEach(v => { dot(ctx, v.x, v.y, v.r); S.drawn.push({ x: v.x, y: v.y, r: 9, kind: 't', row: v.r }); });
+  } else vis.forEach(v => { const fl = dot(ctx, v.x, v.y, v.r); S.drawn.push({ x: v.x, y: v.y, r: 9, kind: 't', row: v.r, fill: fl }); });
   S.clusters = S.drawn.filter(d => d.kind === 'c').length; S.singles = S.drawn.filter(d => d.kind === 't').length;
   // N25-R37: رقم كل برج بجانب نقطته عند التكبير الميداني (بلا لمس)؛ التصادم يُحلّ بإسقاط الملصق المتأخر (يبقى برجه ظاهراً ويُلمس)
   S.labelCount = 0; S.labelTexts = [];
@@ -155,14 +180,22 @@ function draw() {
   if (S.user) {
     const q = toScreen(S.user.lat, S.user.lon);
     if (S.user.acc > 0) { const mpp = 156543.03392 * Math.cos(S.user.lat * Math.PI / 180) / Math.pow(2, z), rr = Math.min(3000, S.user.acc / mpp); if (rr > 8) { ctx.beginPath(); ctx.arc(q.x, q.y, rr, 0, 7); ctx.fillStyle = 'rgba(66,133,244,0.15)'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(66,133,244,0.6)'; ctx.stroke(); } }
-    ctx.beginPath(); ctx.arc(q.x, q.y, 8, 0, 7); ctx.fillStyle = '#4285f4'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
-    S.drawn.push({ x: q.x, y: q.y, r: 12, kind: 'u' });
+    // N25-R38: نقطة المستخدم تتميّز عن علامات الأبراج الزرقاء بالشكل: حلقة خارجية داكنة منفصلة + مركز أبيض (الأبراج دوائر صماء صغيرة)
+    ctx.beginPath(); ctx.arc(q.x, q.y, 14, 0, 7); ctx.lineWidth = 3; ctx.strokeStyle = '#0b2e66'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(q.x, q.y, 10, 0, 7); ctx.fillStyle = '#4285f4'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(q.x, q.y, 3, 0, 7); ctx.fillStyle = '#fff'; ctx.fill();
+    S.drawn.push({ x: q.x, y: q.y, r: 15, kind: 'u' });
   }
   if (S.hl) { const q = toScreen(S.hl.lat, S.hl.lon); ctx.beginPath(); ctx.arc(q.x, q.y, 13, 0, 7); ctx.lineWidth = 3; ctx.strokeStyle = '#111'; ctx.stroke(); }
   placePop();
   const b = el('tmFooter'); if (b) b.textContent = 'تكبير ' + z.toFixed(1) + ' · ظاهر ' + S.visCount + ' برج' + (cluster ? ' (مجمّعة)' : '');
 }
-function dot(ctx, x, y, r) { ctx.beginPath(); ctx.arc(x, y, 6, 0, 7); ctx.fillStyle = lineColor(r.line); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke(); }
+function dot(ctx, x, y, r) {
+  const tw = S.towerById.get(String(r.id)), tt = towerType(tw); if (!tt.v132 && tw) { const o = tw.rows.find(x => !is132(x.line)); if (o) r = o; }
+  let fill, edge = '#fff', lw = 2;
+  if (!tt.v132) fill = lineColor(r.line); else if (tt.code) { fill = TYPE_META[tt.code].c; if (DARK_EDGE.indexOf(tt.code) >= 0) { edge = '#1a202c'; lw = 2.5; } } else fill = NEUTRAL_C;
+  ctx.beginPath(); ctx.arc(x, y, 6, 0, 7); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = lw; ctx.strokeStyle = edge; ctx.stroke(); return fill;
+}
 
 function setView(lat, lon, z) { S.view.lat = Math.max(-80, Math.min(80, lat)); S.view.lon = lon; S.view.z = Math.max(MINZ, Math.min(MAXZ, z)); requestDraw(); }
 function zoomAt(x, y, dz) {
@@ -210,6 +243,7 @@ function selectRow(r) {
   if (rows.length > 1) h += '<br><span style="color:#744210;font-size:11px">🔗 برج مشترك: يخدم ' + rows.length + ' خطوط بالأرقام أعلاه (هوية واحدة)</span>';
   h += '<br><span style="color:#718096;font-size:11px">' + esc(SRC_AR[r.src] || '') + (r.acc != null ? ' · دقة ±' + Math.round(r.acc) + ' م' : '') + '</span>';
   if (S.user) h += '<br><span style="font-size:12px">📏 ' + fmtDist(haversine(S.user.lat, S.user.lon, r.lat, r.lon)) + ' <span style="color:#718096">مسافة مباشرة (خط مستقيم) — ليست طريقاً سالكاً</span></span>';
+  rows.forEach(x => { const ty = rowType(x); if (ty.v132) h += '<div style="font-size:12px;margin-top:4px">🏷️ ' + esc(x.line) + ' — نوع البرج: ' + (ty.code ? '<b>' + TYPE_META[ty.code].n + '</b> (' + ty.code + ')' : '<b style="color:#744210">غير مؤكد</b> <span style="color:#718096">(' + esc(ty.why || '') + ')</span>') + '</div>'; });
   rows.forEach((x, i) => { h += '<div><button class="btn btn-primary btn-sm tmAct" data-act="td" data-i="' + i + '" style="margin-top:6px;width:100%">🗼 تفاصيل البرج' + (rows.length > 1 ? ' — ' + esc(x.line) + ' ' + esc(x.number) : '') + '</button></div>'; });
   h += '<button class="btn btn-secondary btn-sm tmAct" data-act="dir" style="margin-top:6px;width:100%">🧭 الاتجاهات إلى البرج</button>';
   h += '<div style="color:#718096;font-size:10px;margin-top:4px">يفتح تطبيق الخرائط بوجهة هذا البرج فقط (لا يُرسل موقعك). المدخل والطريق غير موثّقين هنا.</div>';
@@ -290,7 +324,8 @@ async function loadData() {
   } catch (e) {}
   info.total = total; info.withLoc = rows.length;
   S.colorIdx = new Map(); Array.from(new Set(rows.map(r => lineKey(r.line)))).sort().forEach((k, i) => S.colorIdx.set(k, i));
-  S.rows = rows; deriveTowers(); S.info = info; S.loading = false;
+  S.rows = rows; deriveTowers(); S.typeMemo = new Map(); S.info = info; S.loading = false;
+  try { const g0 = S.gen, t0 = S.locTok; Array.from(new Set(rows.map(r => r.line))).filter(is132).forEach(l => { if (navigator.onLine !== false && typeof csLineIdentLoad === 'function') Promise.resolve(csLineIdentLoad(l)).then(() => { if (S.open && g0 === S.gen && t0 === S.locTok) { S.typeMemo = new Map(); requestDraw(); paintLegend(); } }).catch(() => {}); }); } catch (e) {}
   pendingOverlay();
   const sig = S.mode + '|' + (lines ? lines.join('\u0001') : '*');
   if (S.fitSig !== sig && rows.length) { S.fitSig = sig; if (S.W) { fitBounds(rows, 40); frameIndependent(); } }
@@ -407,9 +442,15 @@ function paint() {
     if (S.pend.length) h += '<br><span style="color:#B7791F">◇ ' + S.pend.length + ' موقع معلّق (غير مؤكَّد) لحسابك يظهر بشكل معيّن</span>';
   }
   st.innerHTML = h;
-  const lg = el('tmLegend');
-  if (lg) { const ls = Array.from(new Set(S.rows.map(r => r.line))).slice(0, 8); lg.innerHTML = ls.length > 1 ? ls.map(l => '<span style="display:inline-flex;align-items:center;gap:4px;margin-left:10px"><i style="width:10px;height:10px;border-radius:50%;background:' + lineColor(l) + ';display:inline-block"></i>' + esc(l) + '</span>').join('') : ''; }
+  paintLegend();
   requestDraw();
+}
+function paintLegend() {
+  const lg = el('tmLegend'); if (!lg) return;
+  const all = Array.from(new Set(S.rows.map(r => r.line))), ls = all.filter(l => !is132(l)).slice(0, 8), has132 = all.some(is132);
+  let h = all.length > 1 ? ls.map(l => '<span style="display:inline-flex;align-items:center;gap:4px;margin-left:10px"><i style="width:10px;height:10px;border-radius:50%;background:' + lineColor(l) + ';display:inline-block"></i>' + esc(l) + '</span>').join('') : '';
+  if (has132) h += '<div id="tmTypeKey" style="margin-top:4px"><b>مفتاح أنواع أبراج 132 ك.ف:</b> ' + Object.keys(TYPE_META).map(c => '<span style="display:inline-flex;align-items:center;gap:3px;margin-left:8px"><i style="width:11px;height:11px;border-radius:50%;background:' + TYPE_META[c].c + ';border:' + (DARK_EDGE.indexOf(c) >= 0 ? '2px solid #1a202c' : '1px solid #fff;box-shadow:0 0 0 1px #cbd5e0') + ';display:inline-block"></i>' + TYPE_META[c].n + '</span>').join('') + '<span style="display:inline-flex;align-items:center;gap:3px;margin-left:8px"><i style="width:11px;height:11px;border-radius:50%;background:' + NEUTRAL_C + ';border:1px solid #fff;box-shadow:0 0 0 1px #cbd5e0;display:inline-block"></i>غير مؤكد</span></div>';
+  lg.innerHTML = h;
 }
 function buildSelectors() {
   const names = (typeof lineCatalogNames === 'function') ? lineCatalogNames() : [];
@@ -461,14 +502,16 @@ window.showTowerMapImpl = function (tok) {
   const lt = document.getElementById('lineTowerListView'); if (lt) lt.style.display = 'none'; const td = document.getElementById('towerDetailView'); if (td) td.style.display = 'none';
   const root = document.getElementById('towerMapView'); root.style.display = '';
   if (S.gen !== featSessionTag() || S.uid !== uidNow()) { S.sel = []; S.mode = 'single'; S.rows = []; deriveTowers(); S.fitSig = null; S.nearest = []; S.frameUser = false; S.view = { lat: 32.5, lon: 45.8, z: 8 }; S.tiles = new Map(); S.ref = { on: {}, data: null, at: null, src: null, err: '' }; }   // حساب/جلسة مختلفة: لا اختيار ولا بيانات سابقة
-  S.locTok++; streetsRevoke(); S.gen = featSessionTag(); S.bg = false; S.open = true; S.user = null; S.locMsg = ''; S.pop = null; S.hl = null;
+  S.locTok++; streetsRevoke(); S.typeMemo = new Map(); S.gen = featSessionTag(); S.bg = false; S.open = true; S.user = null; S.locMsg = ''; S.pop = null; S.hl = null;
   build(root); updModeUi(); buildSelectors(); paintLoc(); renderNearest(); bgNote(); refLoad();
   if (S.ro) { try { S.ro.disconnect(); } catch (e) {} S.ro = null; try { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } catch (e) {} }
   setTimeout(() => { resize(); if (S.sel.length || S.mode === 'all') loadData(); else paint(); }, 0);
 };
 window.tmapLeave = function () { S.locTok++; streetsRevoke(); S.open = false; S.user = null; S.locMsg = ''; S.pop = null; S.nearest = []; try { if (S.ro) S.ro.disconnect(); } catch (e) {} const root = document.getElementById('towerMapView'); if (root && root.style.display !== 'none') root.style.display = 'none'; };
-window.__tmapDrawn = function () { return S.drawn.map(d => ({ x: d.x, y: d.y, kind: d.kind, n: d.items ? d.items.length : 0 })); };   // خطاف اختبار للقراءة فقط
-window.__tmapInfo = function () { return { streets: streetsOn(), streetsAsk: S.streetsAsk, labels: S.labelCount, labelTexts: S.labelTexts.slice(), towers: S.towers.length, popRows: S.pop ? S.pop.rows.length : 0, frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
+window.__tmapDrawn = function () { return S.drawn.map(d => ({ x: d.x, y: d.y, kind: d.kind, n: d.items ? d.items.length : 0, fill: d.fill || null, num: d.row ? d.row.number : null, line: d.row ? d.row.line : null })); };
+window.__tmapRetype = function () { S.typeMemo = new Map(); requestDraw(); };   // خطاف اختبار: إسقاط ذاكرة الأنواع بعد تغيير التكوين داخل الصفحة
+window.__tmapLineColor = function (l) { return lineColor(l); };   // خطاف اختبار للقراءة فقط
+window.__tmapInfo = function () { return { typeKey: !!el('tmTypeKey'), streets: streetsOn(), streetsAsk: S.streetsAsk, labels: S.labelCount, labelTexts: S.labelTexts.slice(), towers: S.towers.length, popRows: S.pop ? S.pop.rows.length : 0, frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
 window.__tmapProbe = function (line, number) { const r = S.rows.find(x => x.line === line && String(x.number) === String(number)); if (!r) return null; const q = toScreen(r.lat, r.lon); const rect = el('tmCanvas').getBoundingClientRect(); return { x: rect.left + q.x, y: rect.top + q.y, ok: q.x > 0 && q.y > 0 && q.x < S.W && q.y < S.H }; };
 
 // ---------- tower detail card: confirmed vs pending, and the capture flow ----------
