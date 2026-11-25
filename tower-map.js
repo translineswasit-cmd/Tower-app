@@ -73,7 +73,7 @@ async function refCacheGet(uid) {
   return new Promise((resolve) => { try { const rq = db.transaction('lines', 'readonly').objectStore('lines').get(uid + '|__ref__'); rq.onsuccess = () => resolve(rq.result || null); rq.onerror = () => resolve(null); } catch (e) { resolve(null); } });
 }
 // ---------- state ----------
-const S = { open: false, mode: 'single', sel: [], rows: [], info: { source: null, at: null, missing: [], total: 0, withLoc: 0 }, user: null, locMsg: '', bg: false, frameUser: false, ref: { on: {}, data: null, at: null, src: null, err: '' }, seq: 0, locTok: 0, typeMemo: new Map(), streets: null, streetsAsk: false, towers: [], towerById: new Map(), labelCount: 0, labelTexts: [], view: { lat: 32.5, lon: 45.8, z: 8 }, drawn: [], pop: null, loading: false, uid: null, gen: null, tiles: new Map(), raf: 0, nearest: [], hl: null, pend: [] };
+const S = { open: false, mode: 'single', sel: [], rows: [], info: { source: null, at: null, missing: [], total: 0, withLoc: 0 }, user: null, locMsg: '', bg: false, streetsOff: false, frameUser: false, ref: { on: {}, data: null, at: null, src: null, err: '' }, seq: 0, locTok: 0, typeMemo: new Map(), streets: null, streetsAsk: false, towers: [], towerById: new Map(), labelCount: 0, labelTexts: [], view: { lat: 32.5, lon: 45.8, z: 8 }, drawn: [], pop: null, loading: false, uid: null, gen: null, tiles: new Map(), raf: 0, nearest: [], hl: null, pend: [] };
 let CARD = null;
 
 // ---------- map view ----------
@@ -113,11 +113,14 @@ function towerType(t) {
   const cs = new Set(rs.map(x => x.code || '?')); return cs.size === 1 && !cs.has('?') ? { v132: true, code: Array.from(cs)[0] } : { v132: true, code: null, why: (rs.find(x => !x.code) || {}).why || 'أنواع متعارضة بين خطوط البرج المشترك' };
 }
 function lineColor(line) { const k = lineKey(line); let i = S.colorIdx && S.colorIdx.get(k); if (i == null) { let h = 0; for (let j = 0; j < k.length; j++) h = (h * 31 + k.charCodeAt(j)) >>> 0; i = h; } return COLORS[i % COLORS.length]; }
-function bgNote() { const n = el('tmBgNote'); if (!n) return; n.textContent = streetsOn() ? '🗺️ الشوارع ظاهرة بموافقتك: مزود البلاطات (OpenStreetMap) يرى المنطقة المعروضة.' : S.frameUser ? '⛔ الخلفية موقوفة: إطار الخريطة مشتق من موقعك (حتى لو أخفيت العلامة). اضغط «⤢» أو غيّر الاختيار للحصول على إطار مستقل، ثم فعّل الخلفية بنفسك إن رغبت.' : (S.bg ? '' : 'الخلفية مطفأة افتراضياً: لا طلبات خارجية.'); const c = el('tmBg'); if (c) { c.checked = S.bg && !S.frameUser; c.disabled = S.frameUser; } const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
-function frameFromUser() { S.frameUser = true; S.bg = false; bgNote(); }   // يُستدعى قبل تحريك الإطار: لا طلب بلاطات بعد الآن
-function frameIndependent() { if (S.frameUser) { S.frameUser = false; S.bg = false; bgNote(); } }   // إطار من الأبراج/المراجع: الخلفية تبقى مطفأة حتى يختارها المستخدم
-function streetsOn() { return !!(S.streets && S.streets.gen === featSessionTag()); }   // N25-R37: موافقة «إظهار الشوارع حول موقعي» (للجلسة الحالية وللخريطة المفتوحة فقط)
-function bgAllowed() { return navigator.onLine !== false && ((S.bg && !S.frameUser) || streetsOn()); }   // N25-R36: الخلفية بقرار صريح؛ R37: أو بموافقة الشوارع الصريحة   // N25-R36: الخلفية بقرار صريح وبإطار غير مشتق من الموقع فقط
+const STREETS_KEY = 'tmap_streets_off';
+function streetsPref() { try { return localStorage.getItem(STREETS_KEY) === '1'; } catch (e) { return false; } }   // N25-R39: تفضيل الجهاز فقط (إيقاف الشوارع)؛ الافتراضي: ظاهرة
+function bgAllowed() { return navigator.onLine !== false && !S.streetsOff; }   // N25-R39: الشوارع تلقائية (بلاطات OpenStreetMap) ما لم يوقفها المستخدم؛ لا تتوقف بسبب اشتقاق الإطار من الموقع
+function streetsOn() { return bgAllowed(); }
+function bgNote() { const n = el('tmBgNote'); if (n) n.textContent = S.streetsOff ? 'الشوارع موقوفة على هذا الجهاز (لا طلبات خارجية).' : (navigator.onLine === false ? 'الشوارع تحتاج اتصالاً — الأبراج تعمل بدونه.' : '🗺️ الشوارع من OpenStreetMap (طرف خارجي): مزوّد البلاطات يرى المنطقة المعروضة وعنوان اتصال جهازك، ولا يستلم موقعك الدقيق ولا أي بيانات أبراج. يمكنك إيقافها.'); const c = el('tmBg'); if (c) c.checked = !S.streetsOff; const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
+function frameFromUser() { S.frameUser = true; }   // يبقى للإشارة فقط (لا يوقف الشوارع بعد R39)
+function frameIndependent() { S.frameUser = false; }
+function setStreets(on) { S.streetsOff = !on; try { localStorage.setItem(STREETS_KEY, on ? '0' : '1'); } catch (e) {} if (!on) S.tiles = new Map(); bgNote(); requestDraw(); }
 function tileImg(z, x, y) {
   if (!bgAllowed()) return null;
   const k = z + '/' + x + '/' + y; let t = S.tiles.get(k);
@@ -362,10 +365,7 @@ async function locateMe() {
   const stale = () => !S.open || tok !== S.locTok || gen !== S.gen || S.gen !== featSessionTag();
   const box = el('tmLocMsg'); if (!box) return;
   if (!('geolocation' in navigator)) { S.locMsg = GEO_ERR[0]; paintLoc(); return; }
-  let st = ''; try { if (navigator.permissions && navigator.permissions.query) st = (await navigator.permissions.query({ name: 'geolocation' })).state; } catch (e) {}
-  if (stale()) return;   // الرد تأخر حتى أُغلقت الخريطة/تبدّلت الجلسة: لا واجهة ولا GPS
-  if (st === 'denied') { S.locMsg = GEO_ERR[1]; paintLoc(); return; }
-  S.locMsg = 'locating'; paintLoc();
+  S.locMsg = 'locating'; paintLoc();   // N25-R39: الطلب يُطلق مباشرة من لمسة المستخدم (حوار نظام الآيفون هو الإذن الوحيد؛ لا استعلام أذونات ولا حوار إضافي قبله)
   try {
     const p = await geo({ enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
     if (stale()) return;
@@ -375,16 +375,8 @@ async function locateMe() {
   } catch (e) { if (stale()) return; S.user = null; S.locMsg = GEO_ERR[e && e.code != null ? e.code : 2] || GEO_ERR[2]; paintLoc(); computeNearest(); requestDraw(); }
 }
 function inView(p) { const q = toScreen(p.lat, p.lon); return q.x > 0 && q.x < S.W && q.y > 0 && q.y < S.H; }
-function streetsRevoke() { S.streets = null; S.streetsAsk = false; S.tiles = new Map(); }
-function paintStreets() {
-  const b = el('tmStreets'); if (!b) return;
-  if (streetsOn()) { b.innerHTML = '<div style="font-size:12px;color:#2f855a">🗺️ الشوارع ظاهرة بموافقتك (OpenStreetMap يرى المنطقة المعروضة) — <a href="javascript:void(0)" id="tmStreetsOff">إيقاف الشوارع</a></div>'; el('tmStreetsOff').onclick = () => { streetsRevoke(); bgNote(); paintStreets(); requestDraw(); }; return; }
-  if (!S.user) { b.innerHTML = ''; return; }
-  if (!S.streetsAsk) { b.innerHTML = '<button class="btn btn-secondary btn-sm" id="tmStreetsAsk">🗺️ إظهار الشوارع حول موقعي</button>'; el('tmStreetsAsk').onclick = () => { S.streetsAsk = true; paintStreets(); }; return; }
-  b.innerHTML = '<div style="padding:10px;border:1px solid #F6C23E;border-radius:10px;background:#FFFAF0;font-size:13px">لعرض الشوارع تُطلب صور الخريطة من خادم <b>OpenStreetMap</b> (طرف خارجي): سيرى ذلك الخادم <b>المنطقة المعروضة حول موقعك</b> (وعنوان اتصال الجهاز). لا يُرسل إليه موقعك الدقيق ولا بيانات الأبراج، ولا يُرسل شيء لخادم التطبيق. تنتهي الموافقة بإغلاق الخريطة أو بتبدّل الحساب. بدون الموافقة تعمل الخريطة والأقرب كاملة بلا خلفية.<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" id="tmStreetsYes">أوافق — أظهر الشوارع</button><button class="btn btn-secondary btn-sm" id="tmStreetsNo">لا، بدون شوارع</button></div></div>';
-  el('tmStreetsNo').onclick = () => { S.streetsAsk = false; paintStreets(); };
-  el('tmStreetsYes').onclick = () => { if (!S.user) { S.streetsAsk = false; paintStreets(); return; } S.streets = { gen: featSessionTag() }; S.streetsAsk = false; frameFromUser(); setView(S.user.lat, S.user.lon, Math.max(S.view.z, 15)); bgNote(); paintStreets(); requestDraw(); };
-}
+function streetsRevoke() { S.tiles = new Map(); }
+function paintStreets() { const b = el('tmStreets'); if (b) b.innerHTML = ''; }
 function paintLoc() {
   const box = el('tmLocMsg'), btn = el('tmLocBtn'); if (!box) return;
   const m = S.locMsg;
@@ -475,7 +467,7 @@ function build(root) {
     '<div id="tmSingleBox"><select id="tmSingle" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;font-size:14px"></select></div>' +
     '<div id="tmMultiBox" style="display:none"><input id="tmMultiQ" placeholder="بحث عن خط…" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;margin-bottom:6px"><div id="tmMultiList" style="max-height:200px;overflow:auto;border:1px solid #edf2f7;border-radius:8px;padding:4px"></div><div style="display:flex;justify-content:space-between;margin-top:6px;font-size:12px"><span id="tmMultiCount"></span><a href="javascript:void(0)" id="tmMultiClear">مسح الاختيار</a></div></div>' +
     '<div id="tmAllBox" style="display:none;font-size:13px;color:#4a5568">تُعرض أبراج كل الخطوط (تجميع تلقائي للعلامات للحفاظ على سرعة الواجهة).</div>' +
-    '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#4a5568"><input type="checkbox" id="tmBg"> خلفية الخريطة (اختيارية: تطلب بلاطات من خادم خارجي ويرى ذلك الخادم إطار الخريطة؛ لا تعمل ما دام الإطار مشتقاً من موقعك)</label><div id="tmBgNote" style="font-size:11px;color:#7B341E;margin-top:4px"></div>' +
+    '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#4a5568"><input type="checkbox" id="tmBg"> إظهار الشوارع (خلفية الخريطة)</label><div id="tmBgNote" style="font-size:11px;color:#7B341E;margin-top:4px"></div>' +
     '<div id="tmRefBox" style="margin-top:10px;border-top:1px solid #edf2f7;padding-top:8px"><div style="font-size:12px;font-weight:700;color:#4a5568;margin-bottom:4px">📌 مراجع GPS (للعرض فقط — ليست أبراج تشغيل ولا سجلات)</div><div id="tmRefList" style="font-size:12px"></div></div></div>' +
     '<div id="tmStatus" style="font-size:12px;color:#4a5568;margin-bottom:6px"></div><div id="tmLegend" style="font-size:11px;margin-bottom:6px"></div>' +
     '<div id="tmWrap" style="position:relative;height:58vh;min-height:340px;border-radius:12px;overflow:hidden;border:1px solid #cbd5e0;direction:ltr;background:#e9eef3"><canvas id="tmCanvas" style="display:block;position:absolute;inset:0"></canvas>' +
@@ -483,16 +475,13 @@ function build(root) {
     '<button id="tmLocBtn" class="btn btn-primary btn-sm" style="position:absolute;top:8px;right:8px">📍 موقعي</button>' +
     '<div id="tmPop" style="display:none;position:absolute;background:#fff;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.3);padding:8px 10px;font-size:13px;direction:rtl;z-index:5"></div>' +
     '<div id="tmFooter" style="position:absolute;bottom:2px;left:6px;font-size:10px;color:#555;background:rgba(255,255,255,.75);padding:1px 5px;border-radius:4px"></div><div style="position:absolute;bottom:2px;right:6px;font-size:10px;color:#555;background:rgba(255,255,255,.75);padding:1px 5px;border-radius:4px"><span id="tmOsm" style="display:none">© OpenStreetMap</span></div></div>' +
-    '<div id="tmLocConsent" style="display:none;margin-top:8px;padding:10px;border:1px solid #F6C23E;border-radius:10px;background:#FFFAF0;font-size:13px">يُستعمل موقعك لعرض مكانك وأقرب الأبراج على هذا الجهاز فقط — <b>لا يُخزَّن ولا يُرسل</b>، وبلا تتبّع بالخلفية. سيطلب المتصفح إذنك الآن.<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" id="tmLocGo">متابعة</button><button class="btn btn-secondary btn-sm" id="tmLocNo">إلغاء</button></div></div>' +
     '<div id="tmLocMsg" style="margin-top:8px;font-size:12px"></div><div id="tmStreets" style="margin-top:8px"></div><div class="form-card" style="margin-top:10px;padding:10px"><div id="tmNearest"></div></div>';
   el('tmMode_single').onclick = () => setMode('single'); el('tmMode_multi').onclick = () => setMode('multi'); el('tmMode_all').onclick = () => setMode('all');
   el('tmSingle').onchange = () => { S.sel = el('tmSingle').value ? [el('tmSingle').value] : []; loadData(); };
   el('tmMultiQ').oninput = () => buildSelectors(); el('tmMultiClear').onclick = () => { S.sel = []; buildSelectors(); updModeUi(); loadData(); };
-  el('tmBg').checked = S.bg; el('tmBg').onchange = () => { if (el('tmBg').checked && S.frameUser) { el('tmBg').checked = false; S.bg = false; bgNote(); return; } S.bg = el('tmBg').checked; bgNote(); requestDraw(); };
+  el('tmBg').checked = !S.streetsOff; el('tmBg').onchange = () => setStreets(el('tmBg').checked);
   el('tmZin').onclick = () => zoomAt(S.W / 2, S.H / 2, 1); el('tmZout').onclick = () => zoomAt(S.W / 2, S.H / 2, -1); el('tmFit').onclick = () => { const pts = refPoints().concat(S.rows); if (pts.length) { fitBounds(pts, 40); frameIndependent(); } };
-  el('tmLocBtn').onclick = () => { el('tmLocConsent').style.display = 'block'; };
-  el('tmLocNo').onclick = () => { el('tmLocConsent').style.display = 'none'; };
-  el('tmLocGo').onclick = () => { el('tmLocConsent').style.display = 'none'; locateMe(); };
+  el('tmLocBtn').onclick = () => { locateMe(); };
   bindPointer(el('tmCanvas'));
   try { if (typeof ResizeObserver !== 'undefined') { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } else window.addEventListener('resize', resize); } catch (e) {}
 }
@@ -502,7 +491,7 @@ window.showTowerMapImpl = function (tok) {
   const lt = document.getElementById('lineTowerListView'); if (lt) lt.style.display = 'none'; const td = document.getElementById('towerDetailView'); if (td) td.style.display = 'none';
   const root = document.getElementById('towerMapView'); root.style.display = '';
   if (S.gen !== featSessionTag() || S.uid !== uidNow()) { S.sel = []; S.mode = 'single'; S.rows = []; deriveTowers(); S.fitSig = null; S.nearest = []; S.frameUser = false; S.view = { lat: 32.5, lon: 45.8, z: 8 }; S.tiles = new Map(); S.ref = { on: {}, data: null, at: null, src: null, err: '' }; }   // حساب/جلسة مختلفة: لا اختيار ولا بيانات سابقة
-  S.locTok++; streetsRevoke(); S.typeMemo = new Map(); S.gen = featSessionTag(); S.bg = false; S.open = true; S.user = null; S.locMsg = ''; S.pop = null; S.hl = null;
+  S.locTok++; streetsRevoke(); S.typeMemo = new Map(); S.gen = featSessionTag(); S.streetsOff = streetsPref(); S.open = true; S.user = null; S.locMsg = ''; S.pop = null; S.hl = null;
   build(root); updModeUi(); buildSelectors(); paintLoc(); renderNearest(); bgNote(); refLoad();
   if (S.ro) { try { S.ro.disconnect(); } catch (e) {} S.ro = null; try { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } catch (e) {} }
   setTimeout(() => { resize(); if (S.sel.length || S.mode === 'all') loadData(); else paint(); }, 0);
@@ -511,7 +500,7 @@ window.tmapLeave = function () { S.locTok++; streetsRevoke(); S.open = false; S.
 window.__tmapDrawn = function () { return S.drawn.map(d => ({ x: d.x, y: d.y, kind: d.kind, n: d.items ? d.items.length : 0, fill: d.fill || null, num: d.row ? d.row.number : null, line: d.row ? d.row.line : null })); };
 window.__tmapRetype = function () { S.typeMemo = new Map(); requestDraw(); };   // خطاف اختبار: إسقاط ذاكرة الأنواع بعد تغيير التكوين داخل الصفحة
 window.__tmapLineColor = function (l) { return lineColor(l); };   // خطاف اختبار للقراءة فقط
-window.__tmapInfo = function () { return { typeKey: !!el('tmTypeKey'), streets: streetsOn(), streetsAsk: S.streetsAsk, labels: S.labelCount, labelTexts: S.labelTexts.slice(), towers: S.towers.length, popRows: S.pop ? S.pop.rows.length : 0, frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
+window.__tmapInfo = function () { return { typeKey: !!el('tmTypeKey'), streets: streetsOn(), streetsAsk: false, streetsOff: !!S.streetsOff, labels: S.labelCount, labelTexts: S.labelTexts.slice(), towers: S.towers.length, popRows: S.pop ? S.pop.rows.length : 0, frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
 window.__tmapProbe = function (line, number) { const r = S.rows.find(x => x.line === line && String(x.number) === String(number)); if (!r) return null; const q = toScreen(r.lat, r.lon); const rect = el('tmCanvas').getBoundingClientRect(); return { x: rect.left + q.x, y: rect.top + q.y, ok: q.x > 0 && q.y > 0 && q.x < S.W && q.y < S.H }; };
 
 // ---------- tower detail card: confirmed vs pending, and the capture flow ----------

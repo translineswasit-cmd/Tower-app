@@ -462,6 +462,7 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" onclick="showPage('form');clearForm();"><span class="icon">➕</span><span class="label">إضافة كشف</span></div>
     <div class="card" id="svcHubCard" onclick="openRecordsHubFeature()"><span class="icon">📚</span><span class="label">السجلات والتقارير</span></div>
     <div class="card" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span></div>
+    <div class="card" id="svcGpsCard" onclick="openGpsFeature()"><span class="icon">📍</span><span class="label">GPS</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span></div>
     <div class="card" onclick="showPage('departures');loadDepartures();"><span class="icon">🚨</span><span class="label">المغادرات</span></div>
     <div class="card" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span></div>
@@ -10375,6 +10376,7 @@ function openDepLogExportModal() { return featRun(['lexp'], () => openDepLogExpo
 // يبقى هنا دائماً: lines-data.js وLINES_INFO، linesInfoCache وloadLinesInfoFromDB وgetLinesInfoData، كاش أبراج الخطوط وgetLineTowers (متزامن)،
 // الجلسة/الصلاحيات، صفحة المعلّقة، أدوات Canvas/PDF المشتركة. كل وحدة هنا: Promise واحد مشترك، تنفيذ مرة واحدة، إعادة المحاولة بعد الفشل.
 function showLinesInfo() { return featRun(['lpg'], () => showLinesInfoImpl(), 'lpg'); }
+function openGpsFeature() { showPage('lines'); return showTowerMap(); }   // N25-R39: بطاقة GPS مستقلة في الخدمات (خريطة الأبراج وموقعي)
 function showTowerMap() { return featRun(['tmap'], (tok) => showTowerMapImpl(tok), 'tmap'); }   // N25-R34
 function towerLocCardMount(ctx) { return featRun(['tmap'], (tok) => towerLocCardImpl(ctx, tok), 'tloc'); }   // N25-R34
 function showLinesStatus() { return featRun(['lpg'], (tok) => showLinesStatusImpl(tok), 'lpg'); }

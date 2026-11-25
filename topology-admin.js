@@ -246,7 +246,7 @@
 
   async function loadLine(line) {
     const my = ++_seq, gen = sessGen();
-    S.line = line; S.prev = null; S.ops = []; S.res = null; S.err = null; S.settings = null; S.typed = ''; S.reason = ''; S.note = ''; S.archive = null; render();
+    S.line = line; S.prev = null; S.ops = []; S.res = null; S.err = null; S.settings = null; S.typed = ''; S.reason = ''; S.note = ''; S.archive = null; S.imp = null; S.completeMode = false; render();
     if (!line) return;
     if (!navigator.onLine) { S.err = msgOf('offline'); render(); return; }
     const r = await csCall('app_topology_preview', { p_line_name: line });
@@ -422,8 +422,9 @@
       (open_ ? '' : ' <span style="color:#718096">' + (gate.reasons || []).map(c => _te(blkText(c))).join(' • ') + '</span>') + '</div>';
     if ((p.blockers || []).length) h += '<div style="margin-top:6px;color:#822727">مانعات الخط: ' + p.blockers.map(x => chip(blkText(x.code) + ' (' + x.count + ')', '#FEEBC8', '#7B341E')).join('') + '</div>';
     h += '</div>';
-    h += '<div style="display:flex;gap:6px;margin:6px 0">' + btn('✏️ التعديل', "topoTab('edit')", S.tab === 'edit' ? 'btn-primary' : 'btn-secondary') + btn('🗄️ الأرشيف (أبراج محذوفة)', 'topoLoadArchive()', S.tab === 'archive' ? 'btn-primary' : 'btn-secondary') + '</div>';
+    h += '<div style="display:flex;gap:6px;margin:6px 0">' + btn('✏️ التعديل', "topoTab('edit')", S.tab === 'edit' ? 'btn-primary' : 'btn-secondary') + btn('🗄️ الأرشيف (أبراج محذوفة)', 'topoLoadArchive()', S.tab === 'archive' ? 'btn-primary' : 'btn-secondary') + (isAdminNow() ? btn('📍 مواقع الخط (استيراد)', "topoTab('loc')", S.tab === 'loc' ? 'btn-primary' : 'btn-secondary') : '') + '</div>';
     if (S.tab === 'archive') { b.innerHTML = h + archiveHtml(); return; }
+    if (S.tab === 'loc') { b.innerHTML = h + locHtml(); return; }
     h += editHtml();
     b.innerHTML = h;
   }
@@ -433,6 +434,7 @@
     const seqOk = TopoPlan.checkSequential(cur);
     let h = '';
     if (!seqOk.ok) h += '<div class="form-card" style="border-right:4px solid #ED8936;color:#7B341E;font-size:0.82rem">⛔ ' + _te(errText(seqOk)) + '</div>';
+    h += completeHtml(cur);
     h += '<div style="max-height:240px;overflow-y:auto;border:1px solid #E2E8F0;border-radius:8px;margin:8px 0"><table style="width:100%;font-size:0.78rem;border-collapse:collapse"><tr style="background:#F7FAFC"><th>إخراج</th><th>الرقم</th><th>النوع</th><th>الهوية</th><th>كشف/معالجة/حراري</th></tr>' +
       cur.map(t => { const k = TopoPlan.keyOf(t), r = retSet.has(k); return '<tr style="border-top:1px solid #EDF2F7;' + (r ? 'background:#FFF5F5;text-decoration:line-through' : '') + '"><td style="text-align:center"><input type="checkbox" ' + (r ? 'checked ' : '') + 'aria-label="إخراج البرج ' + _te(t.num) + '" onchange="topoRetire(' + _te(JSON.stringify(k)) + ')"' + (seqOk.ok ? '' : ' disabled') + '></td><td><strong>' + _te(t.num) + '</strong></td><td>' + _te(t.type) + '</td><td dir="ltr">' + _te(short(t.tower_id)) + '</td><td>' + _te((t.inspections || 0) + ' / ' + (t.treatments || 0) + ' / ' + (t.thermal || 0)) + '</td></tr>'; }).join('') + '</table></div>';
     h += '<div class="form-card" style="margin:8px 0"><div style="font-weight:700;margin-bottom:6px">➕ إدراج أبراج جديدة</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">' +
@@ -460,7 +462,8 @@
     const r = S.res, l = S.local, sm = r.summary || {}, cur = curList(), byKey = new Map(cur.map(t => [TopoPlan.keyOf(t), t]));
     let h = '<div class="form-card" style="margin:8px 0;border-right:4px solid ' + (r.plan_ok ? '#38A169' : '#E53E3E') + '"><div style="font-weight:700">نتيجة المعاينة (قراءة فقط — لم يُغيَّر شيء)</div>';
     h += '<div style="margin:6px 0">' + chip('يبقى ' + (sm.keep || 0), '#EDF2F7', '#2D3748') + chip('يُعاد ترقيمه ' + (sm.renumber || 0), '#BEE3F8', '#2A4365') + chip('جديد ' + (sm.insert || 0), '#C6F6D5', '#22543D') + chip('يُؤرشف ' + (sm.retire || 0), '#FED7D7', '#822727') +
-      (l && l.summary ? chip('العدد بعد التغيير ' + l.summary.final_count, '#FEFCBF', '#744210') : '') + '</div>';
+      (l && l.summary ? chip('العدد بعد التغيير ' + l.summary.final_count, '#FEFCBF', '#744210') : '') + (sm.identities_to_materialise ? chip('هويات تُنشأ من التهيئة ' + sm.identities_to_materialise, '#C6F6D5', '#22543D') : '') + '</div>';
+    if (S.completeMode && r.plan_ok === true) h += '<div style="font-size:0.8rem;color:#22543D;margin:4px 0">إكمال الهويات: الأبراج التي لها هوية تبقى بهويتها وسجلاتها كما هي (' + ((r.mapping || []).filter(m => m.tower_id).length) + ')، والتي بلا هوية (' + (sm.identities_to_materialise || 0) + ') تُنشأ لها هوية جديدة <b>بلا أي سجل قديم</b> — لا يُربط شيء بالتخمين، ولا يتغير أي رقم.' + (S.settings ? ' إعدادات الخط التي ستُحفظ مع الاعتماد: دوائر ' + _te(S.settings.circuit_count) + '، سلاسل ' + _te(S.settings.chain_mode) + ' (مأخوذة من الإعداد الفعلي الحالي في التطبيق).' : '') + '</div>';
     if ((r.errors || []).length) {
       h += '<div style="color:#822727;font-size:0.82rem">' + r.errors.map(e => '• ' + _te(errText(e))).join('<br>') + '</div>';
       if (r.errors.some(e => e.code === 'voltage_unresolved')) h += '<div role="alert" id="topoVoltNote" style="margin-top:6px;padding:8px 10px;border-radius:8px;background:#FFFAF0;border-right:4px solid #DD6B20;font-size:0.8rem;color:#7B341E">ℹ️ الخادم يستنتج جهد الخط من السجل المرجعي أو من لاحقة اسمه («… 132 ك.ف»). هذا الخط مُهيَّأ باسم مجرّد بلا لاحقة، فلا يقبل الخادم إدراج برج جديد عليه الآن — وهذا مستقل عن بوابة التغيير. الإخراج/المعاينة لا يتأثران. لم يُغيَّر شيء.</div>';
@@ -900,6 +903,139 @@
   }
   root.topoSaveFromEditor = saveFromEditor;
   root.topoPendingLineEdit = () => { const p = pendRead(); return p || null; };
+  // ======================================================================= N25-R39: إكمال الهويات + استيراد مواقع الخط (مدير فقط)
+  const isAdminNow = () => !!(typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin');
+  function effectiveSettings(line) {
+    try { return { circuit_count: isDoubleCircuitLine(line) ? 2 : 1, chain_mode: isExcluded132Line(line) ? 'single' : 'double' }; } catch (e) { return null; }
+  }
+  function completeHtml(cur) {
+    const miss = cur.filter(t => !t.tower_id).length;
+    if (!cur.length || !miss) return cur.length ? '<div class="form-card" style="margin:8px 0;font-size:0.8rem;color:#22543D">🪪 كل أبراج الخط (' + cur.length + ') لها هوية دائمة.</div>' : '';
+    return '<div class="form-card" id="topoCompleteCard" style="margin:8px 0;border-right:4px solid #3182CE"><div style="font-weight:700">🪪 إكمال هويات الخط</div><div style="font-size:0.8rem;margin:4px 0">' + (cur.length - miss) + ' برج بهوية دائمة قائمة (تبقى كما هي)، و<b>' + miss + '</b> بلا هوية بعد. تُنشأ الهويات الناقصة من تهيئة الخط فقط (بلا تغيير أي رقم، وبلا ربط أي كشف قديم بالتخمين) عبر مسار الترقيم المعتمد نفسه: معاينة ثم اعتماد ذرّي تحت الأقفال.</div>' +
+      btn('🔍 معاينة إكمال الهويات', 'topoCompletePlan()', 'btn-primary', S.busy) + '</div>';
+  }
+  async function completePlan() {
+    if (!S || S.busy) return;
+    S.ops = []; S.settings = null; S.completeMode = true; S.reason = S.reason || 'إكمال هويات أبراج الخط من التهيئة';
+    await previewPlan();
+    if (S && S.res && (S.res.errors || []).some(e => e.code === 'line_settings_required')) {
+      const st = effectiveSettings(S.line);
+      if (st) { S.settings = st; await previewPlan(); }
+    }
+  }
+
+  const LOC_NOTE = 'يُقرأ الملف على جهازك فقط ولا يُخزَّن في التطبيق. لا يُطابَق أي موقع بالموقع الجغرافي ولا بالنص: كل نقطة تُربط برقم البرج في الملف بهويته الدائمة الحالية. المواقع الميدانية المحفوظة تبقى ولا تُستبدل.';
+  function impReset() { S.imp = { name: '', pts: null, err: '', dry: null, hash: '', busy: false, done: null, verify: null, typed: '' }; }
+  const normName = (x) => String(x == null ? '' : x).replace(/\s+/g, ' ').trim();
+  function impBuild() {
+    // يبني الدفعة من الملف + ترقيم الخادم الحالي. لا شيء يُرسل هنا.
+    const imp = S.imp, cur = curList(), byNum = new Map(cur.map(t => [String(t.num), t]));
+    const seen = new Set(), batch = [], problems = [], noId = [], unknown = [];
+    (imp.pts || []).forEach(pt => {
+      const n = String(pt.tower_number == null ? '' : pt.tower_number).trim(), la = Number(pt.lat), lo = Number(pt.lon);
+      if (!n || !isFinite(la) || !isFinite(lo)) { problems.push('نقطة غير صالحة' + (n ? ' (برج ' + n + ')' : '')); return; }
+      if (seen.has(n)) { problems.push('رقم مكرر في الملف: ' + n); return; }
+      seen.add(n);
+      const t = byNum.get(n);
+      if (!t) { unknown.push(n); return; }
+      if (!t.tower_id) { noId.push(n); return; }
+      batch.push({ tower_id: t.tower_id, lat: la, lon: lo, ref: 'برج ' + n });
+    });
+    const notInFile = cur.filter(t => !seen.has(String(t.num))).map(t => String(t.num));
+    return { batch, problems, noId, unknown, notInFile, total: cur.length, hash: batch.length ? JSON.stringify(batch.map(b => [b.tower_id, b.lat, b.lon])) : '' };
+  }
+  function locHtml() {
+    if (!isAdminNow()) return '<div class="form-card" style="color:#822727">⛔ الاستيراد من صلاحيات المدير فقط.</div>';
+    if (!S.imp) impReset();
+    const imp = S.imp, cur = curList();
+    let h = '<div class="form-card" style="margin:8px 0"><div style="font-weight:700">📍 استيراد مواقع أبراج الخط «' + _te(S.line) + '»</div><div style="font-size:0.78rem;color:#4A5568;margin:4px 0">' + _te(LOC_NOTE) + '</div>';
+    h += '<input type="file" id="topoImpFile" accept=".json,application/json" onchange="topoImpFile(this)" style="margin:6px 0">';
+    if (imp.err) h += '<div role="alert" style="color:#822727;font-size:0.82rem">⚠️ ' + _te(imp.err) + '</div>';
+    if (imp.pts) {
+      const b = impBuild(), miss = cur.filter(t => !t.tower_id).length;
+      h += '<div style="font-size:0.82rem;margin:6px 0">الملف: <b>' + _te(imp.pts.length) + '</b> نقطة • أبراج الخط على الخادم: <b>' + cur.length + '</b> • جاهزة للإرسال: <b>' + b.batch.length + '</b></div>';
+      const bad = [];
+      if (normName(imp.line) !== normName(S.line)) bad.push('اسم الخط في الملف («' + normName(imp.line) + '») يخالف الخط المختار');
+      if (miss) bad.push(miss + ' برج بلا هوية دائمة بعد — أكمل الهويات من تبويب «التعديل» أولاً (لا تُنشأ هوية بالاستيراد)');
+      if (b.noId.length) bad.push('نقاط لأبراج بلا هوية: ' + b.noId.join('، '));
+      if (b.unknown.length) bad.push('أرقام في الملف غير موجودة بين أبراج الخط: ' + b.unknown.join('، '));
+      if (b.problems.length) bad.push(b.problems.join('؛ '));
+      if (b.notInFile.length) bad.push('أبراج الخط بلا نقطة في الملف: ' + b.notInFile.join('، '));
+      if (bad.length) h += '<div style="color:#822727;font-size:0.8rem" id="topoImpBad">' + bad.map(x => '• ' + _te(x)).join('<br>') + '</div>';
+      const okLocal = !bad.length && b.batch.length > 0;
+      h += btn('🔍 معاينة على الخادم (لا كتابة)', 'topoImpPreview()', 'btn-primary', !okLocal || imp.busy || !navigator.onLine);
+      if (imp.dry) {
+        const d = imp.dry, same = imp.hash === b.hash, canGo = okLocal && same && d.ok === true && d.skipped === 0 && d.accepted === b.batch.length;
+        h += '<div class="form-card" id="topoImpDry" style="margin:8px 0;border-right:4px solid ' + (canGo ? '#38A169' : '#ED8936') + '"><div style="font-weight:700">نتيجة المعاينة (لم يُكتب شيء)</div><div>' +
+          chip('مقبولة ' + (d.accepted || 0), '#C6F6D5', '#22543D') + chip('جديدة ' + (d.new || 0), '#BEE3F8', '#2A4365') + chip('تحلّ محل استيراد سابق ' + (d.replaced_import || 0), '#EDF2F7', '#2D3748') + chip('متروكة ' + (d.skipped || 0), (d.skipped ? '#FEEBC8' : '#EDF2F7'), '#7B341E') + '</div>';
+        if ((d.skips || []).length) h += '<div style="font-size:0.78rem;color:#7B341E;margin-top:4px">' + d.skips.map(x => '• ' + _te(x.ref) + ': ' + _te(x.why === 'field_capture_exists' ? 'لها موقع ميداني محفوظ — يبقى ولا يُستبدل' : x.why)).join('<br>') + '</div>';
+        if (!same) h += '<div style="color:#822727;font-size:0.8rem">تغيّر الملف/الترقيم بعد المعاينة — أعد المعاينة.</div>';
+        if (d.skipped && d.skipped > 0 && (d.skips || []).every(x => x.why === 'field_capture_exists')) h += '<div style="font-size:0.78rem;color:#4A5568">المواقع الميدانية تُصان: يُسمح بالاعتماد مع بقائها كما هي (تُحسب ضمن 48 من 48 لأنها مواقع محفوظة).</div>';
+        const fieldOnly = d.ok === true && okLocal && same && d.accepted + d.skipped === b.batch.length && (d.skips || []).every(x => x.why === 'field_capture_exists');
+        imp.canGo = !!fieldOnly;
+        h += '<input id="topoImpTyped" placeholder="اكتب: اعتماد" value="' + _te(imp.typed) + '" oninput="topoImpTyped(this.value)" style="width:100%;padding:8px;border-radius:8px;border:1px solid #ccc;margin:8px 0 4px">' +
+          '<button id="topoImpApply" class="btn btn-primary" onclick="topoImpApply()" ' + (fieldOnly && !imp.busy && imp.typed.trim() === 'اعتماد' ? '' : 'disabled ') + 'style="width:100%">✅ اعتماد الاستيراد</button>';
+        h += '</div>';
+      }
+      if (imp.done) h += '<div class="form-card" id="topoImpDone" style="margin:8px 0;border-right:4px solid #38A169;font-size:0.84rem">✅ اكتمل الاستيراد: كُتبت ' + _te(imp.done.accepted) + ' (جديدة ' + _te(imp.done.new) + '، بدل استيراد سابق ' + _te(imp.done.replaced_import) + ') وتُركت ' + _te(imp.done.skipped) + ' (ميدانية).' +
+        (imp.verify ? '<div style="margin-top:6px"><b id="topoImpVerify">' + _te(imp.verify.with_location) + ' من ' + _te(imp.verify.total) + '</b> نقطة مرقّمة لها موقع على الخادم ' + (imp.verify.with_location === imp.verify.total && imp.verify.total > 0 ? chip('مكتمل', '#C6F6D5', '#22543D') : chip('غير مكتمل', '#FED7D7', '#822727')) + '</div>' : '') + '</div>';
+    }
+    if (imp.busy) h += '<div style="font-size:0.8rem">⏳ جارٍ التنفيذ…</div>';
+    return h + '</div>';
+  }
+  function impFile(inp) {
+    const f = inp && inp.files && inp.files[0]; if (!S) return; impReset();
+    if (!f) { render(); return; }
+    if (f.size > 2000000) { S.imp.err = 'الملف كبير بشكل غير متوقع'; render(); return; }
+    const rd = new FileReader();
+    const gen = sessGen(), line = S.line;
+    rd.onload = () => {
+      if (!S || S.line !== line || !sessOk(gen)) return;
+      try {
+        const o = JSON.parse(String(rd.result));
+        if (!o || !Array.isArray(o.points) || !o.points.length || o.points.length > 1500) throw new Error('bad');
+        S.imp.pts = o.points.map(x => ({ tower_number: x.tower_number, lat: x.lat, lon: x.lon })); S.imp.line = o.line_name; S.imp.name = f.name;   // ref النصي من الملف لا يُحمَّل ولا يُرسل
+      } catch (e) { S.imp.err = 'ملف غير صالح: المتوقع {line_name, points:[{tower_number, lat, lon}]}'; }
+      render();
+    };
+    rd.onerror = () => { if (S) { S.imp.err = 'تعذّرت قراءة الملف'; render(); } };
+    rd.readAsText(f);
+  }
+  async function impPreview() {
+    if (!S || !S.imp || S.imp.busy) return;
+    const b = impBuild(); if (!b.batch.length || b.problems.length || b.noId.length || b.unknown.length) return;
+    S.imp.busy = true; S.imp.dry = null; S.imp.done = null; S.imp.verify = null; S.imp.typed = ''; render();
+    const gen = sessGen(), line = S.line;
+    const r = await csCall('app_tower_location_import', { p_batch: b.batch, p_dry_run: true });
+    if (!S || S.line !== line || !sessOk(gen)) return;
+    S.imp.busy = false;
+    if (!r || r.ok !== true) { S.imp.err = msgOf(r && r.code); render(); return; }
+    S.imp.err = ''; S.imp.dry = r; S.imp.hash = b.hash; render();
+  }
+  async function impApply() {
+    if (!S || !S.imp || S.imp.busy || !S.imp.dry) return;
+    if (S.imp.typed.trim() !== 'اعتماد') { S.imp.err = 'اكتب كلمة «اعتماد» للتأكيد'; render(); return; }
+    const gen = sessGen(), line = S.line;
+    S.imp.busy = true; S.imp.err = ''; render();
+    // الترقيم/الهويات تُقرأ من جديد قبل الكتابة: أي اختلاف عمّا عُوين = لا كتابة
+    const r0 = await csCall('app_topology_preview', { p_line_name: line });
+    if (!S || S.line !== line || !sessOk(gen)) return;
+    if (!r0 || r0.ok !== true) { S.imp.busy = false; S.imp.err = msgOf(r0 && r0.code); render(); return; }
+    S.prev = Object.assign({}, S.prev, { towers: r0.towers, topology_rev: r0.topology_rev });
+    const b = impBuild();
+    if (!b.batch.length || b.hash !== S.imp.hash || b.noId.length || b.unknown.length || b.problems.length) { S.imp.busy = false; S.imp.dry = null; S.imp.err = 'تغيّر ترقيم/هويات الخط منذ المعاينة — أعد المعاينة. لم يُكتب شيء.'; render(); return; }
+    const r = await csCall('app_tower_location_import', { p_batch: b.batch, p_dry_run: false });
+    if (!S || S.line !== line || !sessOk(gen)) return;
+    if (!r || r.ok !== true) { S.imp.busy = false; S.imp.err = msgOf(r && r.code) + ' — يمكنك إعادة المحاولة بأمان (الاستيراد لا يكرّر ولا يستبدل المواقع الميدانية).'; render(); return; }
+    S.imp.done = r;
+    let ver = null;
+    try { const v = await csCall('app_tower_locations', { p_line_names: [line] }, { timeout: 40000 }); if (v && v.ok === true && Array.isArray(v.lines)) { const l = v.lines.find(x => normName(x.line_name) === normName(line)); if (l) ver = { total: Number(l.total), with_location: Number(l.with_location) }; } } catch (e) {}
+    if (!S || S.line !== line || !sessOk(gen)) return;
+    S.imp.busy = false; S.imp.verify = ver; S.imp.dry = null; render();
+  }
+  root.topoCompletePlan = completePlan;
+  root.topoImpFile = impFile; root.topoImpPreview = impPreview; root.topoImpApply = impApply;
+  root.topoImpTyped = (v) => { if (S && S.imp) { S.imp.typed = v; const bt = document.getElementById('topoImpApply'); if (bt) bt.disabled = S.imp.busy || !S.imp.canGo || String(v).trim() !== 'اعتماد'; } };
   // ======================================================================= ربط الواجهة العامة
   root.topoOpenImpl = openTopo;
   root.topoSpecOpenImpl = openSpec;
