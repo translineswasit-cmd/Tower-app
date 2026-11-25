@@ -30,47 +30,50 @@ const SRC_AR = { field_capture: 'التقاط ميداني', kmz_import: 'مست
 
 // ---------- local cache (IndexedDB, per account) ----------
 let _db = null;
-function idb() {
-  if (_db) return _db;
-  _db = new Promise((resolve) => {
+function idb(fresh) {   // N25-R42: اتصال IndexedDB يُعاد فتحه عند سقوطه (iOS يغلقه بعد الخلفية) بدل بقاء وعد قديم يُرجع null
+  if (_db && !fresh) return _db;
+  const pr = new Promise((resolve) => {
     try {
       const rq = indexedDB.open('tower_map_cache', 1);
       rq.onupgradeneeded = () => { rq.result.createObjectStore('lines', { keyPath: 'k' }); };
-      rq.onsuccess = () => resolve(rq.result);
-      rq.onerror = () => resolve(null); rq.onblocked = () => resolve(null);
-    } catch (e) { resolve(null); }
+      rq.onsuccess = () => { const d = rq.result; d.onclose = () => { if (_db === pr) _db = null; }; d.onversionchange = () => { try { d.close(); } catch (e) {} if (_db === pr) _db = null; }; resolve(d); };
+      rq.onerror = () => { if (_db === pr) _db = null; resolve(null); }; rq.onblocked = () => { if (_db === pr) _db = null; resolve(null); };
+    } catch (e) { if (_db === pr) _db = null; resolve(null); }
   });
-  return _db;
+  _db = pr; return pr;
 }
-async function cacheAll(uid) {
-  const db = await idb(); if (!db || !uid) return new Map();
-  return new Promise((resolve) => {
-    try {
-      const out = new Map(), rq = db.transaction('lines', 'readonly').objectStore('lines').openCursor();
-      rq.onsuccess = () => { const c = rq.result; if (!c) return resolve(out); if (c.value && c.value.uid === uid && c.value.key !== '__ref__') out.set(c.value.key, c.value); c.continue(); };
-      rq.onerror = () => resolve(out);
-    } catch (e) { resolve(new Map()); }
-  });
+const txDone = (tx) => new Promise((res, rej) => { tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error || new Error('tx')); tx.onabort = () => rej(tx.error || new Error('abort')); });
+async function dbRun(fn) {   // محاولتان: الاتصال الحالي ثم اتصال جديد؛ يرجع undefined عند الفشل ويسجّل السبب في S.dbErr
+  let last = null;
+  for (let i = 0; i < 2; i++) { const db = await idb(i > 0); if (!db) { last = new Error('nodb'); continue; } try { return await fn(db); } catch (e) { last = e; _db = null; } }
+  try { S.dbErr = String(last && (last.message || last.name) || 'db'); } catch (e) {}
+  return undefined;
 }
-async function cachePut(uid, entries) {
-  const db = await idb(); if (!db || !uid || !entries.length) return false;
-  return new Promise((resolve) => {
-    try {
-      const tx = db.transaction('lines', 'readwrite'), st = tx.objectStore('lines');
-      entries.forEach(e => st.put(Object.assign({ k: uid + '|' + e.key, uid }, e)));
-      tx.oncomplete = () => resolve(true); tx.onerror = () => resolve(false); tx.onabort = () => resolve(false);
-    } catch (e) { resolve(false); }
-  });
+const DLP = '__dl__|', dlKey = (k) => DLP + k;
+function scanAll(uid, fresh) {
+  return dbRun((db) => new Promise((res, rej) => {
+    const out = [], rq = db.transaction('lines', 'readonly').objectStore('lines').openCursor();
+    rq.onsuccess = () => { const c = rq.result; if (!c) return res(out); if (c.value && c.value.uid === uid && c.value.key !== '__ref__') out.push(c.value); c.continue(); };
+    rq.onerror = () => rej(rq.error);
+  }));
 }
-
+async function cacheAll(uid) { const out = new Map(); if (!uid) return out; const all = await scanAll(uid); (all || []).forEach(v => { if (String(v.key).indexOf(DLP) !== 0) out.set(v.key, v); }); return out; }
+async function dlAll(uid) { const out = new Map(); if (!uid) return out; const all = await scanAll(uid); (all || []).forEach(v => { if (String(v.key).indexOf(DLP) === 0) out.set(String(v.key).slice(DLP.length), v); }); return out; }
+async function cachePut(uid, entries) {   // true فقط بعد اكتمال المعاملة (oncomplete) = مكتوب فعلاً
+  if (!uid || !entries.length) return false;
+  const r = await dbRun((db) => { const tx = db.transaction('lines', 'readwrite'), st = tx.objectStore('lines'); entries.forEach(e => st.put(Object.assign({}, e, { k: uid + '|' + e.key, uid }))); return txDone(tx); });
+  return r === true;
+}
 async function cacheDel(uid, keys) {
-  const db = await idb(); if (!db || !uid || !keys.length) return false;
-  return new Promise((resolve) => { try { const tx = db.transaction('lines', 'readwrite'), st = tx.objectStore('lines'); keys.forEach(k => st.delete(uid + '|' + k)); tx.oncomplete = () => resolve(true); tx.onerror = () => resolve(false); tx.onabort = () => resolve(false); } catch (e) { resolve(false); } });
+  if (!uid || !keys.length) return false;
+  const r = await dbRun((db) => { const tx = db.transaction('lines', 'readwrite'), st = tx.objectStore('lines'); keys.forEach(k => st.delete(uid + '|' + k)); return txDone(tx); });
+  return r === true;
 }
 
 async function refCacheGet(uid) {
-  const db = await idb(); if (!db || !uid) return null;
-  return new Promise((resolve) => { try { const rq = db.transaction('lines', 'readonly').objectStore('lines').get(uid + '|__ref__'); rq.onsuccess = () => resolve(rq.result || null); rq.onerror = () => resolve(null); } catch (e) { resolve(null); } });
+  if (!uid) return null;
+  const r = await dbRun((db) => new Promise((res, rej) => { const rq = db.transaction('lines', 'readonly').objectStore('lines').get(uid + '|__ref__'); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => rej(rq.error); }));
+  return r || null;
 }
 // ---------- state ----------
 const S = { open: false, mode: 'single', sel: [], rows: [], info: { source: null, at: null, missing: [], total: 0, withLoc: 0 }, user: null, locMsg: '', bg: false, streetsOff: false, frameUser: false, ref: { on: {}, data: null, at: null, src: null, err: '' }, seq: 0, locTok: 0, typeMemo: new Map(), streets: null, streetsAsk: false, towers: [], towerById: new Map(), labelCount: 0, labelTexts: [], view: { lat: 32.5, lon: 45.8, z: 8 }, drawn: [], pop: null, loading: false, uid: null, gen: null, tiles: new Map(), raf: 0, nearest: [], hl: null, pend: [] };
@@ -94,10 +97,11 @@ function rowType(r) {   // {v132, code|null, why}
   if (S.cfgRef !== lineTowersCache) { S.typeMemo = new Map(); S.cfgRef = lineTowersCache; }   // تكوين الخطوط استُبدل (تحديث من الخادم): تُعاد حسابات الأنواع
   const k = String(r.id) + '|' + r.line + '|' + r.number, m = S.typeMemo.get(k); if (m) return m;
   let o;
-  if (!is132(r.line)) o = { v132: false };
+  if (!is132(r.line) && r.v132 !== true) o = { v132: false };
   else {
     let sn = null; try { sn = csIdentSnap(r.line, String(r.number), { mapOnly: true }); } catch (e) { sn = null; }
-    if (!sn || sn.blocked || sn.tower_id == null || String(sn.tower_id) !== String(r.id)) o = { v132: true, code: null, why: 'تعذّر إثبات مطابقة سجل البرج لهوية النقطة' };
+    if (!sn && r.v132 === true && r.tc && TYPE_META[r.tc]) o = { v132: true, code: r.tc, snap: true };   // N25-R42: خريطة الهويات غير محمّلة (بعد إعادة فتح التطبيق بلا إنترنت): النوع المؤكَّد وقت «تنزيل نقاط الخط» لنفس هوية النقطة
+    else if (!sn || sn.blocked || sn.tower_id == null || String(sn.tower_id) !== String(r.id)) o = { v132: true, code: null, why: 'تعذّر إثبات مطابقة سجل البرج لهوية النقطة' };
     else {
       let ent = null; try { ent = (getLineTowers(r.line) || []).find(t => String(t.num) === String(r.number)) || null; } catch (e) { ent = null; }
       let code = ent ? String(ent.type_code || '').trim().toUpperCase() : '';   // الرمز له الأولوية (K يغلب وصف «عبور أسفل الخط»)
@@ -117,7 +121,7 @@ const STREETS_KEY = 'tmap_streets_off';
 function streetsPref() { try { return localStorage.getItem(STREETS_KEY) === '1'; } catch (e) { return false; } }   // N25-R39: تفضيل الجهاز فقط (إيقاف الشوارع)؛ الافتراضي: ظاهرة
 function bgAllowed() { return navigator.onLine !== false && !S.streetsOff; }   // N25-R39: الشوارع تلقائية (بلاطات OpenStreetMap) ما لم يوقفها المستخدم؛ لا تتوقف بسبب اشتقاق الإطار من الموقع
 function streetsOn() { return bgAllowed(); }
-function bgNote() { const n = el('tmBgNote'); if (n) n.textContent = S.streetsOff ? 'الشوارع موقوفة على هذا الجهاز (لا طلبات خارجية).' : (navigator.onLine === false ? 'الشوارع تحتاج اتصالاً — الأبراج تعمل بدونه.' : '🗺️ الشوارع من OpenStreetMap (طرف خارجي): مزوّد البلاطات يرى المنطقة المعروضة وعنوان اتصال جهازك، ولا يستلم موقعك الدقيق ولا أي بيانات أبراج. يمكنك إيقافها.'); const c = el('tmBg'); if (c) c.checked = !S.streetsOff; const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
+function bgNote() { const n = el('tmBgNote'); if (n) n.textContent = localOn() ? '🗺️ خلفية الخريطة من الحزمة المحفوظة على جهازك (OpenStreetMap — ODbL): بلا أي طلب خارجي، وتعمل بدون إنترنت. خارج حدودها تعود بلاطات OSM عند الاتصال.' : S.streetsOff ? 'الشوارع موقوفة على هذا الجهاز (لا طلبات خارجية).' : (navigator.onLine === false ? 'الشوارع تحتاج اتصالاً — الأبراج تعمل بدونه.' : '🗺️ الشوارع من OpenStreetMap (طرف خارجي): مزوّد البلاطات يرى المنطقة المعروضة وعنوان اتصال جهازك، ولا يستلم موقعك الدقيق ولا أي بيانات أبراج. يمكنك إيقافها.'); const c = el('tmBg'); if (c) c.checked = !S.streetsOff; const o = el('tmOsm'); if (o) o.style.display = (localOn() || bgAllowed()) ? '' : 'none'; }
 function frameFromUser() { S.frameUser = true; }   // يبقى للإشارة فقط (لا يوقف الشوارع بعد R39)
 function frameIndependent() { S.frameUser = false; }
 function setStreets(on) { S.streetsOff = !on; try { localStorage.setItem(STREETS_KEY, on ? '0' : '1'); } catch (e) {} if (!on) S.tiles = new Map(); bgNote(); requestDraw(); }
@@ -135,8 +139,12 @@ function draw() {
   const cv = el('tmCanvas'); if (!cv || !S.W) return;
   const ctx = cv.getContext('2d'), dpr = S.dpr || 1, W = S.W, H = S.H, z = S.view.z;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#e9eef3'; ctx.fillRect(0, 0, W, H);
+  // N25-R42: خريطة واسط المحلية (PMTiles على الجهاز) إن كانت منزّلة: تُرسم بلا أي طلب شبكة؛ خارج حدودها يعود الرسم لبلاطات OSM (إن سُمح واتصل) وإلا شبكة فارغة
+  let localDrawn = false;
+  if (localOn()) { ctx.strokeStyle = '#d5dde5'; ctx.lineWidth = 1; for (let gx = 0; gx < W; gx += 80) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); } for (let gy = 0; gy < H; gy += 80) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); } try { localDrawn = drawLocal(ctx, W, H, z); } catch (e) { localDrawn = false; S.omDraw = { err: String(e && e.message || e) }; } }
+  S.omActive = localDrawn;
   // background tiles (optional; needs internet — failure never blocks the towers)
-  if (bgAllowed()) {
+  if (localDrawn) { /* الخلفية محلية */ } else if (bgAllowed()) {
     const tz = Math.max(0, Math.min(19, Math.round(z))), sc = Math.pow(2, z - tz), cx = lonToX(S.view.lon, tz), cy = latToY(S.view.lat, tz), n = Math.pow(2, tz);
     const x0 = Math.floor((cx - W / 2 / sc) / TS), x1 = Math.floor((cx + W / 2 / sc) / TS), y0 = Math.floor((cy - H / 2 / sc) / TS), y1 = Math.floor((cy + H / 2 / sc) / TS);
     if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 36) for (let tx = x0; tx <= x1; tx++) for (let ty = y0; ty <= y1; ty++) {
@@ -148,7 +156,7 @@ function draw() {
   // towers (visible only), clustered below CLUSTER_Z
   const vis = []; const cxw = lonToX(S.view.lon, z), cyw = latToY(S.view.lat, z);
   for (let i = 0; i < S.towers.length; i++) { const t = S.towers[i], r = t.r, x = W / 2 + lonToX(r.lon, z) - cxw, y = H / 2 + latToY(r.lat, z) - cyw; if (x > -20 && x < W + 20 && y > -20 && y < H + 20) vis.push({ r, x, y }); }
-  S.visCount = vis.length; { const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
+  S.visCount = vis.length; { const o = el('tmOsm'); if (o) { const cu = OM() && OM().state().cur; o.style.display = (localDrawn || bgAllowed()) ? '' : 'none'; o.textContent = localDrawn ? (cu && cu.synthetic ? 'بيانات اختبار اصطناعية' : '© مساهمو OpenStreetMap (ODbL) — خريطة محلية') : '© OpenStreetMap'; } }
   const cluster = z < CLUSTER_Z && vis.length > 60;
   if (cluster) {
     const cells = new Map();
@@ -356,7 +364,7 @@ async function loadData() {
   const my = ++S.seq, uid = uidNow(), lines = selectedLines(); S.uid = uid;
   if (lines && !lines.length) { S.rows = []; deriveTowers(); S.pend = []; S.info = { source: null, at: null, missing: [], total: 0, withLoc: 0, empty: true }; paint(); return; }
   S.loading = true; paint();
-  const cache = await cacheAll(uid);
+  const cache = await cacheAll(uid), dls = await dlAll(uid);   // N25-R42: نسخة «تنزيل نقاط الخط» المؤكَّدة منفصلة عن كاش القراءة
   let byLine = new Map(), info = { source: 'cache', at: null, missing: [], total: 0, withLoc: 0 };
   const wanted = lines ? lines.map(l => ({ name: l, key: lineKey(l) })) : null;
   let fresh = null;
@@ -373,10 +381,13 @@ async function loadData() {
     const puts = []; groups.forEach((rows, k) => { const l = sum.get(k), w = wanted && wanted.find(x => x.key === k); puts.push({ key: k, line: rows.length ? rows[0].line : (l ? l.line_name : (w ? w.name : k)), at: now, rows, total: l ? l.total : 0, rev: l ? l.topology_rev : null }); });
     const gone = wanted ? [] : Array.from(cache.keys()).filter(k => !groups.has(k));
     cachePut(uid, puts).catch(() => {}); if (gone.length) { cacheDel(uid, gone).catch(() => {}); gone.forEach(k => cache.delete(k)); }
+    dlSyncFresh(uid, puts, gone, dls).then(async () => { if (uid === uidNow()) { S.dlInfo = await dlAll(uid); if (S.open) paintOff(); } });
     try { tlocConfClear(c => !lines || lines.some(l => sameLine(l, c.line))); } catch (e) {}   // النسخ المؤكَّدة محلياً لهذا النطاق لا تُبقي برجاً غاب عن الخادم
     puts.forEach(p => cache.set(p.key, Object.assign({ uid }, p)));
     info = { source: 'server', at: now, missing: [], total: 0, withLoc: 0 };
   }
+  if (!fresh) dls.forEach((v, k) => { const c = cache.get(k); if (dlOk(v) && (!c || (v.at || 0) >= (c.at || 0))) cache.set(k, v); });   // دون اتصال: الأحدث من (كاش القراءة، النسخة المنزّلة السليمة)
+  S.dlInfo = dls;
   const useKeys = wanted ? wanted.map(w => w.key) : Array.from(cache.keys());
   let oldest = null;
   useKeys.forEach(k => { const ent = cache.get(k) || (wanted && !fresh ? Array.from(cache.values()).find(v => sameLine(v.line, wanted.find(w => w.key === k).name)) : null); if (!ent) { info.missing.push(wanted ? wanted.find(w => w.key === k).name : k); return; } byLine.set(k, ent); if (ent.at && (oldest == null || ent.at < oldest)) oldest = ent.at; });
@@ -392,7 +403,7 @@ async function loadData() {
   info.total = total; info.withLoc = rows.length;
   S.colorIdx = new Map(); Array.from(new Set(rows.map(r => lineKey(r.line)))).sort().forEach((k, i) => S.colorIdx.set(k, i));
   S.rows = rows; deriveTowers(); S.typeMemo = new Map(); S.info = info; S.loading = false;
-  try { const g0 = S.gen, t0 = S.locTok; Array.from(new Set(rows.map(r => r.line))).filter(is132).forEach(l => { if (navigator.onLine !== false && typeof csLineIdentLoad === 'function') Promise.resolve(csLineIdentLoad(l)).then(() => { if (S.open && g0 === S.gen && t0 === S.locTok) { S.typeMemo = new Map(); requestDraw(); paintLegend(); } }).catch(() => {}); }); } catch (e) {}
+  try { const g0 = S.gen, t0 = S.locTok; Array.from(new Set(rows.map(r => r.line))).filter(is132).forEach(l => { if (navigator.onLine !== false && typeof csLineIdentLoad === 'function') Promise.resolve(csLineIdentLoad(l)).then(() => { dlResnap(uidNow()); if (S.open && g0 === S.gen && t0 === S.locTok) { S.typeMemo = new Map(); requestDraw(); paintLegend(); } }).catch(() => {}); }); } catch (e) {}
   pendingOverlay();
   const sig = S.mode + '|' + (lines ? lines.join('\u0001') : '*');
   if (S.fitSig !== sig && rows.length) { S.fitSig = sig; if (S.W) { fitBounds(rows, 40); frameIndependent(); } }
@@ -467,7 +478,7 @@ async function refLoad() {
   }
   if (S.refSeq !== my || uid !== uidNow()) return;
   if (fresh) { S.ref.data = fresh.lines; S.ref.at = Date.now(); S.ref.src = 'server';
-    const db = await idb(); if (db && uid) { try { db.transaction('lines', 'readwrite').objectStore('lines').put({ k: uid + '|__ref__', uid, key: '__ref__', data: fresh.lines, at: S.ref.at }); } catch (e) {} } }
+    if (uid) await dbRun((db) => { const tx = db.transaction('lines', 'readwrite'); tx.objectStore('lines').put({ k: uid + '|__ref__', uid, key: '__ref__', data: fresh.lines, at: S.ref.at }); return txDone(tx); }); }
   else { const c = await refCacheGet(uid); if (S.refSeq !== my || uid !== uidNow()) return; if (c && c.data) { S.ref.data = c.data; S.ref.at = c.at; S.ref.src = 'cache'; } else { S.ref.data = S.ref.data || null; S.ref.src = null; } }
   // خط مرجعي غاب عن الردّ الكامل لا يبقى مفعّلاً
   if (S.ref.data) Object.keys(S.ref.on).forEach(k => { if (!S.ref.data.some(l => l.ref_key === k)) delete S.ref.on[k]; });
@@ -482,6 +493,156 @@ function refPaint() {
   requestDraw();
 }
 
+// ---------- N25-R42: «تنزيل نقاط الخط» (نسخة مؤكَّدة لكل حساب) ----------
+function rowSum(rows) { const s = rows.map(r => [r.id, r.line, r.number, r.lat, r.lon, r.tc || '', r.fill || ''].join('|')).sort().join('\n'); let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return rows.length + ':' + h.toString(16); }
+function mkDl(k, line, rows, now, total, rev) { return { key: dlKey(k), line, at: now, rows, total: total || 0, rev: rev == null ? null : rev, dl: { at: now, n: rows.length, sum: rowSum(rows), v: 2, lk: k } }; }
+function dlOk(ent) { try { return !!(ent && ent.dl && ent.dl.v === 2 && Array.isArray(ent.rows) && ent.rows.length === ent.dl.n && ent.rows.length > 0 && rowSum(ent.rows) === ent.dl.sum); } catch (e) { return false; } }
+function dlIdxKey(uid) { return 'tmap_dl_idx_' + uid; }
+function dlIdxSet(uid, map) { try { const o = {}; map.forEach((v, k) => { o[k] = { line: v.line, n: v.dl.n, at: v.dl.at }; }); localStorage.setItem(dlIdxKey(uid), JSON.stringify(o)); } catch (e) {} }
+function snapRow(x, idx) {   // النوع واللون كما يُرسمان الآن (النوع فقط إن ثبتت هوية البرج بخريطة الخط الحيّة)
+  const tt = rowType(x); x.v132 = !!tt.v132; x.tc = tt.v132 && tt.code ? tt.code : null;
+  x.fill = !tt.v132 ? COLORS[idx % COLORS.length] : (tt.code ? TYPE_META[tt.code].c : NEUTRAL_C); return x;
+}
+function dlMsg(t, bad) { S.dlMsg = t ? { t, bad: !!bad } : null; paintOff(); }
+function dlErr(e) { const m = String(e && e.message || e || ''); return m === 'verify' ? 'فشل التحقق بعد الكتابة' : m === 'incomplete' ? 'لم يكتمل ردّ الخادم' : m === 'write' ? 'تعذّرت الكتابة على الجهاز' : m === 'empty' ? 'لا نقاط بإحداثيات محفوظة لهذا الخط' : (m || 'خطأ'); }
+async function dlGo() {
+  const uid = uidNow(), lines = selectedLines();
+  if (!uid) return dlMsg('سجّل الدخول أولاً', true);
+  if (S.dlBusy) return;
+  if (!lines || !lines.length) return dlMsg('اختر خطاً (أو عدة خطوط) أولاً — لا يُنزَّل «كل الخطوط» دفعة واحدة', true);
+  if (navigator.onLine === false || typeof CS_AUTH === 'undefined' || !CS_AUTH.token || typeof csCall !== 'function') return dlMsg('تنزيل النقاط يحتاج اتصالاً بالإنترنت وتسجيل دخول', true);
+  const gen = S.gen, stale = () => !S.open || gen !== S.gen || uid !== uidNow();
+  S.dlBusy = true; dlMsg('⏳ جاري تنزيل نقاط ' + lines.length + ' خط…');
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+  const done = [], failed = [];
+  try {
+    let r = null; try { r = await csCall('app_tower_locations', { p_line_names: lines }, { timeout: 40000 }); } catch (e) { r = null; }
+    if (!(r && r.ok === true && r.complete === true && Array.isArray(r.rows))) throw new Error('incomplete');
+    if (stale()) return;
+    const keys = lines.map(l => lineKey(l)), groups = new Map(keys.map(k => [k, []])), sum = new Map();
+    (r.lines || []).forEach(l => sum.set(lineKey(l.line_name), l));
+    r.rows.forEach(a => { const x = rowOf(a), k = lineKey(x.line); if (groups.has(k)) groups.get(k).push(x); });
+    for (const l of Array.from(new Set(r.rows.map(a => a[1]))).filter(is132)) { try { await csLineIdentLoad(l); } catch (e) {} }
+    if (stale()) return;
+    S.typeMemo = new Map(); const order = keys.slice().sort(); const dls0 = await dlAll(uid), now = Date.now();
+    for (let i = 0; i < lines.length; i++) {
+      const k = keys[i], rows = groups.get(k), line = rows.length ? rows[0].line : lines[i];
+      if (!rows.length) { failed.push({ line, why: dlErr('empty') }); continue; }
+      rows.forEach(x => snapRow(x, order.indexOf(k)));
+      const l = sum.get(k), ent = mkDl(k, line, rows, now, l ? l.total : 0, l ? l.topology_rev : null), prev = dls0.get(k) || null;
+      const okW = await cachePut(uid, [ent]);
+      let back = null; if (okW) { const m = await dlAll(uid); back = m.get(k) || null; }   // قراءة تحقق من المخزن بعد اكتمال الكتابة
+      const ok = !!(okW && back && dlOk(back) && back.dl.sum === ent.dl.sum && back.dl.n === rows.length);
+      if (!ok) { if (prev) await cachePut(uid, [prev]); else await cacheDel(uid, [dlKey(k)]); failed.push({ line, why: dlErr(okW ? 'verify' : 'write') }); continue; }
+      await cachePut(uid, [{ key: k, line, at: now, rows: rows.map(x => Object.assign({}, x)), total: l ? l.total : 0, rev: l ? l.topology_rev : null }]);
+      done.push({ line, n: rows.length, at: now });
+    }
+  } catch (e) { failed.push({ line: '', why: dlErr(e) }); }
+  finally { S.dlBusy = false; }
+  if (stale()) return;
+  S.dlInfo = await dlAll(uid); dlIdxSet(uid, new Map(Array.from(S.dlInfo).filter(([k, v]) => dlOk(v))));
+  dlMsg((done.length ? '✅ تم تنزيل نقاط ' + done.map(d => d.line + ' (' + d.n + ')').join('، ') + ' وتأكّدت قراءتها من الجهاز.' : '') + (failed.length ? (done.length ? '<br>' : '') + '❌ ' + failed.map(f => (f.line ? f.line + ': ' : '') + f.why).join('، ') + ' — النسخة السابقة (إن وُجدت) بقيت كما هي.' : ''), !done.length);
+  if (done.length) loadData();
+}
+async function dlRemove() {
+  const uid = uidNow(), lines = selectedLines(); if (!uid || !lines || !lines.length || S.dlBusy) return;
+  const ks = lines.map(lineKey); const ok = await cacheDel(uid, ks.map(dlKey)); S.dlInfo = await dlAll(uid); dlIdxSet(uid, new Map(Array.from(S.dlInfo).filter(([k, v]) => dlOk(v))));
+  dlMsg(ok ? 'حُذفت نسخة النقاط المحفوظة لهذا الاختيار من هذا الجهاز (الخادم لم يتأثر).' : 'تعذّر الحذف من مخزن الجهاز', !ok); loadData();
+}
+function dlSyncFresh(uid, puts, goneKeys, dls) {   // ردّ كامل من الخادم: يُحدَّث نطاق «النقاط المنزّلة» نفسه (لا تبقى نقاط محذوفة/مُعاد ترقيمها)
+  return (async () => {
+    const dput = [], ddel = [];
+    puts.forEach(p => { const d = dls.get(p.key); if (!d) return; if (!p.rows.length) { ddel.push(dlKey(p.key)); return; } const old = new Map((d.rows || []).map(x => [String(x.id) + '|' + x.number + '|' + x.line, x]));
+      const rows = p.rows.map(x => { const o = old.get(String(x.id) + '|' + x.number + '|' + x.line); const y = Object.assign({}, x); if (o && o.v132 !== undefined) { y.v132 = o.v132; y.tc = o.tc; y.fill = o.fill; } return y; });
+      dput.push(mkDl(p.key, p.line, rows, p.at, p.total, p.rev)); });
+    goneKeys.forEach(k => { if (dls.has(k)) ddel.push(dlKey(k)); });
+    if (dput.length) await cachePut(uid, dput); if (ddel.length) await cacheDel(uid, ddel);
+  })().catch(() => {});
+}
+async function dlResnap(uid) {   // بعد تحميل خرائط الهوية الحيّة: يُثبَّت نوع/لون النقاط المنزّلة (يُحدَّث فقط إن تغيّر)
+  try {
+    const dls = await dlAll(uid), puts = [];
+    dls.forEach((d, k) => { let ch = false; const idx = 0; const rows = (d.rows || []).map(x => { const y = Object.assign({}, x); const tt = rowType(y); if (tt.v132 && !tt.snap) { const tc = tt.code || null, fill = tt.code ? TYPE_META[tt.code].c : NEUTRAL_C; if (y.tc !== tc || y.fill !== fill || y.v132 !== true) { y.v132 = true; y.tc = tc; y.fill = fill; ch = true; } } return y; }); if (ch) puts.push(mkDl(k, d.line, rows, d.at, d.total, d.rev)); });
+    if (puts.length) { puts.forEach(e => { const o = dls.get(e.dl.lk); if (o) e.dl.at = (o.dl && o.dl.at) || e.dl.at; }); await cachePut(uid, puts); }
+  } catch (e) {}
+}
+
+// ---------- N25-R42: خريطة واسط المحلية (رسم + واجهة) ----------
+const OM = () => window.OfflineMap || null;
+function localOn() { const o = OM(); return !!(o && !S.streetsOff && o.ready()); }
+function drawLocal(ctx, W, H, z) {
+  const o = OM(), cur = o.state().cur; if (!cur) return false;
+  const tz = Math.max(cur.minzoom, Math.min(cur.maxzoom, Math.round(z))), sc = Math.pow(2, z - tz), n = Math.pow(2, tz), size = TS * sc;
+  const cx = lonToX(S.view.lon, tz), cy = latToY(S.view.lat, tz);
+  const tx0 = Math.floor((cx - W / 2 / sc) / TS), tx1 = Math.floor((cx + W / 2 / sc) / TS), ty0 = Math.floor((cy - H / 2 / sc) / TS), ty1 = Math.floor((cy + H / 2 / sc) / TS);
+  const st = { tz, tiles: 0, loading: 0, outside: 0, empty: 0, labels: 0, labelTexts: [] };
+  if ((tx1 - tx0 + 1) * (ty1 - ty0 + 1) > 80) { S.omDraw = st; return false; }
+  const labels = [], inside = [];
+  for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
+    if (ty < 0 || ty >= n) continue; const wx = ((tx % n) + n) % n;
+    if (!o.tileInside(tz, wx, ty)) { st.outside++; continue; }
+    const ox = W / 2 + (tx * TS - cx) * sc, oy = H / 2 + (ty * TS - cy) * sc; inside.push({ tx: wx, ty, ox, oy });
+  }
+  if (!inside.length) { S.omDraw = st; return false; }
+  inside.forEach(t => { ctx.fillStyle = '#f3f0ea'; ctx.fillRect(t.ox, t.oy, size + 0.6, size + 0.6); });
+  inside.forEach(t => { const L = o.tileGet(tz, t.tx, t.ty, requestDraw); if (L === undefined) { st.loading++; return; } if (L === null) { st.empty++; return; } try { o.drawTile(ctx, L, t.ox, t.oy, size, z, labels); st.tiles++; } catch (e) { st.err = String(e && e.message || e); } });
+  const r = o.drawLabels(ctx, labels, W, H, z); st.labels = r.shown; st.labelTexts = r.texts.slice(0, 300); S.omDraw = st; return true;
+}
+const MB = (b) => (b / 1048576).toFixed(b > 10485760 ? 0 : 1) + ' م.ب';
+function omErr(e) { const m = String(e || ''); return /no_space/.test(m) ? 'مساحة التخزين على الجهاز لا تكفي' : /http_404/.test(m) ? 'ملف الخريطة غير منشور على الخادم بعد' : /sha_mismatch/.test(m) ? 'فشل فحص سلامة الملف (SHA-256)' : /size_mismatch|header_size/.test(m) ? 'حجم الملف لا يطابق المتوقع (تنزيل ناقص)' : /not_pmtiles|not_mvt/.test(m) ? 'الملف ليس حزمة خريطة PMTiles صالحة' : /Failed to fetch|NetworkError|Load failed|network/i.test(m) ? 'انقطع الاتصال' : /cancelled/.test(m) ? 'أُلغي' : /manifest/.test(m) ? 'تعذّر قراءة بيان الخريطة' : m; }
+function paintOff() {
+  const o = OM(); const a = el('tmOmStatus'); if (!a || !o) return;
+  const st = o.state(), cur = st.cur, job = st.job; let h = '';
+  const busy = !!(job && job.phase === 'downloading');
+  if (busy) { const pct = job.total ? Math.floor(job.done / job.total * 100) : 0; h = job.label === 'manifest' ? '⏳ تجهيز التنزيل…' : '⏳ جاري التنزيل ' + pct + '% — ' + MB(job.done) + ' من ' + MB(job.total); const bar = el('tmOmBar'); if (bar) { bar.value = pct; } }
+  else {
+    if (cur) h = '✅ <b>خريطة واسط جاهزة بدون إنترنت</b> — ' + MB(cur.bytes) + ' · محفوظة ' + fmtTime(cur.installedAt) + (cur.version ? ' · الإصدار ' + esc(cur.version) : '') + ' · تكبير ' + cur.minzoom + '–' + cur.maxzoom + (cur.synthetic ? '<br><b style="color:#c0392b">⚠️ حزمة اختبار اصطناعية — ليست بيانات OpenStreetMap الحقيقية</b>' : '');
+    else h = 'خريطة واسط غير منزّلة على هذا الجهاز' + (S.omMan ? ' — حجم التنزيل ' + MB(S.omMan.bytes) : '') + '. التنزيل اختياري ومنفصل عن التطبيق.';
+    if (job && job.phase === 'failed') h += '<br><span style="color:#c0392b">❌ فشل التنزيل: ' + esc(omErr(job.err)) + (cur ? ' — النسخة السابقة سليمة وما زالت مستعملة' : '') + '</span>';
+    if (job && job.phase === 'cancelled') h += '<br><span style="color:#B7791F">⏹ أُلغي التنزيل' + (cur ? ' — النسخة السابقة باقية' : '') + '</span>';
+    if (job && job.phase === 'done') h += '<br><span style="color:#1e8449">اكتمل التنزيل والتحقق (SHA-256 وحجم الملف) قبل اعتماد النسخة.</span>';
+    if (st.bad) h += '<br><span style="color:#c0392b">⚠️ ' + esc(st.bad) + '</span>';
+  }
+  a.innerHTML = h;
+  const bar = el('tmOmBar'); if (bar) bar.style.display = busy ? '' : 'none';
+  const b1 = el('tmOmDl'); if (b1) { b1.disabled = busy; b1.textContent = cur ? '🔄 تحديث خريطة واسط' + (S.omMan ? ' (' + MB(S.omMan.bytes) + ')' : '') : '⬇️ تنزيل خريطة واسط' + (S.omMan ? ' (' + MB(S.omMan.bytes) + ')' : ''); }
+  const b2 = el('tmOmCancel'); if (b2) b2.style.display = busy ? '' : 'none';
+  const b3 = el('tmOmDel'); if (b3) b3.style.display = cur && !busy ? '' : 'none';
+  const at = el('tmOmAttr'); if (at) at.innerHTML = cur ? (cur.synthetic ? 'بيانات اصطناعية للاختبار فقط.' : '© مساهمو OpenStreetMap — بيانات مفتوحة برخصة ODbL 1.0 (openstreetmap.org/copyright). ') + (cur.attribution ? '<br>' + esc(cur.attribution) : '') : '';
+  // نقاط الخط
+  const d = el('tmDlStatus'); if (!d) return;
+  const lines = selectedLines(); let t = '';
+  if (!lines || !lines.length) t = S.mode === 'all' ? 'اختر خطاً أو عدة خطوط لتنزيل نقاطها (لا يُنزَّل «كل الخطوط» دفعة واحدة).' : 'اختر خطاً لتنزيل نقاطه.';
+  else lines.forEach(l => { const e = S.dlInfo && S.dlInfo.get(lineKey(l)); t += '<div>' + (dlOk(e) ? '✅ <b>جاهزة أوفلاين</b> — ' + esc(l) + ': ' + e.dl.n + ' نقطة · حُفظت ' + fmtTime(e.dl.at) : '⬜ ' + esc(l) + ': نقاط الخط لم تُنزَّل على هذا الجهاز') + '</div>'; });
+  if (S.dlBusy) t = '⏳ ' + t;
+  if (S.dlMsg) t += '<div style="margin-top:4px;color:' + (S.dlMsg.bad ? '#c0392b' : '#1e8449') + '">' + S.dlMsg.t + '</div>';
+  d.innerHTML = t;
+  const g = el('tmDlGo'); if (g) g.disabled = !!S.dlBusy || !lines || !lines.length; const r = el('tmDlDel'); if (r) r.style.display = lines && lines.some(l => dlOk(S.dlInfo && S.dlInfo.get(lineKey(l)))) ? '' : 'none';
+  covNote();
+}
+function covNote() {   // فرق واضح: «خارج منطقة الخريطة المنزّلة» ≠ «خط لم تُنزَّل نقاطه»
+  const c = el('tmCovMsg'); if (!c) return; const o = OM(), cur = o && o.state().cur; let h = '';
+  if (S.info && S.info.missing && S.info.missing.length) h += '<div style="color:#c0392b">⚠️ <b>خط لم تُنزَّل نقاطه:</b> ' + esc(S.info.missing.slice(0, 4).join('، ')) + ' — الخريطة تعمل لكن نقاط هذا الخط غير محفوظة؛ اتصل بالإنترنت واضغط «تنزيل نقاط الخط».</div>';
+  if (cur && localOn()) {
+    const out = S.rows.filter(r => !o.coversPoint(r.lat, r.lon)).length;
+    if (out) h += '<div style="color:#B7791F">🧭 <b>خارج منطقة الخريطة المنزّلة:</b> ' + out + ' برج من المعروض يقع خارج حدود خريطة واسط — تظهر نقاطها بلا شوارع خلفها.</div>';
+    else if (!o.coversPoint(S.view.lat, S.view.lon)) h += '<div style="color:#B7791F">🧭 <b>الإطار الحالي خارج منطقة الخريطة المنزّلة</b> (حدود خريطة واسط). الأبراج المنزّلة تظهر على خلفية فارغة.</div>';
+  }
+  c.innerHTML = h;
+}
+async function omFetchMan() { const o = OM(); if (!o || navigator.onLine === false || S.omManTried) return; S.omManTried = true; try { S.omMan = await o.fetchManifest(); } catch (e) { S.omMan = null; S.omManTried = false; } paintOff(); }
+function omBind() {
+  const o = OM(); if (!o) return;
+  if (!S._omHook) { S._omHook = true; o.onChange(() => { if (S.open) { paintOff(); bgNote(); requestDraw(); } }); }
+  o.init().then(() => { if (S.open) { if (!S._omOpened) { S._omOpened = true; const d = el('tmOffBox'); if (d && !o.ready()) d.open = true; } paintOff(); requestDraw(); bgNote(); } });
+  const b1 = el('tmOmDl'); if (b1) b1.onclick = () => { if (navigator.onLine === false) { S.omOffMsg = 1; try { showToast('تنزيل الخريطة يحتاج اتصالاً بالإنترنت', 'error'); } catch (e) {} return; } o.download({ manifest: S.omMan || undefined }).then(() => { try { showToast('✅ اكتمل تنزيل خريطة واسط', 'success'); } catch (e) {} }).catch(() => {}); };
+  const b2 = el('tmOmCancel'); if (b2) b2.onclick = () => o.cancel();
+  const b3 = el('tmOmDel'); if (b3) b3.onclick = () => { if (confirm('حذف خريطة واسط المحفوظة من هذا الجهاز؟ (يمكن تنزيلها من جديد)')) o.remove(); };
+  const f = el('tmOmFile'); if (f) f.onchange = () => { const file = f.files && f.files[0]; if (!file) return; const man = S.omMan && S.omMan.bytes === file.size ? S.omMan : null; o.importFile(file, man).then(() => { try { showToast('✅ تم استيراد خريطة واسط من الملف', 'success'); } catch (e) {} }).catch(() => {}); f.value = ''; };
+  const g = el('tmDlGo'); if (g) g.onclick = () => dlGo(); const r = el('tmDlDel'); if (r) r.onclick = () => dlRemove();
+  omFetchMan(); paintOff();
+}
+
 // ---------- page ----------
 function paint() {
   const st = el('tmStatus'); if (!st) return;
@@ -493,12 +654,12 @@ function paint() {
     if (i.source === 'server') h = '⚡ من الخادم الآن (' + fmtTime(i.at) + ')';
     else h = '📴 نسخة محفوظة على الجهاز (غير محدّثة من الخادم)' + (i.at ? ' — آخر تحديث ' + fmtTime(i.at) : '') + ' — قد تتضمّن أبراجاً أُرشفت أو نقاطاً تغيّرت';
     h += ' · <b>' + S.rows.length + '</b> برج بموقع' + (i.total ? ' من ' + i.total : '');
-    if (i.missing.length) h += '<br><span style="color:#c0392b">⚠️ لا بيانات محلية لـ: ' + esc(i.missing.slice(0, 4).join('، ')) + (i.missing.length > 4 ? '…' : '') + ' — اتصل بالإنترنت لتحميلها</span>';
+    if (i.missing.length) h += '<br><span style="color:#c0392b">⚠️ نقاط هذا الخط لم تُنزَّل على الجهاز: ' + esc(i.missing.slice(0, 4).join('، ')) + (i.missing.length > 4 ? '…' : '') + ' — اتصل بالإنترنت واضغط «تنزيل نقاط الخط»</span>';
     else if (!S.rows.length) h += '<br><span style="color:#7B341E">⏳ الخط ينتظر إحداثياته: لا توجد أبراج بموقع محفوظ لهذا الاختيار بعد (تُسجَّل من «تفاصيل البرج» في الميدان). لا تُخمَّن إحداثيات.</span>';
     if (S.pend.length) h += '<br><span style="color:#B7791F">◇ ' + S.pend.length + ' موقع معلّق (غير مؤكَّد) لحسابك يظهر بشكل معيّن</span>';
   }
   st.innerHTML = h;
-  paintLegend();
+  paintLegend(); paintOff();
   requestDraw();
 }
 function paintLegend() {
@@ -533,6 +694,11 @@ function build(root) {
     '<div id="tmAllBox" style="display:none;font-size:13px;color:#4a5568">تُعرض أبراج كل الخطوط (تجميع تلقائي للعلامات للحفاظ على سرعة الواجهة).</div>' +
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button id="tmAddPtBtn" class="btn btn-secondary btn-sm">📍 إضافة نقطة لبرج بلا علامة</button>' + (isAdminNow() ? '<button id="tmAddTowerBtn" class="btn btn-secondary btn-sm">➕ إضافة برج</button>' : '') + '</div><div id="tmAddPt" style="display:none;margin-top:8px;padding:8px;border:1px solid #cbd5e0;border-radius:8px;font-size:12px"></div>' +
     '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#4a5568"><input type="checkbox" id="tmBg"> إظهار الشوارع (خلفية الخريطة)</label><div id="tmBgNote" style="font-size:11px;color:#7B341E;margin-top:4px"></div>' +
+    '<details id="tmOffBox" style="margin-top:10px;border-top:1px solid #edf2f7;padding-top:8px"><summary id="tmOffSum" style="font-size:12px;font-weight:700;color:#4a5568;margin-bottom:4px;cursor:pointer">📴 العمل بدون إنترنت (تنزيل خريطة واسط ونقاط الخط)</summary>' +
+    '<div style="font-size:12px;font-weight:700;margin-top:4px">1) خريطة واسط (الشوارع والقرى والأنهار)</div><div id="tmOmStatus" style="font-size:12px;color:#4a5568;margin:3px 0"></div><progress id="tmOmBar" max="100" value="0" style="width:100%;display:none"></progress>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"><button id="tmOmDl" class="btn btn-secondary btn-sm">⬇️ تنزيل خريطة واسط</button><button id="tmOmCancel" class="btn btn-secondary btn-sm" style="display:none">⏹ إلغاء</button><label class="btn btn-secondary btn-sm" style="margin:0;cursor:pointer">📂 استيراد من «الملفات»<input type="file" id="tmOmFile" style="display:none"></label><button id="tmOmDel" class="btn btn-secondary btn-sm" style="display:none">🗑️ حذف الخريطة</button></div><div id="tmOmAttr" style="font-size:10.5px;color:#718096;margin-top:3px"></div>' +
+    '<div style="font-size:12px;font-weight:700;margin-top:10px">2) نقاط الخط المختار (إحداثيات + أرقام + أنواع + ألوان)</div><div id="tmDlStatus" style="font-size:12px;color:#4a5568;margin:3px 0"></div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"><button id="tmDlGo" class="btn btn-secondary btn-sm">⬇️ تنزيل نقاط الخط</button><button id="tmDlDel" class="btn btn-secondary btn-sm" style="display:none">🗑️ حذف نقاط الخط المحفوظة</button></div></details><div id="tmCovMsg" style="font-size:12px;margin-top:6px"></div>' +
     '<div id="tmRefBox" style="margin-top:10px;border-top:1px solid #edf2f7;padding-top:8px"><div style="font-size:12px;font-weight:700;color:#4a5568;margin-bottom:4px">📌 مراجع GPS (للعرض فقط — ليست أبراج تشغيل ولا سجلات)</div><div id="tmRefList" style="font-size:12px"></div></div></div>' +
     '<div id="tmStatus" style="font-size:12px;color:#4a5568;margin-bottom:6px"></div><div id="tmLegend" style="font-size:11px;margin-bottom:6px"></div>' +
     '<div id="tmWrap" style="position:relative;height:58vh;min-height:340px;border-radius:12px;overflow:hidden;border:1px solid #cbd5e0;direction:ltr;background:#e9eef3"><canvas id="tmCanvas" style="display:block;position:absolute;inset:0"></canvas>' +
@@ -550,13 +716,14 @@ function build(root) {
   el('tmAddPtBtn').onclick = () => addPtOpen();
   { const ab = el('tmAddTowerBtn'); if (ab) ab.onclick = () => { const ln = S.mode === 'single' ? S.sel[0] : (S.sel.length === 1 ? S.sel[0] : null); if (!ln) { try { showToast('اختر خطاً واحداً أولاً لإضافة برج إليه', 'error'); } catch (e) {} return; } topoFromMap(ln, {}); }; }
   bindPointer(el('tmCanvas'));
+  omBind();
   try { if (typeof ResizeObserver !== 'undefined') { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } else window.addEventListener('resize', resize); } catch (e) {}
 }
 window.showTowerMapImpl = function (tok) {
   document.getElementById('linesHomeView').style.display = 'none'; document.getElementById('linesInfoView').style.display = 'none'; document.getElementById('linesStatusView').style.display = 'none';
   const lt = document.getElementById('lineTowerListView'); if (lt) lt.style.display = 'none'; const td = document.getElementById('towerDetailView'); if (td) td.style.display = 'none';
   const root = document.getElementById('towerMapView'); root.style.display = '';
-  if (S.gen !== featSessionTag() || S.uid !== uidNow()) { S.sel = []; S.mode = 'single'; S.rows = []; deriveTowers(); S.fitSig = null; S.nearest = []; S.frameUser = false; S.view = { lat: 32.5, lon: 45.8, z: 8 }; S.tiles = new Map(); S.ref = { on: {}, data: null, at: null, src: null, err: '' }; }   // حساب/جلسة مختلفة: لا اختيار ولا بيانات سابقة
+  if (S.gen !== featSessionTag() || S.uid !== uidNow()) { S.sel = []; S.mode = 'single'; S.rows = []; deriveTowers(); S.fitSig = null; S.nearest = []; S.frameUser = false; S.view = { lat: 32.5, lon: 45.8, z: 8 }; S.tiles = new Map(); S.ref = { on: {}, data: null, at: null, src: null, err: '' }; S.dlInfo = null; S.dlMsg = null; S.dlBusy = false; }   // حساب/جلسة مختلفة: لا اختيار ولا بيانات سابقة
   S.locTok++; streetsRevoke(); S.typeMemo = new Map(); S.gen = featSessionTag(); S.streetsOff = streetsPref(); S.open = true; S.user = null; S.locMsg = ''; S.pop = null; S.hl = null;
   build(root); updModeUi(); buildSelectors(); paintLoc(); renderNearest(); bgNote(); refLoad();
   if (S.ro) { try { S.ro.disconnect(); } catch (e) {} S.ro = null; try { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } catch (e) {} }
@@ -567,7 +734,7 @@ window.tmapLeave = function () { S.locTok++; streetsRevoke(); S.open = false; S.
 window.__tmapDrawn = function () { return S.drawn.map(d => ({ x: d.x, y: d.y, kind: d.kind, n: d.items ? d.items.length : 0, fill: d.fill || null, num: d.row ? d.row.number : null, line: d.row ? d.row.line : null })); };
 window.__tmapRetype = function () { S.typeMemo = new Map(); requestDraw(); };   // خطاف اختبار: إسقاط ذاكرة الأنواع بعد تغيير التكوين داخل الصفحة
 window.__tmapLineColor = function (l) { return lineColor(l); };   // خطاف اختبار للقراءة فقط
-window.__tmapInfo = function () { return { typeKey: !!el('tmTypeKey'), streets: streetsOn(), streetsAsk: false, streetsOff: !!S.streetsOff, labels: S.labelCount, labelTexts: S.labelTexts.slice(), towers: S.towers.length, popRows: S.pop ? S.pop.rows.length : 0, frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
+window.__tmapInfo = function () { const _o = OM(), _st = _o ? _o.state() : {}; return { local: { ready: !!(_o && _o.ready()), active: !!S.omActive, draw: S.omDraw ? Object.assign({}, S.omDraw) : null, bytes: _st.cur ? _st.cur.bytes : 0, synthetic: !!(_st.cur && _st.cur.synthetic), job: _st.job ? { phase: _st.job.phase, done: _st.job.done, total: _st.job.total, err: _st.job.err || null } : null, stats: _st.stats || null, bad: _st.bad || null, omStatus: (document.getElementById('tmOmStatus') || {}).textContent || '', dlStatus: (document.getElementById('tmDlStatus') || {}).textContent || '', cov: (document.getElementById('tmCovMsg') || {}).textContent || '', osm: (document.getElementById('tmOsm') || {}).textContent || '', dl: S.dlInfo ? Array.from(S.dlInfo).map(([k, v]) => ({ k, n: v.dl && v.dl.n, at: v.dl && v.dl.at, ok: dlOk(v) })) : [], dbErr: S.dbErr || null }, typeKey: !!el('tmTypeKey'), streets: streetsOn(), streetsAsk: false, streetsOff: !!S.streetsOff, labels: S.labelCount, labelTexts: S.labelTexts.slice(), towers: S.towers.length, popRows: S.pop ? S.pop.rows.length : 0, frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
 window.__tmapProbe = function (line, number) { const r = S.rows.find(x => x.line === line && String(x.number) === String(number)); if (!r) return null; const q = toScreen(r.lat, r.lon); const rect = el('tmCanvas').getBoundingClientRect(); return { x: rect.left + q.x, y: rect.top + q.y, ok: q.x > 0 && q.y > 0 && q.x < S.W && q.y < S.H }; };
 
 // ---------- tower detail card: confirmed vs pending, and the capture flow ----------
@@ -581,7 +748,7 @@ window.towerLocCardImpl = async function (ctx, tok) {
   // local confirmed copy first (offline-safe), then the server when reachable
   try { const loc = tlocConfMine()[String(id)]; if (loc) { CARD.conf = { lat: loc.lat, lon: loc.lon, accuracy_m: loc.acc, captured_at: loc.at, source: loc.src, saved_by_name: loc.by }; CARD.confSrc = 'device'; cardPaint(); } } catch (e) {}
   try {
-    const cache = await cacheAll(ctx.uid); if (CARD && CARD.seq === my && !CARD.conf) { for (const ent of cache.values()) { const r = (ent.rows || []).find(x => String(x.id) === String(id)); if (r) { CARD.conf = { lat: r.lat, lon: r.lon, accuracy_m: r.acc, captured_at: r.at, source: r.src }; CARD.confSrc = 'cache'; cardPaint(); break; } } }
+    const cache = await cacheAll(ctx.uid); try { (await dlAll(ctx.uid)).forEach((v, k) => { if (!cache.has(k)) cache.set(k, v); }); } catch (e) {} if (CARD && CARD.seq === my && !CARD.conf) { for (const ent of cache.values()) { const r = (ent.rows || []).find(x => String(x.id) === String(id)); if (r) { CARD.conf = { lat: r.lat, lon: r.lon, accuracy_m: r.acc, captured_at: r.at, source: r.src }; CARD.confSrc = 'cache'; cardPaint(); break; } } }
   } catch (e) {}
   await cardRead(CARD);
 };
@@ -663,7 +830,9 @@ function cardPaint() {
   if (b('tlocConfirm')) b('tlocConfirm').onclick = () => confirmCapture();
 }
 async function cacheDropTower(uid, id) {
-  try { const all = await cacheAll(uid), puts = []; all.forEach(ent => { if ((ent.rows || []).some(r => String(r.id) === String(id))) puts.push(Object.assign({}, ent, { rows: ent.rows.filter(r => String(r.id) !== String(id)) })); }); if (puts.length) await cachePut(uid, puts.map(e => { const x = Object.assign({}, e); delete x.k; return x; })); } catch (e) {}
+  try { const all = await cacheAll(uid), puts = []; all.forEach(ent => { if ((ent.rows || []).some(r => String(r.id) === String(id))) puts.push(Object.assign({}, ent, { rows: ent.rows.filter(r => String(r.id) !== String(id)) })); }); if (puts.length) await cachePut(uid, puts.map(e => { const x = Object.assign({}, e); delete x.k; return x; }));
+    const dls = await dlAll(uid), dp = [], dd = []; dls.forEach((d, k) => { if (!(d.rows || []).some(r => String(r.id) === String(id))) return; const rows = d.rows.filter(r => String(r.id) !== String(id)); if (rows.length) dp.push(mkDl(k, d.line, rows, d.at, d.total, d.rev)); else dd.push(dlKey(k)); });   // N25-R42: النسخة المنزّلة أيضاً لا تُبقي موقعاً حُذف
+    if (dp.length) await cachePut(uid, dp); if (dd.length) await cacheDel(uid, dd); try { S.dlInfo = await dlAll(uid); dlIdxSet(uid, new Map(Array.from(S.dlInfo).filter(([k, v]) => dlOk(v)))); } catch (e) {} } catch (e) {}
 }
 // N25-R40: حذف إحداثيات النقطة (لأي دور مسجّل): بتأكيد صريح، متصل فقط، بمعرّف طلب ثابت لإعادة المحاولة؛ يُخفي الموقع وحده ولا يمسّ البرج أو سجلاته
 async function openDelAsk(c) {

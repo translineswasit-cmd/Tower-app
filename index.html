@@ -10392,7 +10392,8 @@ const FEAT_MODULE_SRC = { svg: './tower-svg.js', insp: './inspection-editor.js',
   hist: './treatment-history.js', thist: './tower-history.js', lexp: './treatment-log-export.js', dexp: './departures-export.js', rexp: './records-export.js',
   lpg: './lines-pages.js', ladm: './lines-admin.js', lprt: './lines-print.js', acct: './accounts.js', emg: './emergency-departures.js', tg: './work-telegram.js',
   topo: './topology-admin.js',   // N25-R6: إدارة ترقيم الأبراج + مواصفات البرج
-  tmap: './tower-map.js' };   // N25-R34: خريطة الأبراج + التقاط موقع البرج
+  tmap: './tower-map.js',   // N25-R34: خريطة الأبراج + التقاط موقع البرج
+  omap: './offline-map.js' };   // N25-R42: خريطة واسط دون إنترنت (PMTiles محلي)
 
 const FEAT_MODULE_DEPS = { insp: ['svg'], treat: ['svg'], ladm: ['lpg'], lexp: ['hist'], thist: ['hist'] };   // v335-C6r24 (P02): سجل البرج يستخدم مُرقِّم المعالجات   // v335-C6r21 (P01-B1): التصدير يستخدم مُرقِّم السجل
 
@@ -10554,7 +10555,7 @@ function backToMap() {
   { const h = document.getElementById('linesHomeView'); if (h) h.style.display = 'none'; }
   return showTowerMap();
 }   // N25-R39: بطاقة GPS مستقلة في الخدمات (خريطة الأبراج وموقعي)
-function showTowerMap() { return featRun(['tmap'], (tok) => showTowerMapImpl(tok), 'tmap'); }   // N25-R34
+function showTowerMap() { return featRun(['tmap', 'omap'], (tok) => showTowerMapImpl(tok), 'tmap'); }   // N25-R34
 function towerLocCardMount(ctx) { return featRun(['tmap'], (tok) => towerLocCardImpl(ctx, tok), 'tloc'); }   // N25-R34
 function showLinesStatus() { return featRun(['lpg'], (tok) => showLinesStatusImpl(tok), 'lpg'); }
 function openPrintLinesModal() { return featRun(['lprt'], () => openPrintLinesModalImpl(), 'lprt'); }

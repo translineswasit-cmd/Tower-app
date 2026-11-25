@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v335-C6r104-N25R41';
+const CACHE_NAME = 'tower-app-v335-C6r105-N25R42';
 // N23: خطوط المذكرة في كاش مستقل غير مرتبط برقم الإصدار (≈1.9MB): لا تُعاد تنزيلها مع كل إصدار، وتُخزَّن عند أول استخدام للمذكرة (دون إبطاء بدء التطبيق).
 const FONT_CACHE = 'tower-memo-fonts-v1';
 
@@ -78,6 +78,7 @@ const CRITICAL_ASSETS = [
   './treatment-log-export.js',
   './departures-export.js',
   './records-export.js',
+  './offline-map.js',   // N25-R42: محرّك خريطة واسط المحلية (تخزين مسبق؛ لا يُنفَّذ إلا عند الطلب)
   './tower-map.js',   // N25-R34: خريطة الأبراج + التقاط موقع البرج (تخزين مسبق؛ لا يُنفَّذ إلا عند الطلب)
   // v335-C5r9: وحدات بيانات الخطوط/الحسابات/المغادرات الطارئة/برقية العمل (تخزين مسبق للعمل بدون إنترنت؛ لا تُنفَّذ إلا عند الطلب)
   './lines-pages.js',
@@ -154,6 +155,9 @@ self.addEventListener('activate', (event) => {
 // - هيكل التطبيق: cache-first ليعمل بدون إنترنت
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
+
+  // N25-R42: حزمة خريطة واسط (PMTiles ≈ عشرات الميغابايت) وملف بيانها: لا تُعترض ولا تدخل كاش التطبيق؛ تُخزَّن فقط في IndexedDB عبر «تنزيل خريطة واسط»
+  if (/\/maps\/[^/?]+(\?.*)?$/.test(url)) return;
 
   // طلبات Supabase: لا تُعترض إطلاقاً — تذهب للشبكة مباشرة ليصل فشلها للتطبيق فيحفظ أوف لاين
   if (url.includes('supabase.co')) return;
