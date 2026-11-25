@@ -241,6 +241,7 @@
   function openTopo(line, opts) {
     open();
     S = { mode: 'topo', line: line || '', prev: null, ops: [], res: null, settings: null, busy: false, reason: '', typed: '', tab: 'edit', archive: null, last: null, err: null, gen: sessGen(), note: '', volt: (opts && Number(opts.volt)) || null, intent: (opts && opts.afterNum != null && opts.afterNum !== '') ? { afterNum: String(opts.afterNum), type: opts.type || '' } : null, prefill: null };
+    if (opts && opts.fromMap) { S.fromMap = true; if (opts.retireTid) S.intentRetire = String(opts.retireTid); }   // N25-R40: فتح من الخريطة: كل تعديل مرحلي يُعاين تلقائياً على الخادم قبل أي اعتماد
     if (S.line) loadLine(S.line); else render();
   }
 
@@ -254,6 +255,16 @@
     if (!r || r.ok !== true) { S.err = msgOf(r && r.code); render(); return; }
     S.prev = r; render();
     if (S.intent) await consumeIntent();
+    else if (S.intentRetire) await consumeRetire();
+  }
+  // N25-R40: «حذف البرج» من بطاقته في الخريطة: يُجهَّز إخراجه بالهوية الدائمة ثم يُعاين الأثر (إعادة ترقيم اللاحقة والعدد الجديد) قبل الاعتماد
+  async function consumeRetire() {
+    const tid = S.intentRetire; S.intentRetire = null; if (!tid || !S.prev) return;
+    const t = curList().find(x => x.tower_id && String(x.tower_id) === tid);
+    if (!t) { S.err = 'هذا البرج لم يعد ضمن الأبراج النشطة بترقيم الخادم الحالي — حدّث الخريطة ثم اختر البرج من جديد'; render(); return; }
+    stage({ op: 'retire', key: TopoPlan.keyOf(t) });
+    S.note = 'جُهّز إخراج البرج ' + t.num + ' من الخدمة (أرشفة برقمه وسجلاته) — معاينة الأثر على الخادم أدناه (قراءة فقط).'; render();
+    await previewPlan();
   }
   // يحوّل مدخلات النافذة القديمة (بعد رقم + نوع) إلى عملية إدراج مرحلية بالهوية الدائمة، ثم يعاين الخطة على الخادم. أي رفض يظهر برسالة صريحة داخل نافذة المعاين.
   async function consumeIntent() {
@@ -291,11 +302,13 @@
     const after = g('topoAfter').value, count = parseInt(g('topoCount').value, 10), type = g('topoType').value, chain = g('topoChain').value, mat = g('topoMat').value;
     if (!type) { S.err = LOCAL_ERR.type_required; render(); return; }
     stage({ op: 'insert', after: after === '__start' ? null : after, count, type, chain_override: chain || undefined, material_default: mat && mat !== 'glass' ? mat : undefined });
+    if (S && S.fromMap) previewPlan();
   }
   function toggleRetire(key) {
     const i = S.ops.findIndex(o => o.op === 'retire' && o.key === key);
     if (i >= 0) { unstage(i); return; }
     stage({ op: 'retire', key });
+    if (S && S.fromMap) previewPlan();
   }
 
   // ----------------------------------------------------------------------- معاينة الخطة على الخادم
@@ -357,6 +370,7 @@
       pendClear(); S.last = { change_id: r.change_id, kind: rec.kind, to_rev: r.to_rev, from_rev: r.from_rev, idempotent: !!r.idempotent, line: rec.line };
       S.ops = []; S.res = null; S.typed = ''; S.reason = ''; S.note = (rec.kind === 'recover' ? '✅ تم التراجع' : '✅ اعتُمد التغيير') + (r.idempotent ? ' (وصل ردّ العملية السابقة نفسها — لم يُكرَّر)' : '') + ' — الترقيم الجديد نسخة ' + r.to_rev;
       await refreshAfter(rec.line);
+      try { if (typeof window.tmapTopoApplied === 'function') window.tmapTopoApplied(rec.line); } catch (e) {}   // N25-R40: عداد الخط وعلامات الخريطة وأرقامها تُحدَّث فور الاعتماد
       if (ok()) await loadLineKeepNote(rec.line); return;
     }
     const code = r && r.code;
@@ -968,10 +982,10 @@
         const d = imp.dry, same = imp.hash === b.hash, canGo = okLocal && same && d.ok === true && d.skipped === 0 && d.accepted === b.batch.length;
         h += '<div class="form-card" id="topoImpDry" style="margin:8px 0;border-right:4px solid ' + (canGo ? '#38A169' : '#ED8936') + '"><div style="font-weight:700">نتيجة المعاينة (لم يُكتب شيء)</div><div>' +
           chip('مقبولة ' + (d.accepted || 0), '#C6F6D5', '#22543D') + chip('جديدة ' + (d.new || 0), '#BEE3F8', '#2A4365') + chip('تحلّ محل استيراد سابق ' + (d.replaced_import || 0), '#EDF2F7', '#2D3748') + chip('متروكة ' + (d.skipped || 0), (d.skipped ? '#FEEBC8' : '#EDF2F7'), '#7B341E') + '</div>';
-        if ((d.skips || []).length) h += '<div style="font-size:0.78rem;color:#7B341E;margin-top:4px">' + d.skips.map(x => '• ' + _te(x.ref) + ': ' + _te(x.why === 'field_capture_exists' ? 'لها موقع ميداني محفوظ — يبقى ولا يُستبدل' : x.why)).join('<br>') + '</div>';
+        if ((d.skips || []).length) h += '<div style="font-size:0.78rem;color:#7B341E;margin-top:4px">' + d.skips.map(x => '• ' + _te(x.ref) + ': ' + _te(x.why === 'field_capture_exists' ? 'لها موقع ميداني محفوظ — يبقى ولا يُستبدل' : x.why === 'location_deleted' ? 'حُذف موقعها عمداً من التطبيق — لا يُعيدها الاستيراد (تُلتقط من جديد ميدانياً)' : x.why)).join('<br>') + '</div>';
         if (!same) h += '<div style="color:#822727;font-size:0.8rem">تغيّر الملف/الترقيم بعد المعاينة — أعد المعاينة.</div>';
-        if (d.skipped && d.skipped > 0 && (d.skips || []).every(x => x.why === 'field_capture_exists')) h += '<div style="font-size:0.78rem;color:#4A5568">المواقع الميدانية تُصان: يُسمح بالاعتماد مع بقائها كما هي (تُحسب ضمن 48 من 48 لأنها مواقع محفوظة).</div>';
-        const fieldOnly = d.ok === true && okLocal && same && d.accepted + d.skipped === b.batch.length && (d.skips || []).every(x => x.why === 'field_capture_exists');
+        if (d.skipped && d.skipped > 0 && (d.skips || []).every(x => x.why === 'field_capture_exists' || x.why === 'location_deleted')) h += '<div style="font-size:0.78rem;color:#4A5568">المواقع الميدانية تُصان: يُسمح بالاعتماد مع بقائها كما هي (تُحسب ضمن 48 من 48 لأنها مواقع محفوظة).</div>';
+        const fieldOnly = d.ok === true && okLocal && same && d.accepted + d.skipped === b.batch.length && (d.skips || []).every(x => x.why === 'field_capture_exists' || x.why === 'location_deleted');
         imp.canGo = !!fieldOnly;
         h += '<input id="topoImpTyped" placeholder="اكتب: اعتماد" value="' + _te(imp.typed) + '" oninput="topoImpTyped(this.value)" style="width:100%;padding:8px;border-radius:8px;border:1px solid #ccc;margin:8px 0 4px">' +
           '<button id="topoImpApply" class="btn btn-primary" onclick="topoImpApply()" ' + (fieldOnly && !imp.busy && imp.typed.trim() === 'اعتماد' ? '' : 'disabled ') + 'style="width:100%">✅ اعتماد الاستيراد</button>';

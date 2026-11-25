@@ -194,7 +194,17 @@ function showThermalNewImpl() {
   try { refreshThermalLineSelect(); } catch (e) {}
   pushLevel(showThermalHome);
   thermalShowView('thermalNewView');
+  if (window._thWantReq) { _thWant = window._thWantReq; _thWantFresh = true; window._thWantReq = null; }
+  if (!_thWantFresh) _thWant = null; _thWantFresh = false;   // N25-R40: طلب الخريطة يبقى صالحاً لهذا الفتح فقط
+  if (_thWant && activeThermalSessions[_thWant.line]) currentThermalLine = _thWant.line;
   renderActiveThermalTabs();
+  if (_thWant && !activeThermalSessions[_thWant.line]) {   // لا جلسة لهذا الخط: يُعبَّأ الخط ويُطلب التاريخ وحرارة الجو؛ الاختيار يُطبَّق عند بدء الجلسة
+    currentThermalLine = null; thermalSession = null; document.getElementById('thermalSessionForm').style.display = 'block'; document.getElementById('thermalPointForm').style.display = 'none';
+    const ln = document.getElementById('th_line_name'); if (ln && Array.prototype.some.call(ln.options, o => o.value === _thWant.line)) ln.value = _thWant.line; else { _thWant = null; try { showToast('⚠️ هذا الخط غير متاح في قائمة الكشف الحراري', 'error'); } catch (e) {} }
+    const d = document.getElementById('th_date'); if (d && !d.value) d.value = new Date().toISOString().split('T')[0];
+    try { showToast('أدخل حرارة الجو ثم «بدء الكشف» — سيُختار البرج تلقائياً'); } catch (e) {}
+    return;
+  }
   if (!currentThermalLine) {
     document.getElementById('thermalSessionForm').style.display = 'block';
     document.getElementById('thermalPointForm').style.display = 'none';
@@ -275,6 +285,24 @@ function switchToThermalTab(lineName) {
   resetThermalReadingInputs();
   renderActiveThermalTabs();
   try { thermalCacheNoteRefresh(); } catch (e) {}
+  try { thWantApply(lineName); } catch (e) {}
+}
+// N25-R40: فتح الكشف الحراري من علامة برج في الخريطة: يُختار الخط والبرج ثم تُلتقط الهوية وتُطابَق tower_id المطلوب؛ عدم المطابقة يمسح الاختيار ولا يفتح برجاً آخر
+let _thWant = null;
+let _thWantFresh = false;
+function thWantSet(w) { _thWant = w || null; _thWantFresh = !!w; }
+async function thWantApply(lineName) {
+  const w = _thWant; if (!w) return; _thWant = null; if (w.line !== lineName) return;
+  const ptSel = document.getElementById('th_point'); if (!ptSel) return;
+  const val = 'TOWER::' + w.num; const opt = Array.prototype.find.call(ptSel.options, o => o.value === val);
+  if (!opt) { try { showToast('⚠️ برج ' + w.num + ' ليس ضمن نقاط الكشف الحراري لهذا الخط (يشمل أبراج الشد حسب إعداد الخط)', 'error'); } catch (e) {} return; }
+  const same = () => { const sn = _thPick && _thPick.snap; return !!(_thPick && _thPick.line === w.line && _thPick.num === Number(w.num) && sn && !sn.blocked && String(sn.tower_id) === String(w.tid)); };
+  const sn0 = (() => { try { return csIdentSnap(w.line, String(w.num), { mapOnly: true }); } catch (e) { return null; } })();
+  if (!sn0 || sn0.blocked || String(sn0.tower_id) !== String(w.tid)) { try { showToast('⚠️ ترقيم الخط تغيّر أثناء الفتح — لم يُختر أي برج. حدّث الخريطة ثم اختر من جديد', 'error'); } catch (e) {} return; }
+  ptSel.value = val; onThermalPointChange();
+  try { await thermalCapturePick(w.line, String(w.num)); } catch (e) {}
+  if (document.getElementById('th_point').value !== val) return;
+  if (!same()) { ptSel.value = ''; onThermalPointChange(); try { showToast('⚠️ تعذّر إثبات أن البرج المختار هو نفسه الذي اخترته من الخريطة — أُلغي الاختيار', 'error'); } catch (e) {} }
 }
 function showThermalSetupForAnotherLine() {
   document.getElementById('thermalPointForm').style.display = 'none';

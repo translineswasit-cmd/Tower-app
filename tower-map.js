@@ -247,7 +247,13 @@ function selectRow(r) {
   h += '<br><span style="color:#718096;font-size:11px">' + esc(SRC_AR[r.src] || '') + (r.acc != null ? ' · دقة ±' + Math.round(r.acc) + ' م' : '') + '</span>';
   if (S.user) h += '<br><span style="font-size:12px">📏 ' + fmtDist(haversine(S.user.lat, S.user.lon, r.lat, r.lon)) + ' <span style="color:#718096">مسافة مباشرة (خط مستقيم) — ليست طريقاً سالكاً</span></span>';
   rows.forEach(x => { const ty = rowType(x); if (ty.v132) h += '<div style="font-size:12px;margin-top:4px">🏷️ ' + esc(x.line) + ' — نوع البرج: ' + (ty.code ? '<b>' + TYPE_META[ty.code].n + '</b> (' + ty.code + ')' : '<b style="color:#744210">غير مؤكد</b> <span style="color:#718096">(' + esc(ty.why || '') + ')</span>') + '</div>'; });
-  rows.forEach((x, i) => { h += '<div><button class="btn btn-primary btn-sm tmAct" data-act="td" data-i="' + i + '" style="margin-top:6px;width:100%">🗼 تفاصيل البرج' + (rows.length > 1 ? ' — ' + esc(x.line) + ' ' + esc(x.number) : '') + '</button></div>'; });
+  rows.forEach((x, i) => {
+    const lab = rows.length > 1 ? ' — ' + esc(x.line) + ' ' + esc(x.number) : '';
+    h += '<div><button class="btn btn-primary btn-sm tmAct" data-act="td" data-i="' + i + '" style="margin-top:6px;width:100%">🗼 تفاصيل البرج' + lab + '</button></div>';
+    h += '<div><button class="btn btn-secondary btn-sm tmAct" data-act="td" data-i="' + i + '" id="tmPopGps' + i + '" style="margin-top:6px;width:100%">📍 تحديث/حذف موقع GPS' + lab + '</button></div>';
+    if (canFormNow()) h += '<div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-secondary btn-sm tmAct" data-act="vis" data-i="' + i + '" style="flex:1">📝 إضافة كشف بصري' + lab + '</button><button class="btn btn-secondary btn-sm tmAct" data-act="th" data-i="' + i + '" style="flex:1">🌡️ إضافة كشف حراري' + lab + '</button></div>';
+    if (isAdminNow()) h += '<div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-secondary btn-sm tmAct" data-act="tadd" data-i="' + i + '" style="flex:1">➕ إضافة برج بعد هذا' + lab + '</button><button class="btn btn-secondary btn-sm tmAct" data-act="tdel" data-i="' + i + '" style="flex:1;color:#c0392b">🗑️ حذف البرج' + lab + '</button></div>';
+  });
   h += '<button class="btn btn-secondary btn-sm tmAct" data-act="dir" style="margin-top:6px;width:100%">🧭 الاتجاهات إلى البرج</button>';
   h += '<div style="color:#718096;font-size:10px;margin-top:4px">يفتح تطبيق الخرائط بوجهة هذا البرج فقط (لا يُرسل موقعك). المدخل والطريق غير موثّقين هنا.</div>';
   showPop(r, h, rows); requestDraw();
@@ -256,9 +262,13 @@ function dirUrl(r) {   // N25-R37: وجهة فقط (إحداثيات البرج)
   const q = Number(r.lat).toFixed(6) + ',' + Number(r.lon).toFixed(6), ios = /iP(hone|ad|od)/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   return ios ? 'https://maps.apple.com/?daddr=' + q + '&dirflg=d' : 'https://www.google.com/maps/dir/?api=1&destination=' + q + '&travelmode=driving';
 }
-async function openRowDetail(r) {   // بالهوية الدائمة: tower_id المتوقع يُحمل حتى عرض الحالة (R37a)
+const isAdminNow = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.role === 'admin');
+const canFormNow = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.role !== 'readonly');
+// N25-R40: فتح وجهة (تفاصيل/كشف بصري/كشف حراري) من علامة برج: التحقق الحيّ من أن الرقم ما زال لنفس tower_id أولاً، ثم تثبيت tower_id في الوجهة نفسها
+async function openRow(r, kind) {
   const tok = S.locTok, gen = S.gen, sess = featSessionTag(), stale = () => !S.open || tok !== S.locTok || gen !== featSessionTag();
-  const blockPop = (why, retry) => showPop(r, '<b>' + esc(r.line) + ' — برج ' + esc(r.number) + '</b><br><span style="color:#c0392b;font-size:12px">⚠️ ' + why + ' — لم يُفتح شيء.</span>' + (retry ? '<button class="btn btn-primary btn-sm tmAct" data-act="retry" style="margin-top:6px;width:100%">🔄 إعادة المحاولة</button>' : ''), [r]);
+  const blockPop = (why, retry) => { S.retryFn = retry ? () => openRow(r, kind) : null; showPop(r, '<b>' + esc(r.line) + ' — برج ' + esc(r.number) + '</b><br><span style="color:#c0392b;font-size:12px">⚠️ ' + why + ' — لم يُفتح شيء.</span>' + (retry ? '<button class="btn btn-primary btn-sm tmAct" data-act="retry" style="margin-top:6px;width:100%">🔄 إعادة المحاولة</button>' : ''), [r]); };
+  if ((kind === 'vis' || kind === 'th') && !canFormNow()) { try { showToast('⚠️ صلاحية القراءة فقط، لا يمكنك إضافة كشف', 'error'); } catch (e) {} return; }
   const online = navigator.onLine !== false; let fresh = false;
   try { if (online && typeof csLineIdentLoad === 'function') fresh = (await csLineIdentLoad(r.line)) === true; } catch (e) { fresh = false; }
   if (stale()) return;
@@ -266,11 +276,29 @@ async function openRowDetail(r) {   // بالهوية الدائمة: tower_id �
   let sn = null; try { sn = csIdentSnap(r.line, String(r.number), { mapOnly: true }); } catch (e) {}
   if (!sn || sn.blocked || sn.tower_id !== String(r.id)) { blockPop(online ? 'هذا الرقم لم يعد يعود لنفس البرج (ترقيم الخط تغيّر) — حدّث الخريطة ثم اختر البرج من جديد' : 'تعذّر التأكد أن هذا الرقم ما زال لنفس البرج (لا اتصال ولا دليل ترقيم محلي مطابق)', !online ? true : false); return; }
   try {
+    if (kind === 'vis') {
+      const fs = document.getElementById('f_line_name');
+      window._openExpect = { line: r.line, num: String(r.number), tid: String(r.id) };
+      showPage('form'); pushLevel(backToMap);
+      if (!fs || !Array.prototype.some.call(fs.options, o => o.value === r.line)) { window._openExpect = null; showToast('⚠️ هذا الخط غير متاح في قائمة الكشف البصري', 'error'); return; }
+      fs.value = r.line; onLineChange();
+      await openTowerModal(r.line, String(r.number));
+      return;
+    }
+    if (kind === 'th') {
+      window._thWantReq = { line: r.line, num: String(r.number), tid: String(r.id) };
+      showPage('thermal'); showThermalHome(); pushLevel(backToMap);
+      await showThermalNew();
+      { const k = levelStack.lastIndexOf(showThermalHome); if (k >= 0) levelStack.splice(k, 1); }   // الرجوع من نموذج الحراري مباشرة إلى الخريطة
+      return;
+    }
     window.tmapLeave(); await featRun(['lpg'], () => 1, 'tmap-td');
     if (featSessionTag() !== sess) { try { showToast('تبدّلت الجلسة أثناء التحميل — أُلغي فتح التفاصيل', 'error'); } catch (e) {} return; }   // لا طلب قديم باسم الجلسة الجديدة
-    await openTowerDetail(r.line, String(r.number), String(r.id));
+    pushLevel(backToMap);
+    await openTowerDetail(r.line, String(r.number), String(r.id), { retry: true });   // retry:true = لا دفع لمستوى «قائمة الأبراج»؛ الرجوع يعود للخريطة
   } catch (e) {}
 }
+const openRowDetail = r => openRow(r, 'td');
 function showPop(pos, html, rows) { S.pop = { lat: pos.lat, lon: pos.lon, html, rows: rows || [] }; placePop(); }
 function hidePop() { const p = el('tmPop'); if (p) p.style.display = 'none'; }
 function placePop() {
@@ -281,9 +309,45 @@ function placePop() {
   const x = el('tmPopX'); if (x) x.onclick = () => { S.pop = null; S.hl = null; hidePop(); requestDraw(); };
   p.querySelectorAll('.tmAct').forEach(b => b.onclick = ev => { ev.stopPropagation(); const pr = S.pop; if (!pr || !pr.rows.length) return;
     if (b.dataset.act === 'dir') { const r0 = pr.rows[0]; try { window.open(dirUrl(r0), '_blank', 'noopener'); } catch (e) {} }
-    else if (b.dataset.act === 'retry') { openRowDetail(pr.rows[0]); }
-    else if (b.dataset.act === 'td') { const r1 = pr.rows[Number(b.dataset.i)]; if (r1) openRowDetail(r1); } });
+    else if (b.dataset.act === 'retry') { if (S.retryFn) S.retryFn(); else openRowDetail(pr.rows[0]); }
+    else { const r1 = pr.rows[Number(b.dataset.i)]; if (!r1) return; const a = b.dataset.act;
+      if (a === 'td') openRow(r1, 'td'); else if (a === 'vis') openRow(r1, 'vis'); else if (a === 'th') openRow(r1, 'th'); else if (a === 'tadd') topoFromMap(r1.line, { afterNum: String(r1.number) }); else if (a === 'tdel') topoFromMap(r1.line, { retireTid: String(r1.id) }, r1); } });
 }
+
+// ---------- N25-R40: نقطة GPS لبرج بلا علامة (خط ثم برج من دليل الأبراج) + إضافة/حذف برج عبر معاينة الترقيم المعتمدة ----------
+async function addPtOpen() {
+  const box = el('tmAddPt'); if (!box) return; box.style.display = '';
+  const names = (typeof lineCatalogNames === 'function') ? lineCatalogNames() : [];
+  box.innerHTML = '<div style="font-weight:700;margin-bottom:6px">📍 إضافة نقطة GPS لبرج بلا علامة</div><select id="tmApLine" style="width:100%;padding:8px;border-radius:8px;border:1px solid #ccc;font-family:inherit"></select><div id="tmApTw" style="margin-top:6px"></div>';
+  try { fillLineSelect(el('tmApLine'), { grouped: true, placeholder: '-- اختر الخط --', names }); } catch (e) {}
+  el('tmApLine').onchange = () => addPtLine(el('tmApLine').value);
+}
+async function addPtLine(line) {
+  const out = el('tmApTw'); if (!out) return; if (!line) { out.innerHTML = ''; return; }
+  if (navigator.onLine === false) { out.innerHTML = '<span style="color:#c0392b">يلزم اتصال لقراءة دليل أبراج الخط.</span>'; return; }
+  out.textContent = '⏳ جاري قراءة دليل الأبراج…'; const tok = S.locTok;
+  let fresh = false; try { fresh = (await csLineIdentLoad(line)) === true; } catch (e) { fresh = false; }
+  if (tok !== S.locTok || !el('tmApTw')) return;
+  const m = (typeof _csLineId !== 'undefined' && _csLineId[line]) ? _csLineId[line].towers : null;
+  if (!fresh || !m) { out.innerHTML = '<span style="color:#c0392b">تعذّر قراءة دليل أبراج هذا الخط من الخادم.</span>'; return; }
+  let have = new Set();
+  try { const r = await csCall('app_tower_locations', { p_line_names: [line] }, { timeout: 30000 }); if (r && r.ok === true && Array.isArray(r.rows)) r.rows.forEach(a => have.add(String(a[0]))); else S.rows.forEach(x => have.add(String(x.id))); } catch (e) { S.rows.forEach(x => have.add(String(x.id))); }
+  if (tok !== S.locTok || !el('tmApTw')) return;
+  const nums = Object.keys(m).sort((a, b) => (parseFloat(a) - parseFloat(b)) || String(a).localeCompare(String(b)));
+  out.innerHTML = '<select id="tmApNum" style="width:100%;padding:8px;border-radius:8px;border:1px solid #ccc;font-family:inherit"><option value="">-- اختر البرج --</option>' + nums.map(n => '<option value="' + esc(n) + '">برج ' + esc(n) + (have.has(String(m[n])) ? ' — له علامة' : ' — بلا علامة') + '</option>').join('') + '</select><button id="tmApGo" class="btn btn-primary btn-sm" style="margin-top:6px;width:100%">فتح بطاقة البرج لالتقاط النقطة</button>';
+  el('tmApGo').onclick = () => { const n = el('tmApNum').value; if (!n) return; openRow({ id: String(m[n]), line, number: String(n) }, 'td'); };
+}
+async function topoFromMap(line, opts, r) {
+  if (!isAdminNow()) { try { showToast('هذه الأداة للمدير فقط', 'error'); } catch (e) {} return; }
+  try { await featRun(['lpg'], () => 1, 'tmap-topo'); _topoReg(); } catch (e) {}
+  if (opts.retireTid && r) { const ok = (await (async () => { let f = false; try { f = navigator.onLine !== false && (await csLineIdentLoad(r.line)) === true; } catch (e) {} const sn = (() => { try { return csIdentSnap(r.line, String(r.number), { mapOnly: true }); } catch (e) { return null; } })(); return f && sn && !sn.blocked && sn.tower_id === String(r.id); })()); if (!ok) { try { showToast('⚠️ هذا الرقم لم يعد يعود لنفس البرج أو تعذّر التحقق الحيّ — لم يُجهَّز حذف. حدّث الخريطة', 'error'); } catch (e) {} return; } }
+  return featRun(['topo'], () => topoOpenImpl(line, Object.assign({ fromMap: true }, opts)), 'topo');
+}
+window.tmapTopoApplied = function (line) {   // بعد اعتماد تغيير الترقيم: عداد الخط والعلامات والأرقام تُحدَّث فوراً
+  S.pop = null; S.hl = null; try { hidePop(); } catch (e) {}
+  if (S.open) { S.typeMemo = new Map(); try { csLineIdentLoad(line); } catch (e) {} loadData(); }
+  S.dirty = true;
+};
 
 // ---------- data ----------
 function selectedLines() { return S.mode === 'all' ? null : (S.mode === 'single' ? S.sel.slice(0, 1) : S.sel.slice()); }
@@ -467,6 +531,7 @@ function build(root) {
     '<div id="tmSingleBox"><select id="tmSingle" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;font-size:14px"></select></div>' +
     '<div id="tmMultiBox" style="display:none"><input id="tmMultiQ" placeholder="بحث عن خط…" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid #ccc;font-family:inherit;margin-bottom:6px"><div id="tmMultiList" style="max-height:200px;overflow:auto;border:1px solid #edf2f7;border-radius:8px;padding:4px"></div><div style="display:flex;justify-content:space-between;margin-top:6px;font-size:12px"><span id="tmMultiCount"></span><a href="javascript:void(0)" id="tmMultiClear">مسح الاختيار</a></div></div>' +
     '<div id="tmAllBox" style="display:none;font-size:13px;color:#4a5568">تُعرض أبراج كل الخطوط (تجميع تلقائي للعلامات للحفاظ على سرعة الواجهة).</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button id="tmAddPtBtn" class="btn btn-secondary btn-sm">📍 إضافة نقطة لبرج بلا علامة</button>' + (isAdminNow() ? '<button id="tmAddTowerBtn" class="btn btn-secondary btn-sm">➕ إضافة برج</button>' : '') + '</div><div id="tmAddPt" style="display:none;margin-top:8px;padding:8px;border:1px solid #cbd5e0;border-radius:8px;font-size:12px"></div>' +
     '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:#4a5568"><input type="checkbox" id="tmBg"> إظهار الشوارع (خلفية الخريطة)</label><div id="tmBgNote" style="font-size:11px;color:#7B341E;margin-top:4px"></div>' +
     '<div id="tmRefBox" style="margin-top:10px;border-top:1px solid #edf2f7;padding-top:8px"><div style="font-size:12px;font-weight:700;color:#4a5568;margin-bottom:4px">📌 مراجع GPS (للعرض فقط — ليست أبراج تشغيل ولا سجلات)</div><div id="tmRefList" style="font-size:12px"></div></div></div>' +
     '<div id="tmStatus" style="font-size:12px;color:#4a5568;margin-bottom:6px"></div><div id="tmLegend" style="font-size:11px;margin-bottom:6px"></div>' +
@@ -482,11 +547,12 @@ function build(root) {
   el('tmBg').checked = !S.streetsOff; el('tmBg').onchange = () => setStreets(el('tmBg').checked);
   el('tmZin').onclick = () => zoomAt(S.W / 2, S.H / 2, 1); el('tmZout').onclick = () => zoomAt(S.W / 2, S.H / 2, -1); el('tmFit').onclick = () => { const pts = refPoints().concat(S.rows); if (pts.length) { fitBounds(pts, 40); frameIndependent(); } };
   el('tmLocBtn').onclick = () => { locateMe(); };
+  el('tmAddPtBtn').onclick = () => addPtOpen();
+  { const ab = el('tmAddTowerBtn'); if (ab) ab.onclick = () => { const ln = S.mode === 'single' ? S.sel[0] : (S.sel.length === 1 ? S.sel[0] : null); if (!ln) { try { showToast('اختر خطاً واحداً أولاً لإضافة برج إليه', 'error'); } catch (e) {} return; } topoFromMap(ln, {}); }; }
   bindPointer(el('tmCanvas'));
   try { if (typeof ResizeObserver !== 'undefined') { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } else window.addEventListener('resize', resize); } catch (e) {}
 }
 window.showTowerMapImpl = function (tok) {
-  pushLevel(showLinesHome);
   document.getElementById('linesHomeView').style.display = 'none'; document.getElementById('linesInfoView').style.display = 'none'; document.getElementById('linesStatusView').style.display = 'none';
   const lt = document.getElementById('lineTowerListView'); if (lt) lt.style.display = 'none'; const td = document.getElementById('towerDetailView'); if (td) td.style.display = 'none';
   const root = document.getElementById('towerMapView'); root.style.display = '';
@@ -496,6 +562,7 @@ window.showTowerMapImpl = function (tok) {
   if (S.ro) { try { S.ro.disconnect(); } catch (e) {} S.ro = null; try { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } catch (e) {} }
   setTimeout(() => { resize(); if (S.sel.length || S.mode === 'all') loadData(); else paint(); }, 0);
 };
+window.tmapIsOpen = function () { const root = document.getElementById('towerMapView'); return !!(S.open && root && root.style.display !== 'none'); };
 window.tmapLeave = function () { S.locTok++; streetsRevoke(); S.open = false; S.user = null; S.locMsg = ''; S.pop = null; S.nearest = []; try { if (S.ro) S.ro.disconnect(); } catch (e) {} const root = document.getElementById('towerMapView'); if (root && root.style.display !== 'none') root.style.display = 'none'; };
 window.__tmapDrawn = function () { return S.drawn.map(d => ({ x: d.x, y: d.y, kind: d.kind, n: d.items ? d.items.length : 0, fill: d.fill || null, num: d.row ? d.row.number : null, line: d.row ? d.row.line : null })); };
 window.__tmapRetype = function () { S.typeMemo = new Map(); requestDraw(); };   // خطاف اختبار: إسقاط ذاكرة الأنواع بعد تغيير التكوين داخل الصفحة
@@ -508,7 +575,7 @@ const Q_MSG = { good: 'جيدة', ok: 'مقبولة', poor: 'ضعيفة' };
 function accClass(a) { return a == null ? 'poor' : a <= 10 ? 'good' : a <= 30 ? 'ok' : 'poor'; }
 window.towerLocCardImpl = async function (ctx, tok) {
   const box = document.getElementById('towerLocCard'); if (!box) return;
-  CARD = { ctx, box, seq: (CARD ? CARD.seq : 0) + 1, cap: null, conf: null, confSrc: null, uid: ctx.uid };
+  CARD = { ctx, box, seq: (CARD ? CARD.seq : 0) + 1, cap: null, conf: null, confSrc: null, uid: ctx.uid, gen: null, genState: 'unknown', readSeq: 0, readP: null, capSeq: 0 };
   const my = CARD.seq; cardPaint();
   const id = ctx.ident && !ctx.ident.blocked ? ctx.ident.tower_id : null; if (!id) return;
   // local confirmed copy first (offline-safe), then the server when reachable
@@ -516,12 +583,37 @@ window.towerLocCardImpl = async function (ctx, tok) {
   try {
     const cache = await cacheAll(ctx.uid); if (CARD && CARD.seq === my && !CARD.conf) { for (const ent of cache.values()) { const r = (ent.rows || []).find(x => String(x.id) === String(id)); if (r) { CARD.conf = { lat: r.lat, lon: r.lon, accuracy_m: r.acc, captured_at: r.at, source: r.src }; CARD.confSrc = 'cache'; cardPaint(); break; } } }
   } catch (e) {}
-  if (navigator.onLine !== false && typeof csCall === 'function' && CS_AUTH.token) {
-    const r = await csCall('app_tower_location_get', { p_tower_id: id }, { timeout: 20000 });
-    if (!CARD || CARD.seq !== my || uidNow() !== ctx.uid) return;
-    if (r && r.ok === true) { CARD.retired = !!r.retired; if (r.location) { CARD.conf = r.location; CARD.confSrc = 'server'; } else if (CARD.confSrc !== 'server') { CARD.conf = null; CARD.confSrc = 'server'; } cardPaint(); }
-  }
+  await cardRead(CARD);
 };
+// N25-R40b: قراءة حيّة للموقع والجيل من الخادم. كل قراءة لها رقم؛ لا يُطبَّق إلا ردّ آخر قراءة، ولا يُطبَّق شيء أثناء حذف جارٍ (ردّ الحذف هو المرجع).
+// genState: pending (قراءة جارية) | known (جيل معروف) | none (الخادم رد بلا جيل = SQL74) | unknown (غير متصل/فشلت القراءة)
+function cardRead(c) {
+  const id = c.ctx.ident && !c.ctx.ident.blocked ? c.ctx.ident.tower_id : null;
+  if (!id || navigator.onLine === false || typeof csCall !== 'function' || !CS_AUTH.token) { if (c.genState !== 'known') c.genState = 'unknown'; c.readP = Promise.resolve(null); return c.readP; }
+  const rs = ++c.readSeq; c.genState = 'pending';
+  c.readP = (async () => {
+    const r = await csCall('app_tower_location_get', { p_tower_id: id }, { timeout: 20000 });
+    if (CARD !== c || uidNow() !== c.ctx.uid || rs !== c.readSeq) return null;
+    if (c.cap && c.cap.phase === 'deleting') return null;
+    if (r && r.ok === true) {
+      const prevGen = c.gen;
+      c.retired = !!r.retired; c.gen = r.gen != null ? Number(r.gen) : null; c.genState = r.gen != null ? 'known' : 'none';
+      if (r.location) { c.conf = r.location; c.confSrc = 'server'; } else { c.conf = null; c.confSrc = 'server'; }
+      delAskRefresh(c, prevGen);
+      cardPaint();
+    } else if (c.genState === 'pending') c.genState = c.gen != null ? 'known' : 'unknown';
+    return r;
+  })();
+  return c.readP;
+}
+// تحديث وصل للبطاقة أثناء تأكيد حذف مفتوح: الموقع الحالي معروض؛ إن تغيّر الجيل يلزم تأكيد جديد (معرّف طلب جديد) إلا إذا أُرسل الطلب فعلاً (غموض شبكة) فيبقى المعرّف والجيل لتعمل إعادة المحاولة
+function delAskRefresh(c, prevGen) {
+  const cap = c.cap; if (!cap || cap.phase !== 'delask' || cap.sent) return;
+  if (!c.conf) { c.cap = null; c.delMsg = 'ℹ️ لا موقع محفوظ لهذا البرج الآن — لا حاجة للحذف.'; return; }
+  if (c.gen != null && cap.gen !== c.gen) { cap.gen = c.gen; cap.rid = newRid(); cap.err = TLOC_MSG.location_changed + ' راجع الموقع الظاهر ثم أكّد من جديد.'; }
+}
+function newRid() { return typeof genUUID === 'function' ? genUUID() : String(Date.now()) + Math.random().toString(36).slice(2); }
+window.towerLocCardReread = function () { return CARD ? cardRead(CARD) : Promise.resolve(null); };   // قراءة حيّة جديدة للبطاقة المفتوحة (تُستعمل أيضاً في الاختبار)
 window.towerLocCardRefresh = function () { if (CARD && document.body.contains(CARD.box)) cardPaint(); };
 function cardPaint() {
   if (!CARD || !document.body.contains(CARD.box)) return; const c = CARD, ctx = c.ctx, box = c.box;
@@ -539,7 +631,11 @@ function cardPaint() {
   // capture panel
   const cap = c.cap;
   if (!cap) {
+    if (c.delMsg) h += '<div style="padding:8px;border-radius:8px;background:#F7FAFC;border-right:3px solid #718096;margin-bottom:8px;font-size:12px">' + c.delMsg + '</div>';
+    if (c.conf && !c.retired) h += '<button class="btn btn-secondary btn-sm" id="tlocDelAsk" style="width:100%;margin-bottom:8px;color:#c0392b">🗑️ حذف إحداثيات النقطة</button>';
     h += '<button class="btn btn-secondary" id="tlocStart" style="width:100%"' + (c.retired ? ' disabled' : '') + '>📍 التقاط موقع البرج</button>' + (c.retired ? '<div style="font-size:12px;color:#c0392b;margin-top:6px">البرج مؤرشف — لا يُسجَّل له موقع</div>' : '') + (!ctx.live ? '<div style="font-size:11px;color:#7B341E;margin-top:6px">الهوية من نسخة محفوظة على الجهاز؛ يتحقق الخادم منها عند الرفع.</div>' : '');
+  } else if (cap.phase === 'delask' || cap.phase === 'deleting') {
+    h += '<div style="padding:10px;border:2px solid #c0392b;border-radius:10px;background:#FFF5F5;font-size:13px"><b>تأكيد حذف إحداثيات النقطة</b>' + (cap.loading ? '<div style="font-size:12px">⏳ تُقرأ النسخة الحالية من الخادم…</div>' : '') + '<br>سيُخفى موقع هذا البرج عن الخريطة فقط. <b>يبقى البرج وكشوفاته ومعالجاته كما هي.</b> يُسجَّل اسمك ووقت الحذف على الخادم.' + (cap.err ? '<div style="color:#c0392b;margin-top:6px">⚠️ ' + esc(cap.err) + '</div>' : '') + '<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" id="tlocDelGo" style="background:#c0392b"' + (cap.phase === 'deleting' || cap.loading ? ' disabled' : '') + '>🗑️ نعم، احذف الموقع</button><button class="btn btn-secondary btn-sm" id="tlocCancel"' + (cap.phase === 'deleting' ? ' disabled' : '') + '>إلغاء</button></div></div>';
   } else if (cap.phase === 'asking') {
     h += '<div style="padding:10px;border:1px solid #F6C23E;border-radius:10px;background:#FFFAF0;font-size:13px">يجب أن تكون <b>عند هذا البرج الآن</b>. سيطلب الجهاز إذن الموقع. لن يُحفظ شيء قبل أن تؤكّد.<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" id="tlocGo">التقاط الآن</button><button class="btn btn-secondary btn-sm" id="tlocCancel">إلغاء</button></div></div>';
   } else if (cap.phase === 'locating') {
@@ -551,40 +647,97 @@ function cardPaint() {
     h += '<div style="padding:10px;border:2px solid #2E4057;border-radius:10px;font-size:13px"><b>راجع قبل التأكيد</b><br>خط العرض/الطول: <b style="direction:ltr;display:inline-block">' + cap.pos.lat.toFixed(6) + ', ' + cap.pos.lon.toFixed(6) + '</b><br>الدقة: <b style="color:' + qc + '">±' + (cap.pos.acc != null ? Math.round(cap.pos.acc) + ' م' : '—') + ' (' + Q_MSG[q] + ')</b><br>وقت الالتقاط: ' + fmtTime(cap.pos.ts) + '<br><span style="font-size:12px;color:#4a5568">البرج: ' + esc(ctx.line) + ' — رقم ' + esc(ctx.number) + '</span>' + (q === 'poor' ? '<div style="margin-top:6px;color:#c0392b;font-size:12px">⚠️ الدقة ضعيفة — الأفضل إعادة الالتقاط من مكان مكشوف قبل التأكيد.</div>' : '') +
       '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" id="tlocConfirm"' + (cap.phase === 'saving' ? ' disabled' : '') + '>✅ تأكيد وحفظ</button><button class="btn btn-secondary btn-sm" id="tlocGo"' + (cap.phase === 'saving' ? ' disabled' : '') + '>🔄 إعادة الالتقاط</button><button class="btn btn-secondary btn-sm" id="tlocCancel"' + (cap.phase === 'saving' ? ' disabled' : '') + '>إلغاء</button></div></div>';
   } else if (cap.phase === 'saved') {
-    h += '<div style="padding:10px;border-radius:10px;font-size:13px;background:' + (cap.state === 'confirmed' ? '#F0FFF4' : cap.state === 'rejected' ? '#FFF5F5' : '#FFFAF0') + '">' + (cap.state === 'confirmed' ? (cap.applied === false ? 'ℹ️ وصل الخادم، لكن يوجد موقع أحدث لهذا البرج فبقي هو.' : '✅ تأكّد الخادم من الحفظ' + (cap.renumbered ? ' (رقم البرج تغيّر؛ حُفظ على نفس البرج)' : '')) : cap.state === 'rejected' ? '⛔ رفضه الخادم: ' + esc(TLOC_MSG[cap.code] || cap.code) : '⏳ حُفظ على جهازك — لم يصل الخادم بعد وسيُرسل تلقائياً') + '<div style="margin-top:8px"><button class="btn btn-secondary btn-sm" id="tlocCancel">حسناً</button></div></div>';
+    h += '<div style="padding:10px;border-radius:10px;font-size:13px;background:' + (cap.state === 'confirmed' ? '#F0FFF4' : cap.state === 'rejected' ? '#FFF5F5' : '#FFFAF0') + '">' + (cap.state === 'confirmed' ? (cap.applied === false ? (cap.reason === 'older_than_delete' ? 'ℹ️ لم يُعتمد: هذا الالتقاط أقدم من حذف موقع هذا البرج فلم يُعِد النقطة المحذوفة. التقط الموقع من جديد.' : 'ℹ️ وصل الخادم، لكن يوجد موقع أحدث لهذا البرج فبقي هو.') : '✅ تأكّد الخادم من الحفظ' + (cap.renumbered ? ' (رقم البرج تغيّر؛ حُفظ على نفس البرج)' : '')) : cap.state === 'rejected' ? '⛔ رفضه الخادم: ' + esc(TLOC_MSG[cap.code] || cap.code) : '⏳ حُفظ على جهازك — لم يصل الخادم بعد وسيُرسل تلقائياً') + '<div style="margin-top:8px"><button class="btn btn-secondary btn-sm" id="tlocCancel">حسناً</button></div></div>';
   } else if (cap.phase === 'blocked') {
     h += '<div style="padding:10px;border-radius:10px;background:#FFF5F5;color:#c0392b;font-size:13px">⛔ ' + esc(cap.err) + '<div style="margin-top:8px"><button class="btn btn-secondary btn-sm" id="tlocCancel">إغلاق</button></div></div>';
   }
+  if (isAdminNow() && !c.retired && !c.cap) h += '<div style="margin-top:10px;border-top:1px dashed #cbd5e0;padding-top:8px"><button class="btn btn-secondary btn-sm" id="tlocTowerDel" style="width:100%;color:#c0392b">🗑️ حذف البرج (أرشفة عبر معاينة الترقيم)</button></div>';
   box.innerHTML = h + '</div>';
   const b = id2 => box.querySelector('#' + id2);
-  if (b('tlocStart')) b('tlocStart').onclick = () => { c.cap = { phase: 'asking' }; cardPaint(); };
-  if (b('tlocCancel')) b('tlocCancel').onclick = () => { c.cap = null; cardPaint(); };
+  if (b('tlocDelAsk')) b('tlocDelAsk').onclick = () => openDelAsk(c);
+  if (b('tlocDelGo')) b('tlocDelGo').onclick = () => deletePoint();
+  if (b('tlocTowerDel')) b('tlocTowerDel').onclick = () => { const x = ctx.ident; if (x && !x.blocked) topoFromMap(ctx.line, { retireTid: String(x.tower_id) }, { id: String(x.tower_id), line: ctx.line, number: String(ctx.number) }); };
+  if (b('tlocStart')) b('tlocStart').onclick = () => { c.capSeq++; c.cap = { phase: 'asking' }; cardPaint(); };
+  if (b('tlocCancel')) b('tlocCancel').onclick = () => { c.capSeq++; c.cap = null; cardPaint(); };
   if (b('tlocGo')) b('tlocGo').onclick = () => capturePos();
   if (b('tlocConfirm')) b('tlocConfirm').onclick = () => confirmCapture();
 }
+async function cacheDropTower(uid, id) {
+  try { const all = await cacheAll(uid), puts = []; all.forEach(ent => { if ((ent.rows || []).some(r => String(r.id) === String(id))) puts.push(Object.assign({}, ent, { rows: ent.rows.filter(r => String(r.id) !== String(id)) })); }); if (puts.length) await cachePut(uid, puts.map(e => { const x = Object.assign({}, e); delete x.k; return x; })); } catch (e) {}
+}
+// N25-R40: حذف إحداثيات النقطة (لأي دور مسجّل): بتأكيد صريح، متصل فقط، بمعرّف طلب ثابت لإعادة المحاولة؛ يُخفي الموقع وحده ولا يمسّ البرج أو سجلاته
+async function openDelAsk(c) {
+  // الجيل يُثبَّت من الموقع الظاهر لحظة فتح التأكيد؛ إن لم يكن الظاهر من الخادم تُقرأ نسخته أولاً
+  if (c.confSrc !== 'server' || c.gen == null || c.genState === 'pending') {
+    c.cap = { phase: 'delask', rid: newRid(), gen: null, loading: true }; cardPaint();
+    const me = c.cap; await cardRead(c); if (CARD !== c || c.cap !== me) return;
+    if (!c.conf && c.confSrc === 'server') { c.cap = null; c.delMsg = 'ℹ️ لا موقع محفوظ لهذا البرج الآن — لا حاجة للحذف.'; cardPaint(); return; }
+    if (c.confSrc !== 'server' || c.gen == null) { me.loading = false; me.err = TLOC_MSG.expected_gen_required; cardPaint(); return; }
+    me.loading = false; me.gen = c.gen; cardPaint(); return;
+  }
+  c.cap = { phase: 'delask', rid: newRid(), gen: c.gen, sent: false }; cardPaint();
+}
+async function deletePoint() {
+  const c = CARD; if (!c || !c.cap || (c.cap.phase !== 'delask' && c.cap.phase !== 'deleting')) return; const cap = c.cap, ctx = c.ctx;
+  const id = ctx.ident && !ctx.ident.blocked ? ctx.ident.tower_id : null; if (!id) return;
+  if (navigator.onLine === false) { cap.err = 'حذف الموقع يتطلب اتصالاً بالخادم — لم يُحذف شيء.'; cardPaint(); return; }
+  if (uidNow() !== ctx.uid) { c.cap = { phase: 'blocked', err: 'تغيّر الحساب — لم يُحذف شيء.' }; cardPaint(); return; }
+  let cur = null; try { cur = csIdentSnap(ctx.line, ctx.number); } catch (e) { cur = null; }
+  if (!cur || cur.blocked || String(cur.tower_id) !== String(id)) { c.cap = { phase: 'blocked', err: 'تغيّر ترقيم الخط أو هوية هذا البرج منذ فتحه — لم يُحذف شيء. أعد فتح البرج.' }; cardPaint(); return; }
+  if (cap.loading) return;
+  if (cap.gen == null) { cap.phase = 'delask'; cap.err = TLOC_MSG.expected_gen_required; cardPaint(); return; }
+  cap.phase = 'deleting'; cap.err = null; cap.sent = true; c.readSeq++; cardPaint();
+  const r = await csCall('app_tower_location_delete', { p_request_id: cap.rid, p_tower_id: id, p_confirm: true, p_line_name: ctx.line, p_tower_number: String(ctx.number), p_topology_rev: cur.topology_rev, p_expected_gen: cap.gen }, { timeout: 30000 });
+  if (CARD !== c) return;
+  if (r && r.ok === false && r.code === 'location_changed') {   // N25-R40a: مستخدم آخر غيّر الموقع أثناء التأكيد: لا حذف، ويُعرض الموقع الحالي
+    c.gen = r.gen != null ? Number(r.gen) : null; c.genState = c.gen != null ? 'known' : c.genState; if (r.location) { c.conf = r.location; c.confSrc = 'server'; } else { c.conf = null; c.confSrc = 'server'; }
+    c.cap = null; c.delMsg = '⚠️ ' + TLOC_MSG.location_changed; cardPaint(); return;
+  }
+  if (r && r.ok === true) {
+    const uid = ctx.uid;
+    try { tlocConfClear((v, k) => String(k) === String(id)); } catch (e) {}
+    try { tlocForTower(id).forEach(e => tlocRemove(e.request_id)); updatePendingBadge(); } catch (e) {}
+    try { S.rows = S.rows.filter(x => String(x.id) !== String(id)); deriveTowers(); } catch (e) {}
+    cacheDropTower(uid, id);
+    c.conf = null; c.confSrc = 'server'; c.cap = null; if (r.gen != null) { c.gen = Number(r.gen); c.genState = 'known'; }
+    c.delMsg = r.deleted === false ? 'ℹ️ لا موقع محفوظ لهذا البرج (لم يتغيّر شيء).' : '✅ حُذفت إحداثيات النقطة' + (r.duplicate ? ' (وصل ردّ العملية نفسها)' : '') + ' — البرج وكشوفاته ومعالجاته باقية.';
+    cardPaint(); return;
+  }
+  const code = r && r.code; cap.phase = 'delask'; if (!((r && r.net) || code === 'network')) cap.sent = false;
+  cap.err = (r && r.net) || code === 'network' ? 'تعذّر الاتصال — لم يُؤكَّد الحذف؛ أعد المحاولة (المعرّف نفسه يمنع التكرار).' : (code === 'http_404' ? 'الخادم لم يُحدَّث بعد (يلزم تنفيذ SQL76) — لم يُحذف شيء.' : (TLOC_MSG[code] || code || 'رفض الخادم الطلب'));
+  cardPaint();
+}
 async function capturePos() {
-  const c = CARD; if (!c) return; const ctx = c.ctx; c.cap = { phase: 'locating' }; cardPaint();
-  let p;
-  try { p = await geo({ enableHighAccuracy: true, timeout: 25000, maximumAge: 0 }); }
-  catch (e) { if (CARD !== c) return; c.cap = { phase: 'error', err: GEO_ERR[e && e.code != null ? e.code : 2] || GEO_ERR[2] }; cardPaint(); return; }
-  if (CARD !== c || !document.body.contains(c.box)) return;
-  // الهوية والحساب يُثبَّتان الآن (لحظة الالتقاط)، لا عند الإرسال
+  const c = CARD; if (!c) return; const ctx = c.ctx;
+  // N25-R40b: سياق المحاولة (الحساب + هوية البرج + جيل الخادم) يُثبَّت كله قبل بدء GPS؛ لا يُقرأ شيء منه بعد geo
+  const my = ++c.capSeq, mine = () => CARD === c && c.capSeq === my && c.cap && c.cap.phase === 'locating' && document.body.contains(c.box);
+  c.cap = { phase: 'locating', att: my }; cardPaint();
+  // جيل غير معروف + اتصال: تُنتظر القراءة الحيّة أولاً (لا يبدأ القياس قبلها)، ثم يبدأ قياس جديد
+  if (c.genState === 'pending') { for (let k = 0; k < 3 && c.genState === 'pending'; k++) await c.readP; }
+  else if (c.genState === 'unknown' && navigator.onLine !== false && typeof csCall === 'function' && CS_AUTH.token) await cardRead(c);
+  if (!mine()) return;
   const uid = uidNow(); let cur = null; try { cur = csIdentSnap(ctx.line, ctx.number); } catch (e) { cur = null; }
   if (!uid || uid !== ctx.uid) { c.cap = { phase: 'blocked', err: 'تغيّر الحساب — لم يُسجَّل شيء. أعد فتح البرج.' }; cardPaint(); return; }
   if (!cur || cur.blocked || !ctx.ident || cur.tower_id !== ctx.ident.tower_id) { c.cap = { phase: 'blocked', err: 'تغيّر ترقيم الخط أو هوية هذا البرج منذ فتحه — لم يُسجَّل شيء. أعد فتح البرج بعد تحديث البيانات.' }; cardPaint(); return; }
+  const att = { uid, ident: { tower_id: cur.tower_id, topology_rev: cur.topology_rev }, line: ctx.line, number: ctx.number, baseGen: (c.genState === 'known' && c.gen != null) ? c.gen : null, rid: newRid() };   // بلا جيل (SQL74/بلا اتصال) => base_gen لا يُرسل
+  let p;
+  try { p = await geo({ enableHighAccuracy: true, timeout: 25000, maximumAge: 0 }); }
+  catch (e) { if (!mine()) return; c.cap = { phase: 'error', err: GEO_ERR[e && e.code != null ? e.code : 2] || GEO_ERR[2] }; cardPaint(); return; }
+  if (!mine()) return;   // محاولة قديمة (أُلغيت/أُعيدت) لا تكتب فوق الأحدث
   const ts = p.timestamp || Date.now();
-  c.cap = { phase: 'ready', uid, rid: (typeof genUUID === 'function' ? genUUID() : String(Date.now())), ident: { tower_id: cur.tower_id, topology_rev: cur.topology_rev }, line: ctx.line, number: ctx.number, pos: { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy != null ? p.coords.accuracy : null, ts } };
+  c.cap = { phase: 'ready', baseGen: att.baseGen, uid: att.uid, rid: att.rid, ident: att.ident, line: att.line, number: att.number, pos: { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy != null ? p.coords.accuracy : null, ts } };
   cardPaint();
 }
 async function confirmCapture() {
   const c = CARD; if (!c || !c.cap || c.cap.phase !== 'ready') return; const cap = c.cap;
   if (uidNow() !== cap.uid) { c.cap = { phase: 'blocked', err: 'تغيّر الحساب بعد الالتقاط — لم يُحفظ شيء.' }; cardPaint(); return; }
   cap.phase = 'saving'; cardPaint();
-  const r = await tlocSubmit({ request_id: cap.rid, uid: cap.uid, tower_id: cap.ident.tower_id, line: cap.line, number: cap.number, topology_rev: cap.ident.topology_rev, lat: cap.pos.lat, lon: cap.pos.lon, accuracy_m: cap.pos.acc == null ? null : Math.round(cap.pos.acc * 10) / 10, captured_at: new Date(cap.pos.ts).toISOString() });
+  const r = await tlocSubmit({ request_id: cap.rid, uid: cap.uid, tower_id: cap.ident.tower_id, line: cap.line, number: cap.number, topology_rev: cap.ident.topology_rev, base_gen: cap.baseGen, lat: cap.pos.lat, lon: cap.pos.lon, accuracy_m: cap.pos.acc == null ? null : Math.round(cap.pos.acc * 10) / 10, captured_at: new Date(cap.pos.ts).toISOString() });
   if (CARD !== c) return;
   if (!r.ok) { c.cap = { phase: 'blocked', err: r.reason === 'account_changed' ? 'تغيّر الحساب — لم يُحفظ شيء.' : 'تعذّر الحفظ على الجهاز — لم يُرسل شيء.' }; cardPaint(); return; }
-  c.cap = { phase: 'saved', state: r.state, code: r.code, applied: r.applied, renumbered: r.renumbered };
-  if (r.state === 'confirmed') { const lc = tlocConfMine()[String(cap.ident.tower_id)]; if (lc) { c.conf = { lat: lc.lat, lon: lc.lon, accuracy_m: lc.acc, captured_at: lc.at, source: lc.src, saved_by_name: lc.by }; c.confSrc = 'server'; } }
+  c.cap = { phase: 'saved', state: r.state, code: r.code, applied: r.applied, renumbered: r.renumbered, reason: r.reason || null };
+  if (r.state === 'confirmed') { const lc = tlocConfMine()[String(cap.ident.tower_id)]; if (lc) { c.conf = { lat: lc.lat, lon: lc.lon, accuracy_m: lc.acc, captured_at: lc.at, source: lc.src, saved_by_name: lc.by }; c.confSrc = 'server'; if (lc.gen != null) { c.gen = Number(lc.gen); c.genState = 'known'; } } }
+  if (r.state === 'rejected' && (r.code === 'older_than_delete' || r.code === 'recapture_required')) { try { towerLocCardImpl(c.ctx, null).then(() => { if (CARD) { CARD.delMsg = '⚠️ ' + (TLOC_MSG[r.code] || r.code); cardPaint(); } }); } catch (e) {} }   // N25-R40a: الموقع حُذف/تغيّر: تُقرأ النسخة الحالية من الخادم لإعادة الالتقاط عليها
   cardPaint();
 }
 

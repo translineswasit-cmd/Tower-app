@@ -77,6 +77,10 @@ async function csInsCfgRetry() {
   csInsCfgRefresh();
 }
 function openTowerModalImpl(lineName, towerNum, scrollY0) {
+  { const ex = window._openExpect; window._openExpect = null;   // N25-R40: فتح من علامة الخريطة: لا يُفتح إلا إذا بقي الرقم لنفس tower_id
+    if (ex) { let sn = null; try { sn = csIdentSnap(lineName, String(towerNum), { mapOnly: true }); } catch (e) { sn = null; }
+      if (ex.line !== lineName || String(ex.num) !== String(towerNum) || !sn || sn.blocked || String(sn.tower_id) !== String(ex.tid)) { window._openPin = null; try { showToast('⚠️ ترقيم الخط تغيّر أثناء الفتح — لم يُفتح نموذج أي برج. ارجع للخريطة وحدّثها ثم اختر البرج من جديد', 'error'); } catch (e) {} return; }
+      window._openPin = { line: lineName, num: String(towerNum), tid: String(ex.tid) }; } else window._openPin = null; }
   towerGridScrollY = (typeof scrollY0 === 'number') ? scrollY0 : window.scrollY; // نحفظ موضع التمرير الحالي بشبكة الأبراج حتى نرجع له عند الإغلاق
   pushLevel(closeTowerInspectionModal);
   document.getElementById('f_line_name').value = lineName;
@@ -120,6 +124,7 @@ function csInsContextRefresh() {
 }
 
 function closeTowerInspectionModal() {
+  window._openPin = null;
   invalidatePrefill(); // v334: أي نتيجة متأخرة بعد الإغلاق تُهمل
   if (document.activeElement && document.activeElement !== document.body && typeof document.activeElement.blur === 'function') {
     document.activeElement.blur();
@@ -1312,6 +1317,9 @@ function opsCaptureBaseline(mode) {
   _insHealthy = { 1: false, 2: false };
   _opsBaseline = { line, tower, mode: mode === 'blank' ? 'blank' : 'inherit', vals: opsSectionVals(), inherited: inh, ident: csIdentSnap(line, tower) };   // N25-R4a: هوية هذا البرج تُلتقط مع بيانات النموذج نفسها وتبقى ثابتة حتى الحفظ
   try { csInsHealthyRefresh(); } catch (e) { /* UI only */ }
+  { const pin = window._openPin;   // N25-R40: بعد التقاط هوية النموذج: يجب أن تطابق tower_id المختار من الخريطة، وإلا يُغلق النموذج فوراً
+    if (pin && pin.line === line && pin.num === String(tower)) { const id = _opsBaseline && _opsBaseline.ident && _opsBaseline.ident.tower_id;
+      if (!id || String(id) !== pin.tid) { window._openPin = null; try { closeTowerInspectionModal(); } catch (e) {} try { showToast('⚠️ تعذّر إثبات أن النموذج لنفس البرج المختار من الخريطة (ترقيم الخط تغيّر) — أُغلق دون حفظ', 'error'); } catch (e) {} } } }
 }
 
 function opsSectionAvailable(s) {

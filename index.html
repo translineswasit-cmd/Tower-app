@@ -892,7 +892,6 @@ tbody tr:hover { background: #F7FAFC; }
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="showLinesInfo()">📋 بيانات الخطوط</button>
       <button class="btn btn-secondary" onclick="showLinesStatus()">📡 حالة الخطوط</button>
-      <button class="btn btn-secondary" id="btnTowerMap" onclick="showTowerMap()">🗺️ خريطة الأبراج</button>
     </div>
   </div>
   <div id="towerMapView" style="display:none"></div>
@@ -4097,6 +4096,7 @@ function showPage(id, btn) {
   }
   const currentActive = document.querySelector('.page.active');
   const currentId = currentActive ? currentActive.id.replace('page-','') : null;
+  if (currentId === 'lines' && id !== 'lines') { try { if (typeof tmapIsOpen === 'function' && tmapIsOpen()) showLinesHome(); } catch (e) {} }   // N25-R40: مغادرة صفحة الخطوط تُغلق الخريطة (الخريطة تُفتح من أيقونة GPS فقط)
   if (currentId !== id) levelStack = []; // مستويات الصفحة السابقة ما تعود تخص الصفحة الجديدة
   if (!isGoingBack && currentId && currentId !== id) {
     // لو الصفحة الهدف موجودة أصلاً بالمكدس، نقصّه عندها بدل ما نكدّس فوقها —
@@ -5707,7 +5707,7 @@ function docqDiscard(opId) {
 const TLOC_KEY = 'tower_loc_outbox', TLOC_CONF_KEY = 'tower_loc_confirmed';
 
 const TLOC_MSG = { unknown_tower_id: 'هوية البرج غير معروفة بالخادم', tower_retired: 'البرج مؤرشف/محذوف — لا يُسجَّل له موقع', identity_required: 'هوية البرج مطلوبة', op_id_reused: 'معرّف الطلب مستعمل لطلب مختلف',
-  out_of_region: 'الإحداثيات خارج النطاق الجغرافي المقبول', invalid: 'بيانات غير صالحة', captured_in_future: 'وقت الالتقاط في المستقبل (ساعة الجهاز؟)', captured_too_old: 'الالتقاط أقدم من المدة المسموحة', forbidden: 'ما عندك صلاحية لهذا الإجراء' };
+  out_of_region: 'الإحداثيات خارج النطاق الجغرافي المقبول', invalid: 'بيانات غير صالحة', captured_in_future: 'وقت الالتقاط في المستقبل (ساعة الجهاز؟)', captured_too_old: 'الالتقاط أقدم من المدة المسموحة', forbidden: 'ما عندك صلاحية لهذا الإجراء', older_than_delete: 'حُذف موقع هذا البرج بعد بدء هذا الالتقاط — لم يُعد الالتقاط القديم النقطة؛ أعد الالتقاط', confirmation_required: 'يلزم تأكيد صريح لحذف الموقع', recapture_required: 'حُذف موقع هذا البرج ولا يحمل هذا الالتقاط ما يثبت أنه أُخذ بعد الحذف — أعد الالتقاط من البرج', location_changed: 'تغيّر موقع هذا البرج (حفظه أو حذفه مستخدم آخر) بعد ما راجعته — لم يتغيّر شيء، راجع الموقع الحالي ثم أعد المحاولة', expected_gen_required: 'نسخة الموقع غير معروفة — حدّث البطاقة من الخادم', topology_busy: 'ترقيم الخط قيد التغيير — أعد المحاولة بعد قليل' };
 
 let _tlocRun = null, _tlocAgain = false;
 
@@ -5742,7 +5742,7 @@ function tlocEnqueue(c) {
   const dup = r.items.find(x => x && x.request_id === c.request_id);
   if (dup) return { ok: true, entry: dup, duplicate: true };
   const e = { request_id: c.request_id, uid: u, owner: (currentUser.full_name || currentUser.username || ''), tower_id: String(c.tower_id), line: c.line, number: String(c.number), topology_rev: c.topology_rev == null ? null : Number(c.topology_rev),
-    lat: c.lat, lon: c.lon, accuracy_m: c.accuracy_m == null ? null : c.accuracy_m, captured_at: c.captured_at, created_at: Date.now() };
+    lat: c.lat, lon: c.lon, accuracy_m: c.accuracy_m == null ? null : c.accuracy_m, captured_at: c.captured_at, base_gen: c.base_gen == null ? null : Number(c.base_gen), created_at: Date.now() };   // N25-R40a: base_gen = جيل الموقع الذي قرأه التطبيق من الخادم عند بدء الالتقاط (لا ساعة الهاتف)
   r.items.push(e);
   if (!tlocWrite(r.items)) return { ok: false, reason: 'storage' };
   updatePendingBadge();
@@ -5775,8 +5775,10 @@ function tlocConfPrune(serverRows) {   // بعد قراءة حيّة: ما صا�
 
 // يرسل عنصراً واحداً: {state:'done',res} | {state:'retry',code} | {state:'rejected',code}
 async function tlocSendOne(e) {
-  const out = await csCall('app_tower_location_save', { p_request_id: e.request_id, p_tower_id: e.tower_id, p_lat: e.lat, p_lon: e.lon, p_accuracy_m: e.accuracy_m, p_captured_at: e.captured_at,
-    p_line_name: e.line, p_tower_number: String(e.number), p_topology_rev: e.topology_rev }, { timeout: 30000 });
+  const args = { p_request_id: e.request_id, p_tower_id: e.tower_id, p_lat: e.lat, p_lon: e.lon, p_accuracy_m: e.accuracy_m, p_captured_at: e.captured_at,
+    p_line_name: e.line, p_tower_number: String(e.number), p_topology_rev: e.topology_rev };
+  if (e.base_gen != null) args.p_base_gen = e.base_gen;   // N25-R40a: قبل SQL76 (الخادم على SQL74) لا يوجد الوسيط؛ يُرسل فقط عند وجود جيل من الخادم
+  const out = await csCall('app_tower_location_save', args, { timeout: 30000 });
   if (out && out.ok === true) return { state: 'done', res: out };
   if (!out || out.stale) return { state: 'retry', code: 'session_changed' };
   if (out.net) return { state: 'retry', code: 'network' };
@@ -5803,9 +5805,9 @@ async function tlocSyncPass() {
     const s = await tlocSendOne(cur);
     if (s.state === 'done') {
       const loc = s.res && s.res.location;
-      if (loc && String(tlocUid()) === u0) { try { tlocConfPut(cur.tower_id, { line: cur.line, number: cur.number, lat: loc.lat, lon: loc.lon, acc: loc.accuracy_m, at: loc.captured_at, src: loc.source, by: loc.saved_by_name || '' }); } catch (x) {} }
+      if (loc && String(tlocUid()) === u0) { try { tlocConfPut(cur.tower_id, { line: cur.line, number: cur.number, lat: loc.lat, lon: loc.lon, acc: loc.accuracy_m, at: loc.captured_at, src: loc.source, by: loc.saved_by_name || '', gen: loc.gen != null ? loc.gen : null }); } catch (x) {} }
       tlocRemove(e.request_id); changed = true;
-      _tlocDone.set(e.request_id, { applied: s.res.applied !== false, duplicate: !!s.res.duplicate, renumbered: !!s.res.renumbered });
+      _tlocDone.set(e.request_id, { applied: s.res.applied !== false, duplicate: !!s.res.duplicate, renumbered: !!s.res.renumbered, reason: s.res.reason || null });
     } else if (s.state === 'rejected') {
       tlocFlag(e.request_id, { rejected: { code: s.code, at: Date.now() } }); changed = true;
       showToast('⚠️ رُفض موقع برج معلّق: ' + (TLOC_MSG[s.code] || s.code), 'error');
@@ -5823,7 +5825,7 @@ async function tlocSubmit(c) {
   const q = tlocEnqueue(c); if (!q.ok) return q;
   await tlocSync();
   const left = tlocRead().items.find(x => x && x.request_id === q.entry.request_id);
-  if (!left) { const d = _tlocDone.get(q.entry.request_id) || {}; return { ok: true, state: 'confirmed', entry: q.entry, applied: d.applied !== false, renumbered: !!d.renumbered }; }
+  if (!left) { const d = _tlocDone.get(q.entry.request_id) || {}; return { ok: true, state: 'confirmed', entry: q.entry, applied: d.applied !== false, renumbered: !!d.renumbered, reason: d.reason || null }; }
   if (left.rejected) return { ok: true, state: 'rejected', entry: left, code: left.rejected.code };
   return { ok: true, state: 'pending', entry: left };
 }
@@ -10376,7 +10378,15 @@ function openDepLogExportModal() { return featRun(['lexp'], () => openDepLogExpo
 // يبقى هنا دائماً: lines-data.js وLINES_INFO، linesInfoCache وloadLinesInfoFromDB وgetLinesInfoData، كاش أبراج الخطوط وgetLineTowers (متزامن)،
 // الجلسة/الصلاحيات، صفحة المعلّقة، أدوات Canvas/PDF المشتركة. كل وحدة هنا: Promise واحد مشترك، تنفيذ مرة واحدة، إعادة المحاولة بعد الفشل.
 function showLinesInfo() { return featRun(['lpg'], () => showLinesInfoImpl(), 'lpg'); }
-function openGpsFeature() { showPage('lines'); return showTowerMap(); }   // N25-R39: بطاقة GPS مستقلة في الخدمات (خريطة الأبراج وموقعي)
+function openGpsFeature() { showPage('lines'); { const h = document.getElementById('linesHomeView'); if (h) h.style.display = 'none'; } return showTowerMap(); }
+// N25-R40: العودة إلى الخريطة من تفاصيل برج/كشف بصري/كشف حراري فُتحت منها (المستوى يُدفع بعد فتح الوجهة)
+function backToMap() {
+  try { const td = document.getElementById('towerDetailView'); if (td) td.style.display = 'none'; const lt = document.getElementById('lineTowerListView'); if (lt) lt.style.display = 'none'; } catch (e) {}
+  const cur = document.querySelector('.page.active'), curId = cur ? cur.id.replace('page-', '') : null;
+  if (curId !== 'lines') { if (pageStack[pageStack.length - 1] === 'lines') pageStack.pop(); isGoingBack = true; showPage('lines'); }
+  { const h = document.getElementById('linesHomeView'); if (h) h.style.display = 'none'; }
+  return showTowerMap();
+}   // N25-R39: بطاقة GPS مستقلة في الخدمات (خريطة الأبراج وموقعي)
 function showTowerMap() { return featRun(['tmap'], (tok) => showTowerMapImpl(tok), 'tmap'); }   // N25-R34
 function towerLocCardMount(ctx) { return featRun(['tmap'], (tok) => towerLocCardImpl(ctx, tok), 'tloc'); }   // N25-R34
 function showLinesStatus() { return featRun(['lpg'], (tok) => showLinesStatusImpl(tok), 'lpg'); }
