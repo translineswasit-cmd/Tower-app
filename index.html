@@ -371,6 +371,29 @@ tbody tr:hover { background: #F7FAFC; }
 .treat-item-btn.damaged { background: #FED7D7; color: #822727; border-color: #FC4444; }
 .treat-item-btn.fixed { background: #C6F6D5; color: #22543D; border-color: #48BB78; }
 
+
+/* N25-R41: تخصيص الرئيسية */
+.home-settings-row { margin-top: 16px; display: flex; justify-content: center; }
+.home-settings-row .btn { min-height: 44px; padding: 10px 22px; }
+.home-empty { background: #fff; border-radius: 12px; padding: 18px; text-align: center; color: #4a5568; margin-top: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.hc-note { background: #EBF8FF; border-right: 3px solid #4299E1; border-radius: 8px; padding: 10px 12px; font-size: 0.82rem; color: #2A4365; margin-bottom: 12px; line-height: 1.6; }
+.hc-sec { background: #fff; border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+.hc-sec h3 { margin: 0 0 8px; font-size: 0.98rem; color: #1a2e4a; }
+.hc-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-top: 1px solid #EDF2F7; }
+.hc-row:first-of-type { border-top: 0; }
+.hc-ico { width: 34px; flex: 0 0 34px; text-align: center; font-size: 1.5rem; line-height: 1; }
+.hc-ico img { width: 30px; height: 30px; object-fit: contain; vertical-align: middle; }
+.hc-name { flex: 1 1 auto; min-width: 0; }
+.hc-name b { display: block; font-size: 0.92rem; color: #2E4057; overflow-wrap: anywhere; }
+.hc-name span { display: block; font-size: 0.74rem; color: #718096; overflow-wrap: anywhere; }
+.hc-acts { display: flex; gap: 6px; flex: 0 0 auto; }
+.hc-acts button { min-width: 44px; min-height: 44px; border-radius: 10px; border: 1.5px solid #CBD5E0; background: #F7FAFC; font-size: 1rem; cursor: pointer; font-family: inherit; padding: 0 8px; }
+.hc-acts button:disabled { opacity: 0.35; cursor: default; }
+.hc-acts button.hc-add { background: #2E4057; color: #fff; border-color: #2E4057; font-size: 0.82rem; }
+.hc-acts button.hc-hide { color: #c0392b; font-size: 0.82rem; }
+.hc-name span.hc-chip { display: inline-block; font-size: 0.68rem; background: #C6F6D5; color: #22543D; border-radius: 10px; padding: 1px 8px; margin: 0 6px; font-weight: 600; vertical-align: middle; }
+.hc-bar { position: sticky; bottom: 0; background: #F4F6F9; padding: 10px 0 max(10px, env(safe-area-inset-bottom)); display: flex; gap: 8px; flex-wrap: wrap; border-top: 1px solid #E2E8F0; }
+.hc-bar .btn { flex: 1 1 30%; min-height: 46px; }
 </style>
 </head>
 <body>
@@ -445,7 +468,7 @@ tbody tr:hover { background: #F7FAFC; }
 <!-- HOME -->
 <div class="page active" id="page-home">
   <div class="home-hero"><h2>مرحباً بك في نظام كشف الأبراج</h2><p>سجّل بيانات الكشف، تصفح السجلات، وصدّر التقارير</p></div>
-  <div class="cards-grid">
+  <div class="cards-grid" id="homeGrid">
     <div class="card" onclick="showPage('form');clearForm();"><span class="icon">➕</span><span class="label">إضافة كشف</span><span class="sublabel">تسجيل برج جديد</span></div>
     <div class="card" onclick="showPage('thermal');showThermalHome();"><img src="icon-thermal.png" class="icon-img icon-img-lg"><span class="label">الكشف الحراري</span><span class="sublabel">قياسات الحرارة</span></div>
     <div class="card" id="homePendingCard" onclick="showPage('pendingSync');renderPendingSyncPage();"><span class="icon">⏳</span><span class="label">المعلّقة</span><span class="sublabel">بانتظار الرفع</span></div>
@@ -453,6 +476,8 @@ tbody tr:hover { background: #F7FAFC; }
     <div class="card" id="homeLinesCard" onclick="showPage('lines');showLinesHome();"><img src="icon-lines.png" class="icon-img icon-img-xl"><span class="label">الخطوط</span><span class="sublabel">بيانات وحالة الخطوط</span></div>
     <div class="card" id="homeDailyReportCard" onclick="openDailyReportFeature();"><span class="icon">📅</span><span class="label">التقرير اليومي</span><span class="sublabel">الموقف اليومي للخطوط</span></div>
   </div>
+  <div id="homeEmpty" class="home-empty" style="display:none">لا توجد اختصارات على الرئيسية. أضِف ما تحتاجه من «تخصيص الرئيسية».</div>
+  <div class="home-settings-row"><button class="btn btn-secondary" id="homeSettingsBtn" onclick="showPage('account');loadAccountPage();">⚙️ الإعدادات</button></div>
 </div>
 
 <!-- SERVICES (دليل كل خدمات التطبيق) -->
@@ -1631,8 +1656,26 @@ tbody tr:hover { background: #F7FAFC; }
     </div>
   </div>
 
+  <div class="form-card" id="accSettingsCard">
+    <h3>⚙️ الإعدادات</h3>
+    <button class="btn btn-secondary" id="btnHomeCustom" style="width:100%" onclick="openHomeCustom()">🏠 تخصيص الرئيسية</button>
+    <p style="font-size:0.78rem;color:#718096;margin:8px 0 0">تختار اختصارات الرئيسية وترتيبها. الإخفاء يزيل الاختصار من الرئيسية فقط، وتبقى الوظيفة بمكانها الأصلي.</p>
+  </div>
+
   <div class="form-card">
     <button class="btn btn-secondary" style="width:100%" onclick="logout()">🚪 تسجيل خروج</button>
+  </div>
+</div>
+
+<!-- HOME CUSTOMIZE (N25-R41) -->
+<div class="page" id="page-homeCustom">
+  <div class="page-title">🏠 تخصيص الرئيسية</div>
+  <div class="hc-note">الإخفاء يزيل الاختصار من الرئيسية فقط — الوظيفة تبقى بمكانها الأصلي. التعديل يُحفظ على هذا الجهاز لهذا الحساب، ولا يُطبَّق إلا بعد «حفظ».</div>
+  <div id="hcBody"></div>
+  <div class="hc-bar">
+    <button class="btn btn-primary" id="hcBtnSave" onclick="hcSave()">💾 حفظ</button>
+    <button class="btn btn-secondary" id="hcBtnCancel" onclick="hcCancel()">إلغاء</button>
+    <button class="btn btn-secondary" id="hcBtnReset" onclick="hcReset()">🔄 استعادة الافتراضي</button>
   </div>
 </div>
 
@@ -3714,6 +3757,129 @@ function logout(skipServer) {
   showLogin();
 }
 
+
+// ========================
+// N25-R41: تخصيص الرئيسية — اختصارات الرئيسية لكل حساب على هذا الجهاز (محلي فقط، بلا خادم)
+// كل اختصار له معرّف ثابت ومسار فتح هو نفسه المسار الحالي للوظيفة. الإخفاء يزيل الاختصار من الرئيسية فقط.
+// ========================
+const HOME_LAYOUT_KEY = 'tower_home_layout_v1:';
+const HOME_DEFAULT = ['add_inspection', 'thermal', 'pending', 'departures', 'lines', 'daily_report'];   // الرئيسية الحالية بترتيبها
+// الافتراضي لكل دور = الرئيسية الحالية نفسها: الفني لا يرى المعلّقة والخطوط على الرئيسية (تبقى بالخدمات)، والتقرير اليومي للمدير والمشرف
+function homeDefault() { const tech = !!currentUser && currentUser.role === 'technician'; return HOME_DEFAULT.filter(id => !(tech && (id === 'pending' || id === 'lines'))); }
+const _roleIn = (...rs) => () => !!currentUser && rs.indexOf(currentUser.role) >= 0;
+const _notTech = () => !!currentUser && currentUser.role !== 'technician';
+const _any = () => !!currentUser;
+const _depOpen = (tab) => async () => {
+  showPage('departures'); const sq = pageNavigationRequestSeq;
+  try { await loadDepartures(); } catch (e) {}
+  if (sq !== pageNavigationRequestSeq) return;
+  const b = document.querySelector('.dep-tab[onclick*="\'' + tab + '\'"]'); if (b) switchDepTab(tab, b);
+};
+const _recOpen = (type) => async () => {
+  await openRecordsHubFeature();
+  const pg = document.getElementById('page-recordsHub'); if (pg && pg.classList.contains('active')) return openHubBrowse(type);
+};
+const _statOpen = (tab) => () => { openStatisticsHub(); if (tab !== 'stats') switchStaffStatsTab(tab); };
+const HOME_SECTIONS = [
+  ['insp', '➕ الكشف البصري'], ['thermal', 'الكشف الحراري'], ['lines', 'الخطوط والخريطة'], ['dep', '🚨 المغادرات'], ['rec', '📚 السجلات والتقارير'],
+  ['stats', 'الإحصائيات'], ['forms', '📑 الاستمارات'], ['other', '🧰 أخرى']
+];
+const HOME_CATALOG = [
+  { id: 'add_inspection', sec: 'insp', name: 'إضافة كشف', sub: 'تسجيل برج جديد', icon: '➕', avail: _any, open: () => { showPage('form'); clearForm(); } },
+  { id: 'thermal', sec: 'thermal', name: 'الكشف الحراري', sub: 'قياسات الحرارة', img: 'icon-thermal.png', cls: 'icon-img icon-img-lg', avail: _any, open: () => { showPage('thermal'); showThermalHome(); } },
+  { id: 'thermal_new', sec: 'thermal', name: 'الكشف الجديد', sub: 'تسجيل قياسات حرارة', icon: '➕', avail: _any, open: () => { showPage('thermal'); showThermalHome(); return showThermalNew(); } },
+  { id: 'thermal_archive', sec: 'thermal', name: 'الكشوفات السابقة', sub: 'أرشيف القياسات', icon: '📂', avail: _any, open: () => { showPage('thermal'); showThermalHome(); return showThermalArchive(); } },
+  { id: 'thermal_form', sec: 'thermal', name: 'استمارة الكشف الحراري', sub: 'MOE/T2-FO-177', icon: '📄', avail: _any, open: () => { showPage('thermal'); showThermalHome(); return showThermalOfficialFormHome(); } },
+  { id: 'lines', sec: 'lines', name: 'الخطوط', sub: 'بيانات وحالة الخطوط', img: 'icon-lines.png', cls: 'icon-img icon-img-xl', legacy: 'homeLinesCard', avail: _any, open: () => { showPage('lines'); showLinesHome(); } },
+  { id: 'lines_info', sec: 'lines', name: 'بيانات الخطوط', sub: 'جدول الخطوط', icon: '📋', avail: _any, open: () => { showPage('lines'); showLinesHome(); return showLinesInfo(); } },
+  { id: 'lines_status', sec: 'lines', name: 'حالة الخطوط', sub: 'الموقف الحالي', icon: '📡', avail: _any, open: () => { showPage('lines'); showLinesHome(); return showLinesStatus(); } },
+  { id: 'tower_map', sec: 'lines', name: 'خريطة الأبراج', sub: 'GPS وموقع الأبراج', icon: '📍', avail: _any, open: () => openGpsFeature() },
+  { id: 'departures', sec: 'dep', name: 'المغادرات', sub: 'متابعة الأعطال', icon: '🚨', avail: _any, open: () => { showPage('departures'); loadDepartures(); } },
+  { id: 'dep_treat', sec: 'dep', name: 'معالجة المغادرات', sub: 'تسجيل معالجة', icon: '🔧', avail: _any, open: _depOpen('treat') },
+  { id: 'dep_log', sec: 'dep', name: 'سجل المعالجات', sub: 'المغادرات المعالَجة', icon: '✅', avail: _any, open: _depOpen('log') },
+  { id: 'dep_emergency', sec: 'dep', name: 'المغادرات الطارئة', sub: 'تسجيل مغادرة طارئة', icon: '⚡', avail: _any, open: _depOpen('emergency') },
+  { id: 'dep_telegram', sec: 'dep', name: 'برقية العمل', sub: 'إعداد برقية', icon: '📨', avail: _any, open: _depOpen('telegram') },
+  { id: 'records_hub', sec: 'rec', name: 'السجلات والتقارير', sub: 'كل السجلات والتصدير', icon: '📚', avail: _notTech, open: () => openRecordsHubFeature() },
+  { id: 'rec_visual', sec: 'rec', name: 'سجلات الكشف البصري', sub: 'السجلات والتقارير', icon: '👁️', avail: _notTech, open: _recOpen('visual') },
+  { id: 'rec_thermal', sec: 'rec', name: 'سجلات الكشف الحراري', sub: 'السجلات والتقارير', icon: '🌡️', avail: _notTech, open: _recOpen('thermal') },
+  { id: 'rec_treat', sec: 'rec', name: 'سجل المعالجات (التقارير)', sub: 'السجلات والتقارير', icon: '🔧', avail: _notTech, open: _recOpen('treat') },
+  { id: 'stats', sec: 'stats', name: 'الإحصائيات', sub: 'صفحة الإحصائيات', img: 'icon-stats.png', cls: 'icon-img icon-img-xl', avail: _notTech, open: () => openStatisticsHub() },
+  { id: 'stats_staff', sec: 'stats', name: 'إحصائيات الموظفين', sub: 'للمدير والمشرف', icon: '📊', avail: _roleIn('admin', 'supervisor'), open: _statOpen('stats') },
+  { id: 'stats_period', sec: 'stats', name: 'إحصائيات الخطوط والفترة', sub: 'تحليل فترة', icon: '📈', avail: _roleIn('admin', 'supervisor', 'readonly'), open: _statOpen('period') },
+  { id: 'stats_roster', sec: 'stats', name: 'كادر القسم', sub: 'للمدير والمشرف', icon: '👥', avail: _roleIn('admin', 'supervisor'), open: _statOpen('roster') },
+  { id: 'forms', sec: 'forms', name: 'الاستمارات', sub: 'التقرير والمذكرة والواجب', icon: '📑', avail: _notTech, open: () => { showPage('forms'); showFormsHome(); } },
+  { id: 'daily_report', sec: 'forms', name: 'التقرير اليومي', sub: 'الموقف اليومي للخطوط', icon: '📅', legacy: 'homeDailyReportCard', avail: _roleIn('admin', 'supervisor'), open: () => openDailyReportFeature() },
+  { id: 'memo', sec: 'forms', name: 'مذكرة', sub: 'مذكرة رسمية', icon: '📝', avail: _notTech, open: () => openMemoFeature() },
+  { id: 'work_orders', sec: 'forms', name: 'أوراق الواجب', sub: 'تسجيل وأرشيف واجبات الفرق', icon: '📋', avail: _notTech, open: () => openWorkOrdersFeature() },
+  { id: 'pending', sec: 'other', name: 'المعلّقة', sub: 'بانتظار الرفع', icon: '⏳', legacy: 'homePendingCard', avail: _any, open: () => { showPage('pendingSync'); renderPendingSyncPage(); } },
+  { id: 'inventory', sec: 'other', name: 'المخزن', sub: 'الأدوات والمواد', icon: '📦', avail: _any, open: () => openInventoryFeature() },
+  { id: 'admin', sec: 'other', name: 'الإدارة', sub: 'للمدير فقط', icon: '⚙️', avail: _roleIn('admin'), open: () => showPage('admin') },
+  { id: 'backup', sec: 'other', name: 'النسخ الاحتياطي', sub: 'للمدير فقط', icon: '💾', avail: _roleIn('admin'), open: () => openBackupFeature() },
+  { id: 'account', sec: 'other', name: 'الحساب', sub: 'بيانات الحساب', icon: '👤', avail: _any, open: () => { showPage('account'); loadAccountPage(); } }
+];
+const HOME_BY_ID = {}; HOME_CATALOG.forEach(e => { HOME_BY_ID[e.id] = e; });
+function _homeUid() { return currentUser && currentUser.id != null ? String(currentUser.id) : null; }
+function homeAvail(e) { try { return !!e.avail(); } catch (x) { return false; } }
+// التخزين: مصفوفة معرّفات مرتبة لهذا الحساب؛ غياب المفتاح = الافتراضي. أي تلف يُهمل ويرجع للافتراضي.
+function homeLayoutLoad() {
+  const u = _homeUid(); if (!u) return homeDefault();
+  try {
+    const raw = localStorage.getItem(HOME_LAYOUT_KEY + u); if (raw == null) return homeDefault();
+    const o = JSON.parse(raw); if (!o || o.v !== 1 || !Array.isArray(o.ids)) return homeDefault();
+    const seen = {}, out = []; o.ids.forEach(id => { if (typeof id === 'string' && HOME_BY_ID[id] && !seen[id]) { seen[id] = 1; out.push(id); } }); return out;
+  } catch (e) { return homeDefault(); }
+}
+function homeLayoutSave(ids) { const u = _homeUid(); if (!u) return false; try { localStorage.setItem(HOME_LAYOUT_KEY + u, JSON.stringify({ v: 1, ids })); return true; } catch (e) { return false; } }
+function homeLayoutClear() { const u = _homeUid(); if (!u) return; try { localStorage.removeItem(HOME_LAYOUT_KEY + u); } catch (e) {} }
+function _homeIconHtml(e) { return e.img ? '<img src="' + e.img + '" class="' + (e.cls || 'icon-img') + '" alt="">' : '<span class="icon">' + e.icon + '</span>'; }
+function homeRender() {
+  const g = document.getElementById('homeGrid'); if (!g) return;
+  const ids = homeLayoutLoad().filter(id => homeAvail(HOME_BY_ID[id]));
+  g.innerHTML = ids.map(id => { const e = HOME_BY_ID[id]; return '<div class="card" data-home="' + id + '"' + (e.legacy ? ' id="' + e.legacy + '"' : '') + ' onclick="homeOpen(\'' + id + '\')">' + _homeIconHtml(e) + '<span class="label">' + e.name + '</span><span class="sublabel">' + e.sub + '</span></div>'; }).join('');
+  const em = document.getElementById('homeEmpty'); if (em) em.style.display = ids.length ? 'none' : '';
+}
+function homeOpen(id) {
+  const e = HOME_BY_ID[id]; if (!e) return;
+  if (!homeAvail(e)) { showToast('⚠️ ما عندك صلاحية لهذي الوظيفة', 'error'); return; }
+  try { const r = e.open(); if (r && typeof r.catch === 'function') r.catch(() => {}); } catch (x) { showToast('❌ تعذّر فتح هذا الاختصار', 'error'); }
+}
+// ---- شاشة التخصيص (مسودة بالذاكرة؛ لا تُطبَّق إلا بالحفظ) ----
+let _hmc = { draft: [], hidden: [] };
+function openHomeCustom() {
+  const stored = homeLayoutLoad(); const avail = stored.filter(id => homeAvail(HOME_BY_ID[id]));
+  _hmc = { draft: avail.slice(), hidden: stored.filter(id => !homeAvail(HOME_BY_ID[id])), dirty: false };   // ما لا يتاح لهذا الدور يبقى مخزوناً ولا يُعرض
+  showPage('homeCustom'); hcPaint(); window.scrollTo(0, 0);
+}
+function _hcRow(e, acts, on) {
+  return '<div class="hc-row" data-hc="' + e.id + '"><div class="hc-ico">' + (e.img ? '<img src="' + e.img + '" alt="">' : e.icon) + '</div><div class="hc-name"><b>' + e.name + (on ? '<span class="hc-chip">على الرئيسية</span>' : '') + '</b><span>' + e.sub + '</span></div><div class="hc-acts">' + acts + '</div></div>';
+}
+function hcPaint() {
+  const box = document.getElementById('hcBody'); if (!box) return; const d = _hmc.draft; let h = '';
+  h += '<div class="hc-sec" id="hcOrder"><h3>🏠 على الرئيسية الآن (' + d.length + ')</h3>';
+  if (!d.length) h += '<div style="font-size:0.85rem;color:#718096;padding:6px">الرئيسية فارغة. أضِف اختصاراً من القوائم أدناه. (زر الإعدادات يبقى ظاهراً دائماً.)</div>';
+  d.forEach((id, i) => { const e = HOME_BY_ID[id]; h += _hcRow(e, '<button data-up="' + id + '" onclick="hcMove(\'' + id + '\',-1)" aria-label="رفع"' + (i === 0 ? ' disabled' : '') + '>▲</button><button data-down="' + id + '" onclick="hcMove(\'' + id + '\',1)" aria-label="تنزيل"' + (i === d.length - 1 ? ' disabled' : '') + '>▼</button><button class="hc-hide" data-hide="' + id + '" onclick="hcToggle(\'' + id + '\')">إخفاء</button>', false); });
+  h += '</div>';
+  HOME_SECTIONS.forEach(sc => {
+    const items = HOME_CATALOG.filter(e => e.sec === sc[0] && homeAvail(e)); if (!items.length) return;
+    h += '<div class="hc-sec" data-sec="' + sc[0] + '"><h3>' + sc[1] + '</h3>';
+    items.forEach(e => { const on = d.indexOf(e.id) >= 0; h += _hcRow(e, on ? '<button class="hc-hide" data-hide2="' + e.id + '" onclick="hcToggle(\'' + e.id + '\')">إخفاء</button>' : '<button class="hc-add" data-add="' + e.id + '" onclick="hcToggle(\'' + e.id + '\')">+ إضافة</button>', on); });
+    h += '</div>';
+  });
+  box.innerHTML = h;
+}
+function hcToggle(id) { if (!HOME_BY_ID[id] || !homeAvail(HOME_BY_ID[id])) return; const i = _hmc.draft.indexOf(id); if (i >= 0) _hmc.draft.splice(i, 1); else _hmc.draft.push(id); _hmc.dirty = true; hcPaint(); }
+function hcMove(id, dir) { const i = _hmc.draft.indexOf(id), j = i + dir; if (i < 0 || j < 0 || j >= _hmc.draft.length) return; const t = _hmc.draft[i]; _hmc.draft[i] = _hmc.draft[j]; _hmc.draft[j] = t; _hmc.dirty = true; hcPaint(); }
+function hcSave() {
+  const ids = _hmc.draft.concat(_hmc.hidden.filter(id => _hmc.draft.indexOf(id) < 0));
+  if (!homeLayoutSave(ids)) { showToast('❌ تعذّر حفظ التخصيص على هذا الجهاز', 'error'); return; }
+  homeRender(); _hmc.dirty = false; showToast('✅ تم حفظ تخصيص الرئيسية'); goBackFromOperation();
+}
+function hcCancel() { _hmc.dirty = false; goBackFromOperation(); }
+function hcReset() {
+  if (!confirm('استعادة الرئيسية الافتراضية لهذا الحساب؟ (يُحذف التخصيص المحفوظ)')) return;
+  homeLayoutClear(); homeRender(); _hmc = { draft: homeDefault().filter(id => homeAvail(HOME_BY_ID[id])), hidden: [], dirty: false }; hcPaint(); showToast('🔄 استُعيدت الرئيسية الافتراضية');
+}
+
 function applyRolePermissions() {
   const isAdminOrSupervisor = (currentUser.role === 'admin' || currentUser.role === 'supervisor');
   const isTechnician = currentUser.role === 'technician';
@@ -3748,12 +3914,13 @@ function applyRolePermissions() {
     const el = document.getElementById(id);
     if (el) el.style.display = isTechnician ? 'none' : '';
   });
+  try { homeRender(); } catch (e) {}   // N25-R41: اختصارات الرئيسية لهذا الحساب
 }
 
 // ========================
 // NAVIGATION
 // ========================
-const OPERATION_PAGES = ['form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','recordsHub','workOrders'];
+const OPERATION_PAGES = ['homeCustom','form','records','departures','pendingSync','thermal','lines','inventory','admin','staffStats','dailyReport','forms','memo','backup','recordsHub','workOrders'];
 
 let pageStack = [];
 
@@ -3775,7 +3942,7 @@ function popLevelIfMatches(fn) {
 
 function navKeyForPage(id) {
   if (id === 'home') return 'home';
-  if (id === 'account') return 'account';
+  if (id === 'account' || id === 'homeCustom') return 'account';
   return 'services';
 }
 
