@@ -117,7 +117,7 @@ function getDepExportSelectedCategories() {
 //  3) التصدير: تفاصيل الأبراج المحددة فقط (أجزاء صغيرة، 3 بالتوازي)، ثم توليد PDF مع تقدّم ظاهر، ثم ملف جاهز بنقرة جديدة.
 // الوضع غير الحيّ (بلا مخزن حالة) يبقى بالمسار القديم كما هو.
 // ============================================================================================
-const _depx = { modalSeq: 0, runSeq: 0, running: false, lines: {}, ready: null, indexErr: null, q: { active: 0, wait: [] } };
+const _depx = { selStore: new Map(), modalSeq: 0, runSeq: 0, running: false, lines: {}, ready: null, indexErr: null, q: { active: 0, wait: [] } };
 const DEPX_CHUNK = 25, DEPX_CONC = 3;
 function depxEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function depxScope() { return { sess: featSessionTag(), gen: _csAuthGen, modal: _depx.modalSeq, wgen: _csWriteGen }; }
@@ -194,7 +194,7 @@ async function depxShareReady() {   // مشاركة بنقرة جديدة (navig
 function depxDiscardReady() { depxDropReady(); }
 // خروج/تبديل حساب: يُلغى أي تصدير جارٍ ويُحذف الملف الجاهز ويُغلق نافذة التصدير
 function depxPurge() {
-  _depx.runSeq++; _depx.modalSeq++; _depx.running = false; _depx.lines = {};
+  _depx.runSeq++; _depx.modalSeq++; _depx.running = false; _depx.lines = {}; _depx.selStore.clear();
   depxDropReady();
   try { depxSetBusy(false); depxProgress(null); document.getElementById('depExportModalBg').classList.remove('show'); } catch (e) {}
 }
@@ -217,7 +217,7 @@ async function openDepExportModalImpl() {
   const wrap = document.getElementById('depExportLinesWrap');
   if (_depx.running) { document.getElementById('depExportModalBg').classList.add('show'); return; }   // تصدير جارٍ: النافذة تعود لحالتها فقط
   ++_depx.modalSeq;
-  _depx.lines = {};
+  _depx.lines = {}; _depx.selStore.clear();
   document.getElementById('depExportSelectAllBtn').textContent = 'تحديد الكل';
   document.getElementById('depExportTowerFrom').value = '';
   document.getElementById('depExportTowerTo').value = '';
@@ -273,16 +273,64 @@ async function depxOpenLegacy(wrap) {
 }
 
 // قراءة ملخّص خط واحد (خفيفة) عند اختياره؛ ردّ قديم (نافذة أُغلقت/جلسة تغيّرت/إعادة فتح) لا يُطبَّق على الواجهة
+// N25-R35b: طلب app_line_summary مستقل يبدأ بعد اكتمال الدليل الأول (csCall مباشرة؛ لا csLine فلا التحاق بطلب سابق ولا كاش ولا فهرس مشترك). الخط الكبير (too_many) يُجزَّأ كما في csLine.
+async function depxSummaryRead(line, alive) {
+  let r = await csCall('app_line_summary', { p_line_name: line, p_towers: null });
+  if (!alive()) return null;
+  if (r && r.ok === false && r.code === 'too_many') {
+    const nums = (typeof getLineTowers === 'function' ? getLineTowers(line) : []).map(t => String(t.num));
+    if (!nums.length) return null;
+    const merged = { ok: true, towers: {} };
+    for (let i = 0; i < nums.length; i += 300) {
+      const part = await csCall('app_line_summary', { p_line_name: line, p_towers: nums.slice(i, i + 300) });
+      if (!alive()) return null;
+      if (!part || part.ok !== true || !part.towers || typeof part.towers !== 'object') return null;
+      Object.assign(merged.towers, part.towers);
+    }
+    r = merged;
+  }
+  if (!r || r.ok !== true || !r.towers || typeof r.towers !== 'object') return null;
+  return r;
+}
+// صفوف هذه القراءة نفسها: تطابق رقم الغلاف/الصف/الخط، وهوية الصف (tower_id) إن وُجدت = الدليل؛ أي صف مخالف = لا إثبات للخط كله
+function depxBindRows(line, towers, guide) {
+  const rows = new Map();
+  for (const num of Object.keys(towers)) {
+    const env = towers[num];
+    if (!env || typeof env !== 'object' || String(env.line_name) !== String(line) || String(env.tower_number) !== String(num)) return null;
+    const row = env.row; if (!row || typeof row !== 'object') continue;   // غلاف بلا صف (لم يُكشف): لا يظهر
+    if (String(row.line_name) !== String(line) || (row.tower_number != null && String(row.tower_number) !== String(num))) return null;
+    const gid = guide.towers[num];
+    if (env.tower_id != null && gid != null && String(env.tower_id) !== String(gid)) return null;
+    if (row.tower_id != null && gid != null && String(row.tower_id) !== String(gid)) return null;
+    rows.set(String(num), { row: Object.assign({}, row), pin: gid != null ? String(gid) : '' });
+  }
+  return rows;
+}
+
+// N25-R35a: هوية القائمة تُثبَّت من قراءة ملخّص حيّة جديدة + خريطة هوية حيّة تحيط بها (قبل/بعد)، ويجب أن تتطابق نسخة الترقيم والاقتران رقم↔هوية كلياً؛
+// والصفوف المعروضة هي صفوف هذه القراءة نفسها (غلاف طُبّق من ردّ هذه القراءة، لا كاش أقدم ولا صف مستبدل/ناقص). أي تعارض = لا تثبيت (تعطيل الاختيار + إعادة محاولة)؛ لا ربط برقم وحده.
 function depxEnsureLine(name) {
   const cur = _depx.lines[name];
-  if (cur) return;   // loading / ok / error: الخطأ يُعاد فقط بزر «إعادة المحاولة» الصريح (depxRetryLine) — لا حلقة طلبات
+  if (cur) return;   // loading / ident / ok / error / iderr: الخطأ يُعاد فقط بزر «إعادة المحاولة» الصريح (depxRetryLine) — لا حلقة طلبات
   const sc = depxScope(), rec = _depx.lines[name] = { state: 'loading' };
+  const alive = () => depxScopeOk(sc) && _depx.lines[name] === rec;
   depxLimit(async () => {
-    if (!depxScopeOk(sc) || _depx.lines[name] !== rec) return;
-    let res = null; try { res = await loadLineRecordsCache(name, false, 'summary'); } catch (e) { res = null; }
-    if (!depxScopeOk(sc) || _depx.lines[name] !== rec) return;
-    rec.state = res && res.ok !== false ? 'ok' : 'error';
-    depxRenderTowers(true);
+    if (!alive()) return;
+    const g0 = await depxIdentRead(name, alive);                       // الدليل الحي الأول (يسبق قراءة الملخّص)
+    if (!alive()) return;
+    if (!g0) { rec.state = 'iderr'; rec.why = 'guide'; depxRenderTowers(true); return; }
+    rec.state = 'ident'; let sm = null;
+    try { sm = await depxSummaryRead(name, alive); } catch (e) { sm = null; }   // طلب مستقل بعد الدليل الأول
+    if (!alive()) return;
+    if (!sm) { rec.state = 'error'; depxRenderTowers(true); return; }
+    const g1 = await depxIdentRead(name, alive);                       // الدليل الحي الثاني (بعد قراءة الملخّص)
+    if (!alive()) return;
+    let why = !g1 ? 'guide' : '';
+    if (!why) { if (g1.rev !== g0.rev) why = 'rev'; else { const a = Object.keys(g0.towers), b = Object.keys(g1.towers); if (a.length !== b.length || a.some(n => String(g1.towers[n]) !== String(g0.towers[n]))) why = 'pairs'; } }
+    let rows = null; if (!why) { rows = depxBindRows(name, sm.towers, g1); if (!rows) why = 'rows'; }
+    if (why) { rec.state = 'iderr'; rec.why = why; depxRenderTowers(true); return; }
+    rec.ident = g1; rec.rows = rows; rec.state = 'ok'; depxRenderTowers(true);
   }).catch(e => { if (_depx.lines[name] === rec) { rec.state = 'error'; depxRenderTowers(true); } });
 }
 function depxRetryLine(name) { delete _depx.lines[name]; updateDepExportTowerList(); }
@@ -301,11 +349,10 @@ function depxRenderTowers(keep) {
   const towersWrap = document.getElementById('depExportTowersWrap');
   const prev = new Map();
   const prevLines = new Set(), prevTid = new Map();   // N25-R21a: حفظ التحديد اليدوي بهوية البرج (داخل الخط) لا برقمه
-  if (keep) document.querySelectorAll('.depExportTowerChk').forEach(b => {
-    const ln = b.value.split('||')[0], tid = b.dataset.tid || '';
-    prevLines.add(ln); prev.set(depxSelKey(ln, tid, b.value.split('||')[1]), b.checked);
-    if (tid) prevTid.set(ln + '\u0001' + tid, { num: b.value.split('||')[1], checked: b.checked });
-  });
+  if (keep) {
+    document.querySelectorAll('.depExportTowerChk').forEach(b => { const ln = b.value.split('||')[0], tid = b.dataset.tid || ''; if (tid && !b.disabled) _depx.selStore.set(ln + '\u0001' + tid, { num: b.value.split('||')[1], checked: b.checked }); });   // N25-R35a: يُحفظ بالهوية حتى لو أُعيد تثبيت الخط (الخانات تُعطَّل مؤقتاً)
+    _depx.selStore.forEach((v, k) => { const ln = k.split('\u0001')[0], tid = k.split('\u0001')[1]; prevLines.add(ln); prev.set(depxSelKey(ln, tid, v.num), v.checked); prevTid.set(k, v); });
+  }
 
   let allTowers = [], status = '';
   lines.forEach(name => {
@@ -313,13 +360,25 @@ function depxRenderTowers(keep) {
       depxEnsureLine(name);
       const st = _depx.lines[name] || { state: 'loading' };
       if (st.state === 'loading') { status += `<div style="grid-column:1/-1;font-size:0.76rem;color:#718096">⏳ جارٍ قراءة ${depxEsc(name)}…</div>`; return; }
+      if (st.state === 'ident') status += `<div style="grid-column:1/-1;font-size:0.76rem;color:#718096">⏳ تثبيت هوية أبراج ${depxEsc(name)} من دليل الترقيم الحي… (الاختيار يُتاح بعد ذلك)</div>`;
+      if (st.state === 'iderr') status += `<div style="grid-column:1/-1;font-size:0.76rem;color:#822727">⚠️ تعذّر تثبيت هوية أبراج ${depxEsc(name)} (${st.why === 'rev' || st.why === 'pairs' ? 'تغيّر ترقيم الخط أثناء القراءة' : st.why === 'rows' ? 'قراءة الصفوف غير مكتملة أو غير حديثة' : 'دليل الترقيم الحي غير متاح'}) — لا يمكن اختيارها الآن <button class="btn btn-secondary btn-sm" data-line="${depxEsc(name)}" onclick="depxRetryLine(this.dataset.line)">🔄</button></div>`;
       if (st.state === 'error') { status += `<div style="grid-column:1/-1;font-size:0.76rem;color:#822727">⚠️ تعذّرت قراءة ${depxEsc(name)} <button class="btn btn-secondary btn-sm" data-line="${depxEsc(name)}" onclick="depxRetryLine(this.dataset.line)">🔄</button></div>`; return; }
       const cov = csScopeCoverage([name], 'summary');
       if (cov.incomplete.length) status += `<div style="grid-column:1/-1;font-size:0.76rem;color:#822727">⚠️ ${depxEsc(name)}: ${depxEsc(csCoverageText(cov))}</div>`;
     }
+    if (live) {   // N25-R35b: الصفوف المعروضة = صفوف طلب هذه النافذة نفسه (سجل _depx.lines[name].rows)، لا الفهرس المشترك
+      const st2 = _depx.lines[name];
+      if (st2 && st2.state === 'ok' && st2.rows) st2.rows.forEach(({ row, pin }) => {
+        let deps = []; try { deps = extractDepsFromRecord(row); } catch (e) { deps = []; }
+        if (!deps.length) return; let full = false; try { full = isFullyTreated(row.id, deps, row); } catch (e) { full = false; }
+        if (full) return;
+        allTowers.push({ num: parseInt(row.tower_number), towerNum: row.tower_number, lineName: name, tid: String(pin || ''), pinWait: !pin });
+      });
+      return;
+    }
     getActiveDepartureTowers(name).forEach(({ r }) => {
-      let tid = r.tower_id || ''; if (!tid) { try { const sn = csIdentSnap(name, String(r.tower_number)); tid = sn ? (sn.blocked ? ((sn.cached && sn.cached.tower_id) || '') : sn.tower_id) : ''; } catch (e) {} }   // N25-R21a: هوية «بيانات الصف المعروض» نفسه (غلافه)، لا صاحب الرقم اليوم في الخريطة
-      allTowers.push({ num: parseInt(r.tower_number), towerNum: r.tower_number, lineName: name, tid: String(tid || '') });
+      let tid = r.tower_id || '';
+      allTowers.push({ num: parseInt(r.tower_number), towerNum: r.tower_number, lineName: name, tid: String(tid || ''), pinWait: false });
     });
   });
   { const rk = new Map(lines.map((n, i) => [n, i])); allTowers.sort((a, b) => (rk.get(a.lineName) - rk.get(b.lineName)) || (a.num - b.num)); }   // الخط بترتيب المشروع ثم رقم البرج (كما كان)
@@ -330,7 +389,8 @@ function depxRenderTowers(keep) {
     return;
   }
   const listed = new Set(allTowers.filter(t => t.tid).map(t => t.lineName + '\u0001' + t.tid));
-  const orphans = keep ? [...prevTid.entries()].filter(([k, v]) => v.checked && !listed.has(k) && lines.includes(k.split('\u0001')[0])) : [];
+  const allOk = !live || lines.every(n => { const q = _depx.lines[n]; return q && (q.state === 'ok'); });
+  const orphans = keep && allOk ? [...prevTid.entries()].filter(([k, v]) => v.checked && !listed.has(k) && lines.includes(k.split('\u0001')[0])) : [];
   const orphanHtml = orphans.map(([k, v]) => { const [ln, tid] = k.split('\u0001'); return `<label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:3px 0;color:#975A16"><input type="checkbox" class="depExportTowerChk" value="${depxEsc(ln + '||' + v.num)}" data-tid="${depxEsc(tid)}" checked onchange="updateDepExportResultCount()"><span>برج ${depxEsc(v.num)} (${depxEsc(ln)}) — تغيّر وضعه، يُتحقق منه عند التصدير</span></label>`; }).join('');
   let lastLine = null;
   towersWrap.innerHTML = status + orphanHtml + allTowers.map(t => {
@@ -341,10 +401,10 @@ function depxRenderTowers(keep) {
     const inRange = hasRange && (!fromRaw || t.num >= from) && (!toRaw || t.num <= to);
     const sk = depxSelKey(t.lineName, t.tid, t.towerNum);
     // تحديث تلقائي (keep): خط كان معروضاً ⇒ تحديده يتبع هويته فقط؛ برج لم يكن موجوداً (مثلاً صاحب رقم جديد) لا يُحدَّد من نطاق قديم. النطاق الصريح (keep=false) أو خط يُعرض لأول مرة: كما كان
-    const checked = keep ? (prev.has(sk) ? prev.get(sk) : (prevLines.has(t.lineName) ? false : inRange)) : inRange;
+    const checked = t.pinWait ? false : (keep ? (prev.has(sk) ? prev.get(sk) : (prevLines.has(t.lineName) ? false : inRange)) : inRange);   // N25-R35: صف بلا هوية مثبتة لا يُحدَّد ولا يُتاح
     return head + `<label style="display:flex;align-items:center;gap:4px;font-size:0.78rem;padding:3px 0">
-      <input type="checkbox" class="depExportTowerChk" value="${val}" data-tid="${depxEsc(t.tid)}" ${checked ? 'checked' : ''} onchange="updateDepExportResultCount()">
-      <span>برج ${depxEsc(t.towerNum)}</span>
+      <input type="checkbox" class="depExportTowerChk" value="${val}" data-tid="${depxEsc(t.tid)}" ${checked ? 'checked' : ''}${t.pinWait ? ' disabled' : ''} onchange="updateDepExportResultCount()">
+      <span${t.pinWait ? ' style="color:#A0AEC0"' : ''}>برج ${depxEsc(t.towerNum)}${t.pinWait ? ' ⏳' : ''}</span>
     </label>`;
   }).join('');
   updateDepExportResultCount();
@@ -371,8 +431,9 @@ function toggleDepExportSelectAll() {
 }
 
 function toggleDepExportTowerSelectAll() {
-  const boxes = document.querySelectorAll('.depExportTowerChk');
-  const allChecked = Array.from(boxes).every(b => b.checked);
+  const boxes = Array.from(document.querySelectorAll('.depExportTowerChk')).filter(b => !b.disabled);   // N25-R35a: الخانات المعطّلة (بلا هوية مثبتة) خارج التحديد
+  if (!boxes.length) { updateDepExportResultCount(); return; }
+  const allChecked = boxes.every(b => b.checked);
   boxes.forEach(b => b.checked = !allChecked);
   updateDepExportResultCount();
 }
@@ -383,12 +444,12 @@ function getDepExportSelectedLines() {
 }
 
 function updateDepExportResultCount() {
-  const count = document.querySelectorAll('.depExportTowerChk:checked').length;
+  const count = document.querySelectorAll('.depExportTowerChk:checked:not(:disabled)').length;
   document.getElementById('depExportResultCount').textContent = `📋 ${count} برج محدد للتصدير`;
 }
 
 function getDepExportSelectedTowers() {
-  return Array.from(document.querySelectorAll('.depExportTowerChk:checked')).map(b => {
+  return Array.from(document.querySelectorAll('.depExportTowerChk:checked:not(:disabled)')).map(b => {
     const [lineName, towerNum] = b.value.split('||');
     return { lineName, towerNum, tid: b.dataset.tid || '' };
   });
