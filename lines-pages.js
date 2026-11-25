@@ -412,10 +412,19 @@ function _tdSnapshotFor(lineName, towerNum) {
     return env;
   } catch (e) { return null; }
 }
-async function openTowerDetail(lineName, towerNum) {
-  const tok = featTok('lpg', true);
-  _tlScrollSave(lineName);
-  pushLevel(backToTowerList);
+// N25-R37a: التفاصيل المفتوحة من الخريطة تحمل tower_id المتوقع (expectTid) حتى العرض: لا لقطة ولا قراءة حيّة ولا حزمة ولا إجراء قبل إثبات أن الرد/اللقطة لنفس الهوية.
+function _tdBlock(lineName, towerNum, exp, kind) {
+  _towerDetailCtx = { line: lineName, tower: String(towerNum), live: false, blocked: kind };
+  const body = document.getElementById('towerDetailBody'); if (!body) return;
+  const msg = kind === 'moved' ? 'الرقم ' + _tdEsc(String(towerNum)) + ' في هذا الخط لم يعد لنفس البرج الذي اخترته من الخريطة (تغيّر الترقيم). عد إلى الخريطة وحدّثها ثم اختر البرج من جديد — لم تُعرض أي بيانات ولا إجراءات.'
+    : 'تعذّر إثبات أن هذه البيانات تخص نفس البرج الذي اخترته من الخريطة (' + (navigator.onLine === false ? 'لا اتصال ولا لقطة محفوظة مثبتة الهوية' : 'تعذّرت القراءة أو التحقق من الخادم') + '). لم تُعرض أي بيانات ولا إجراءات.';
+  body.innerHTML = '<div class="empty-state">⚠️ ' + msg + '</div>' + (kind === 'moved' ? '' : '<div style="text-align:center;margin-top:10px"><button class="btn btn-primary" id="tdRetry">🔄 إعادة المحاولة</button></div>');
+  const b = document.getElementById('tdRetry'); if (b) b.onclick = () => openTowerDetail(lineName, towerNum, exp, { retry: true });
+}
+async function openTowerDetail(lineName, towerNum, expectTid, opts) {
+  const tok = featTok('lpg', true), exp = expectTid ? String(expectTid) : null, idOk = (env) => !exp || !!(env && env.tower_id != null && String(env.tower_id) === exp);
+  if (!(opts && opts.retry)) { _tlScrollSave(lineName);
+  pushLevel(backToTowerList); }
   try { if (typeof towerHistHide === 'function') towerHistHide(); } catch (e) {}
   document.getElementById('lineTowerListView').style.display = 'none';
   document.getElementById('towerDetailView').style.display = '';
@@ -425,13 +434,34 @@ async function openTowerDetail(lineName, towerNum) {
   if (csLiveEnabled()) {
     const mySeq = ++_tdOpenSeq;
     let previewed = false;
-    if (_tdSnapshotFor(lineName, towerNum)) {   // N25-R26: لقطة صالحة تُعرض فوراً (للعرض فقط)، والقراءة الحيّة أدناه نفسها دون طلب إضافي
+    const snapEnv = (() => { try { const e = _csMem.get(csKey(lineName, towerNum)); return e && e.env; } catch (e) { return null; } })();
+    if (_tdSnapshotFor(lineName, towerNum) && idOk(snapEnv)) {   // N25-R26 (R37a: ولا تُعرض إلا إذا كانت لقطة الهوية المتوقعة نفسها): لقطة صالحة تُعرض فوراً (للعرض فقط)، والقراءة الحيّة أدناه نفسها دون طلب إضافي
       _towerDetailCtx = { line: lineName, tower: String(towerNum), live: false, verifying: true };
       try { renderTowerDetail(lineName, towerNum); previewed = true; } catch (e) { previewed = false; document.getElementById('towerDetailBody').innerHTML = '<div class="empty-state">⏳ جاري التحميل...</div>'; }
     }
     let f = null; try { f = await _fetchFullTowerRecord(lineName, towerNum); } catch (e) { f = null; }
     if (!featEntryOk(tok) || mySeq !== _tdOpenSeq) return;
     const live = !!(f && f.ok && f.cs && f.cs.ok && f.cs.source !== 'cache');
+    if (exp) {   // N25-R37b: كل مسارات الفتح من الخريطة ترسم نفس الغلاف/اللقطة التي ثبتت هويتها فعلاً؛ لا إعادة قراءة ولا رجوع لبيانات عامة بالرقم ولا للقارئ القديم
+      const envP = f && f.cs && f.cs.ok ? f.cs.env : null, pid = envP && envP.tower_id != null ? String(envP.tower_id) : null;
+      if (pid && pid !== exp) { _tdBlock(lineName, towerNum, exp, 'moved'); return; }   // الرد يخالف المتوقع: يُحجب ويُزال ما عُرض من لقطة أولية
+      if (pid === exp) {   // رد مثبت الهوية (حيّ أو نسخة محفوظة من القارئ نفسه)
+        _towerDetailCtx = { line: lineName, tower: String(towerNum), live };
+        if (live) _applyConfirmedTowerEnv(lineName, towerNum, envP);
+        const cur = (() => { try { const e = _csMem.get(csKey(lineName, towerNum)); return e && e.env; } catch (e) { return null; } })();
+        if (!cur || cur.tower_id == null || String(cur.tower_id) !== exp) { _tdBlock(lineName, towerNum, exp, 'unproven'); return; }   // ما سيُرسم (من الكاش) يجب أن يحمل الهوية نفسها
+        if (!featEntryOk(tok) || mySeq !== _tdOpenSeq) return;
+        renderTowerDetail(lineName, towerNum);
+        if (!live) { try { showToast('⚠️ تعذّر التحقق الحيّ من الخادم — المعروض نسخة محفوظة (للعرض فقط) لنفس البرج', 'error'); } catch (e) {} }
+        return;
+      }
+      // الرد بلا هوية (فشل شبكة/قراءة): اللقطة الأولية المعروضة ثبتت هويتها سابقاً فتبقى للعرض فقط؛ وإلا حزمة تُقرأ مرة واحدة ويُرسم الكائن نفسه الذي طُوبق
+      if (previewed) { try { showToast('⚠️ تعذّر التحقق من الخادم — المعروض لقطة محفوظة لنفس البرج (للعرض فقط)', 'error'); } catch (e) {} return; }
+      let pe = null; try { pe = await lpkEnvFor(lineName, towerNum); } catch (e) { pe = null; }
+      if (!featEntryOk(tok) || mySeq !== _tdOpenSeq) return;
+      if (pe && !pe.blocked && pe.env && idOk(pe.env)) { _towerDetailCtx = { line: lineName, tower: String(towerNum), live: false, pack: true }; renderTowerDetail(lineName, towerNum, pe); return; }
+      _tdBlock(lineName, towerNum, exp, 'unproven'); return;
+    }
     _towerDetailCtx = { line: lineName, tower: String(towerNum), live };
     if (live) _applyConfirmedTowerEnv(lineName, towerNum, f.cs.env);
     else if (!previewed && !(f && f.ok && f.record) && await (async () => {   // N25-R28: لا حالة محمّلة لهذا البرج (خارج آخر 40 / بعد إعادة التشغيل): الحزمة المنزّلة للعرض فقط

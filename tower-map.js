@@ -6,7 +6,7 @@
    • النقاط المحلية: كاش IndexedDB معزول بالحساب (uid|line) + آخر ما أكّده الخادم لهذا الحساب (tloc_confirmed). */
 (function () {
 'use strict';
-const TS = 256, MINZ = 3, MAXZ = 19, CLUSTER_Z = 15, CELL = 46;
+const TS = 256, MINZ = 3, MAXZ = 19, CLUSTER_Z = 15, CELL = 46, LABEL_Z = 15;   // N25-R37: أرقام الأبراج تظهر بجانب النقاط من تكبير 15
 const COLORS = ['#c0392b', '#1a5276', '#1e8449', '#b9770e', '#7d3c98', '#117a65', '#a04000', '#2e4057', '#c2185b', '#455a64'];
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const uidNow = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.id != null) ? String(currentUser.id) : null;
@@ -73,7 +73,7 @@ async function refCacheGet(uid) {
   return new Promise((resolve) => { try { const rq = db.transaction('lines', 'readonly').objectStore('lines').get(uid + '|__ref__'); rq.onsuccess = () => resolve(rq.result || null); rq.onerror = () => resolve(null); } catch (e) { resolve(null); } });
 }
 // ---------- state ----------
-const S = { open: false, mode: 'single', sel: [], rows: [], info: { source: null, at: null, missing: [], total: 0, withLoc: 0 }, user: null, locMsg: '', bg: false, frameUser: false, ref: { on: {}, data: null, at: null, src: null, err: '' }, seq: 0, locTok: 0, view: { lat: 32.5, lon: 45.8, z: 8 }, drawn: [], pop: null, loading: false, uid: null, gen: null, tiles: new Map(), raf: 0, nearest: [], hl: null, pend: [] };
+const S = { open: false, mode: 'single', sel: [], rows: [], info: { source: null, at: null, missing: [], total: 0, withLoc: 0 }, user: null, locMsg: '', bg: false, frameUser: false, ref: { on: {}, data: null, at: null, src: null, err: '' }, seq: 0, locTok: 0, streets: null, streetsAsk: false, towers: [], towerById: new Map(), labelCount: 0, labelTexts: [], view: { lat: 32.5, lon: 45.8, z: 8 }, drawn: [], pop: null, loading: false, uid: null, gen: null, tiles: new Map(), raf: 0, nearest: [], hl: null, pend: [] };
 let CARD = null;
 
 // ---------- map view ----------
@@ -88,10 +88,11 @@ function toScreen(lat, lon) { const z = S.view.z; return { x: S.W / 2 + lonToX(l
 function toGeo(x, y) { const z = S.view.z; return { lon: xToLon(lonToX(S.view.lon, z) + (x - S.W / 2), z), lat: yToLat(latToY(S.view.lat, z) + (y - S.H / 2), z) }; }
 function requestDraw() { if (S.raf) return; S.raf = requestAnimationFrame(() => { S.raf = 0; draw(); }); }
 function lineColor(line) { const k = lineKey(line); let i = S.colorIdx && S.colorIdx.get(k); if (i == null) { let h = 0; for (let j = 0; j < k.length; j++) h = (h * 31 + k.charCodeAt(j)) >>> 0; i = h; } return COLORS[i % COLORS.length]; }
-function bgNote() { const n = el('tmBgNote'); if (!n) return; n.textContent = S.frameUser ? '⛔ الخلفية موقوفة: إطار الخريطة مشتق من موقعك (حتى لو أخفيت العلامة). اضغط «⤢» أو غيّر الاختيار للحصول على إطار مستقل، ثم فعّل الخلفية بنفسك إن رغبت.' : (S.bg ? '' : 'الخلفية مطفأة افتراضياً: لا طلبات خارجية.'); const c = el('tmBg'); if (c) { c.checked = S.bg && !S.frameUser; c.disabled = S.frameUser; } const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
+function bgNote() { const n = el('tmBgNote'); if (!n) return; n.textContent = streetsOn() ? '🗺️ الشوارع ظاهرة بموافقتك: مزود البلاطات (OpenStreetMap) يرى المنطقة المعروضة.' : S.frameUser ? '⛔ الخلفية موقوفة: إطار الخريطة مشتق من موقعك (حتى لو أخفيت العلامة). اضغط «⤢» أو غيّر الاختيار للحصول على إطار مستقل، ثم فعّل الخلفية بنفسك إن رغبت.' : (S.bg ? '' : 'الخلفية مطفأة افتراضياً: لا طلبات خارجية.'); const c = el('tmBg'); if (c) { c.checked = S.bg && !S.frameUser; c.disabled = S.frameUser; } const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
 function frameFromUser() { S.frameUser = true; S.bg = false; bgNote(); }   // يُستدعى قبل تحريك الإطار: لا طلب بلاطات بعد الآن
 function frameIndependent() { if (S.frameUser) { S.frameUser = false; S.bg = false; bgNote(); } }   // إطار من الأبراج/المراجع: الخلفية تبقى مطفأة حتى يختارها المستخدم
-function bgAllowed() { return S.bg && !S.frameUser && navigator.onLine !== false; }   // N25-R36: الخلفية بقرار صريح وبإطار غير مشتق من الموقع فقط
+function streetsOn() { return !!(S.streets && S.streets.gen === featSessionTag()); }   // N25-R37: موافقة «إظهار الشوارع حول موقعي» (للجلسة الحالية وللخريطة المفتوحة فقط)
+function bgAllowed() { return navigator.onLine !== false && ((S.bg && !S.frameUser) || streetsOn()); }   // N25-R36: الخلفية بقرار صريح؛ R37: أو بموافقة الشوارع الصريحة   // N25-R36: الخلفية بقرار صريح وبإطار غير مشتق من الموقع فقط
 function tileImg(z, x, y) {
   if (!bgAllowed()) return null;
   const k = z + '/' + x + '/' + y; let t = S.tiles.get(k);
@@ -118,7 +119,7 @@ function draw() {
   S.drawn = [];
   // towers (visible only), clustered below CLUSTER_Z
   const vis = []; const cxw = lonToX(S.view.lon, z), cyw = latToY(S.view.lat, z);
-  for (let i = 0; i < S.rows.length; i++) { const r = S.rows[i], x = W / 2 + lonToX(r.lon, z) - cxw, y = H / 2 + latToY(r.lat, z) - cyw; if (x > -20 && x < W + 20 && y > -20 && y < H + 20) vis.push({ r, x, y }); }
+  for (let i = 0; i < S.towers.length; i++) { const t = S.towers[i], r = t.r, x = W / 2 + lonToX(r.lon, z) - cxw, y = H / 2 + latToY(r.lat, z) - cyw; if (x > -20 && x < W + 20 && y > -20 && y < H + 20) vis.push({ r, x, y }); }
   S.visCount = vis.length; { const o = el('tmOsm'); if (o) o.style.display = bgAllowed() ? '' : 'none'; }
   const cluster = z < CLUSTER_Z && vis.length > 60;
   if (cluster) {
@@ -134,6 +135,18 @@ function draw() {
     });
   } else vis.forEach(v => { dot(ctx, v.x, v.y, v.r); S.drawn.push({ x: v.x, y: v.y, r: 9, kind: 't', row: v.r }); });
   S.clusters = S.drawn.filter(d => d.kind === 'c').length; S.singles = S.drawn.filter(d => d.kind === 't').length;
+  // N25-R37: رقم كل برج بجانب نقطته عند التكبير الميداني (بلا لمس)؛ التصادم يُحلّ بإسقاط الملصق المتأخر (يبقى برجه ظاهراً ويُلمس)
+  S.labelCount = 0; S.labelTexts = [];
+  if (z >= LABEL_Z && !cluster) {
+    const boxes = []; ctx.font = '700 12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    S.drawn.filter(d => d.kind === 't').forEach(d => {
+      const t = S.towerById.get(String(d.row.id)), txt = t ? t.rows.map(r => r.number).join(' / ') : String(d.row.number); const w = ctx.measureText(txt).width + 6;
+      let lx = 0, by = 0, ok = false;   // أربعة مواضع مرشّحة حول النقطة: أول موضع داخل الإطار وبلا تصادم يُعتمد، وإلا يُسقَط الملصق (البرج نفسه يبقى ظاهراً ويُلمس)
+      for (const [ox, oy] of [[9, -16], [9, 3], [-9 - w, -16], [-9 - w, 3]]) { lx = d.x + ox; by = d.y + oy; if (lx < 0 || lx + w > W || by < 0 || by + 14 > H) continue; if (boxes.some(b => lx < b.x + b.w && lx + w > b.x && by < b.y + 14 && by + 14 > b.y)) continue; ok = true; break; }
+      if (!ok) return;
+      boxes.push({ x: lx, y: by, w }); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.95)'; ctx.strokeText(txt, lx + 3, by + 7); ctx.fillStyle = '#1a202c'; ctx.fillText(txt, lx + 3, by + 7); S.labelCount++; S.labelTexts.push(txt);
+    });
+  }
   // GPS reference lines (display only): grey triangles — NOT towers, no record behind them
   refPoints(true).forEach(p => { const q = toScreen(p.lat, p.lon); if (q.x < -12 || q.x > W + 12 || q.y < -12 || q.y > H + 12) return; ctx.beginPath(); ctx.moveTo(q.x, q.y - 7); ctx.lineTo(q.x + 6.5, q.y + 5); ctx.lineTo(q.x - 6.5, q.y + 5); ctx.closePath(); ctx.fillStyle = 'rgba(90,90,90,0.85)'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke(); S.drawn.push({ x: q.x, y: q.y, r: 9, kind: 'r', ref: p }); });
   // pending (unconfirmed) captures of THIS account: hollow amber diamonds
@@ -192,16 +205,47 @@ function tap(x, y) {
   selectRow(hit.row);
 }
 function selectRow(r) {
-  S.hl = r; showPop(r, '<b>' + esc(r.line) + '</b><br>برج رقم ' + esc(r.number) + '<br><span style="color:#718096;font-size:11px">' + esc(SRC_AR[r.src] || '') + (r.acc != null ? ' · دقة ±' + Math.round(r.acc) + ' م' : '') + '</span>'); requestDraw();
+  const t = S.towerById.get(String(r.id)), rows = t ? t.rows : [r]; S.hl = r;
+  let h = '<b>' + rows.map(x => esc(x.line) + ' — برج رقم ' + esc(x.number)).join('<br>') + '</b>';
+  if (rows.length > 1) h += '<br><span style="color:#744210;font-size:11px">🔗 برج مشترك: يخدم ' + rows.length + ' خطوط بالأرقام أعلاه (هوية واحدة)</span>';
+  h += '<br><span style="color:#718096;font-size:11px">' + esc(SRC_AR[r.src] || '') + (r.acc != null ? ' · دقة ±' + Math.round(r.acc) + ' م' : '') + '</span>';
+  if (S.user) h += '<br><span style="font-size:12px">📏 ' + fmtDist(haversine(S.user.lat, S.user.lon, r.lat, r.lon)) + ' <span style="color:#718096">مسافة مباشرة (خط مستقيم) — ليست طريقاً سالكاً</span></span>';
+  rows.forEach((x, i) => { h += '<div><button class="btn btn-primary btn-sm tmAct" data-act="td" data-i="' + i + '" style="margin-top:6px;width:100%">🗼 تفاصيل البرج' + (rows.length > 1 ? ' — ' + esc(x.line) + ' ' + esc(x.number) : '') + '</button></div>'; });
+  h += '<button class="btn btn-secondary btn-sm tmAct" data-act="dir" style="margin-top:6px;width:100%">🧭 الاتجاهات إلى البرج</button>';
+  h += '<div style="color:#718096;font-size:10px;margin-top:4px">يفتح تطبيق الخرائط بوجهة هذا البرج فقط (لا يُرسل موقعك). المدخل والطريق غير موثّقين هنا.</div>';
+  showPop(r, h, rows); requestDraw();
 }
-function showPop(pos, html) { S.pop = { lat: pos.lat, lon: pos.lon, html }; placePop(); }
+function dirUrl(r) {   // N25-R37: وجهة فقط (إحداثيات البرج)؛ لا أصل ولا موقع المستخدم
+  const q = Number(r.lat).toFixed(6) + ',' + Number(r.lon).toFixed(6), ios = /iP(hone|ad|od)/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return ios ? 'https://maps.apple.com/?daddr=' + q + '&dirflg=d' : 'https://www.google.com/maps/dir/?api=1&destination=' + q + '&travelmode=driving';
+}
+async function openRowDetail(r) {   // بالهوية الدائمة: tower_id المتوقع يُحمل حتى عرض الحالة (R37a)
+  const tok = S.locTok, gen = S.gen, sess = featSessionTag(), stale = () => !S.open || tok !== S.locTok || gen !== featSessionTag();
+  const blockPop = (why, retry) => showPop(r, '<b>' + esc(r.line) + ' — برج ' + esc(r.number) + '</b><br><span style="color:#c0392b;font-size:12px">⚠️ ' + why + ' — لم يُفتح شيء.</span>' + (retry ? '<button class="btn btn-primary btn-sm tmAct" data-act="retry" style="margin-top:6px;width:100%">🔄 إعادة المحاولة</button>' : ''), [r]);
+  const online = navigator.onLine !== false; let fresh = false;
+  try { if (online && typeof csLineIdentLoad === 'function') fresh = (await csLineIdentLoad(r.line)) === true; } catch (e) { fresh = false; }
+  if (stale()) return;
+  if (online && !fresh) { blockPop('تعذّر تحديث دليل ترقيم الخط من الخادم، فلا يُعتمد على دليل محفوظ قديم لفتح التفاصيل الحيّة', true); return; }
+  let sn = null; try { sn = csIdentSnap(r.line, String(r.number), { mapOnly: true }); } catch (e) {}
+  if (!sn || sn.blocked || sn.tower_id !== String(r.id)) { blockPop(online ? 'هذا الرقم لم يعد يعود لنفس البرج (ترقيم الخط تغيّر) — حدّث الخريطة ثم اختر البرج من جديد' : 'تعذّر التأكد أن هذا الرقم ما زال لنفس البرج (لا اتصال ولا دليل ترقيم محلي مطابق)', !online ? true : false); return; }
+  try {
+    window.tmapLeave(); await featRun(['lpg'], () => 1, 'tmap-td');
+    if (featSessionTag() !== sess) { try { showToast('تبدّلت الجلسة أثناء التحميل — أُلغي فتح التفاصيل', 'error'); } catch (e) {} return; }   // لا طلب قديم باسم الجلسة الجديدة
+    await openTowerDetail(r.line, String(r.number), String(r.id));
+  } catch (e) {}
+}
+function showPop(pos, html, rows) { S.pop = { lat: pos.lat, lon: pos.lon, html, rows: rows || [] }; placePop(); }
 function hidePop() { const p = el('tmPop'); if (p) p.style.display = 'none'; }
 function placePop() {
   const p = el('tmPop'); if (!p) return; if (!S.pop) { p.style.display = 'none'; return; }
   const q = toScreen(S.pop.lat, S.pop.lon); p.innerHTML = '<div style="display:flex;gap:8px;align-items:flex-start"><div style="flex:1">' + S.pop.html + '</div><button id="tmPopX" style="border:none;background:none;font-size:16px;cursor:pointer;color:#718096">✕</button></div>';
-  p.style.display = 'block'; const pw = Math.min(240, S.W - 16); p.style.width = pw + 'px';
+  p.style.display = 'block'; const pw = Math.min(268, S.W - 16); p.style.width = pw + 'px';
   p.style.left = Math.max(8, Math.min(S.W - pw - 8, q.x - pw / 2)) + 'px'; p.style.top = Math.max(8, q.y - (p.offsetHeight || 70) - 16) + 'px';
   const x = el('tmPopX'); if (x) x.onclick = () => { S.pop = null; S.hl = null; hidePop(); requestDraw(); };
+  p.querySelectorAll('.tmAct').forEach(b => b.onclick = ev => { ev.stopPropagation(); const pr = S.pop; if (!pr || !pr.rows.length) return;
+    if (b.dataset.act === 'dir') { const r0 = pr.rows[0]; try { window.open(dirUrl(r0), '_blank', 'noopener'); } catch (e) {} }
+    else if (b.dataset.act === 'retry') { openRowDetail(pr.rows[0]); }
+    else if (b.dataset.act === 'td') { const r1 = pr.rows[Number(b.dataset.i)]; if (r1) openRowDetail(r1); } });
 }
 
 // ---------- data ----------
@@ -209,7 +253,7 @@ function selectedLines() { return S.mode === 'all' ? null : (S.mode === 'single'
 function rowOf(a) { return { id: a[0], line: a[1], number: String(a[2]), lat: Number(a[3]), lon: Number(a[4]), acc: a[5] == null ? null : Number(a[5]), at: a[6], src: a[7] }; }
 async function loadData() {
   const my = ++S.seq, uid = uidNow(), lines = selectedLines(); S.uid = uid;
-  if (lines && !lines.length) { S.rows = []; S.pend = []; S.info = { source: null, at: null, missing: [], total: 0, withLoc: 0, empty: true }; paint(); return; }
+  if (lines && !lines.length) { S.rows = []; deriveTowers(); S.pend = []; S.info = { source: null, at: null, missing: [], total: 0, withLoc: 0, empty: true }; paint(); return; }
   S.loading = true; paint();
   const cache = await cacheAll(uid);
   let byLine = new Map(), info = { source: 'cache', at: null, missing: [], total: 0, withLoc: 0 };
@@ -246,11 +290,14 @@ async function loadData() {
   } catch (e) {}
   info.total = total; info.withLoc = rows.length;
   S.colorIdx = new Map(); Array.from(new Set(rows.map(r => lineKey(r.line)))).sort().forEach((k, i) => S.colorIdx.set(k, i));
-  S.rows = rows; S.info = info; S.loading = false;
+  S.rows = rows; deriveTowers(); S.info = info; S.loading = false;
   pendingOverlay();
   const sig = S.mode + '|' + (lines ? lines.join('\u0001') : '*');
   if (S.fitSig !== sig && rows.length) { S.fitSig = sig; if (S.W) { fitBounds(rows, 40); frameIndependent(); } }
   S.pop = null; S.hl = null; paint(); computeNearest();
+}
+function deriveTowers() {   // N25-R37: برج مشترك = صفوف بنفس tower_id (خطوط/أرقام مختلفة) → نقطة واحدة وبطاقة واحدة
+  const m = new Map(); S.rows.forEach(r => { const k = String(r.id); let t = m.get(k); if (!t) m.set(k, t = { id: k, rows: [], r }); t.rows.push(r); }); S.towers = Array.from(m.values()); S.towerById = m;
 }
 function pendingOverlay() {
   S.pend = []; try { const lines = selectedLines(); tlocMine().items.forEach(e => { if (!e || e.rejected && false) return; if (lines && !lines.some(l => sameLine(l, e.line))) return; S.pend.push({ line: e.line, number: e.number, lat: Number(e.lat), lon: Number(e.lon), rejected: !!e.rejected }); }); } catch (e) {}
@@ -259,15 +306,15 @@ function pendingOverlay() {
 // ---------- nearest towers (straight-line distance) ----------
 function computeNearest() {
   if (!S.user) { S.nearest = []; renderNearest(); return; }
-  const u = S.user, list = S.rows.map(r => ({ r, d: haversine(u.lat, u.lon, r.lat, r.lon) }));
+  const u = S.user, list = S.towers.map(t => ({ r: t.r, t, d: haversine(u.lat, u.lon, t.r.lat, t.r.lon) }));
   list.sort((a, b) => a.d - b.d); S.nearest = list.slice(0, 10); renderNearest();
 }
 function renderNearest() {
   const box = el('tmNearest'); if (!box) return;
   if (!S.user) { box.innerHTML = '<div style="font-size:12px;color:#718096">فعّل «📍 موقعي» لترى أقرب الأبراج من الخطوط المختارة.</div>'; return; }
-  if (!S.rows.length) { box.innerHTML = '<div style="font-size:12px;color:#718096">اختر خطاً أو أكثر لعرض أقرب الأبراج.</div>'; return; }
+  if (!S.rows.length) { box.innerHTML = '<div style="font-size:12px;color:#718096">' + (S.info.empty || (S.mode !== 'all' && !S.sel.length) ? 'اختر خطاً أو أكثر لعرض أقرب الأبراج.' : 'لا توجد إحداثيات للخطوط المختارة بعد — هذه الخطوط تنتظر إحداثياتها (تُسجَّل من «تفاصيل البرج» في الميدان)، فلا أقرب برج لها.') + '</div>'; return; }
   let h = '<div style="font-size:12px;color:#4a5568;margin-bottom:6px">أقرب الأبراج من موقعك — المسافة المباشرة (خط مستقيم) وليست مسافة الطريق:</div>';
-  S.nearest.forEach((x, i) => { h += '<div class="tm-near" data-i="' + i + '" style="display:flex;justify-content:space-between;gap:8px;padding:8px;border-bottom:1px solid #edf2f7;cursor:pointer;font-size:13px"><span>' + (i + 1) + '. ' + esc(x.r.line) + ' — برج ' + esc(x.r.number) + '</span><b style="white-space:nowrap">' + fmtDist(x.d) + '</b></div>'; });
+  S.nearest.forEach((x, i) => { h += '<div class="tm-near" data-i="' + i + '" style="display:flex;justify-content:space-between;gap:8px;padding:8px;border-bottom:1px solid #edf2f7;cursor:pointer;font-size:13px"><span>' + (i + 1) + '. ' + esc(x.r.line) + ' — برج ' + esc(x.r.number) + (x.t && x.t.rows.length > 1 ? '<br><span style="font-size:11px;color:#744210">🔗 مشترك أيضاً: ' + x.t.rows.filter(q => q !== x.r).map(q => esc(q.line) + ' — ' + esc(q.number)).join('، ') + '</span>' : '') + '</span><b style="white-space:nowrap">' + fmtDist(x.d) + '</b></div>'; });
   box.innerHTML = h;
   box.querySelectorAll('.tm-near').forEach(n => n.onclick = () => { const x = S.nearest[Number(n.dataset.i)]; if (!x) return; setView(x.r.lat, x.r.lon, Math.max(S.view.z, 15)); selectRow(x.r); });
 }
@@ -293,6 +340,16 @@ async function locateMe() {
   } catch (e) { if (stale()) return; S.user = null; S.locMsg = GEO_ERR[e && e.code != null ? e.code : 2] || GEO_ERR[2]; paintLoc(); computeNearest(); requestDraw(); }
 }
 function inView(p) { const q = toScreen(p.lat, p.lon); return q.x > 0 && q.x < S.W && q.y > 0 && q.y < S.H; }
+function streetsRevoke() { S.streets = null; S.streetsAsk = false; S.tiles = new Map(); }
+function paintStreets() {
+  const b = el('tmStreets'); if (!b) return;
+  if (streetsOn()) { b.innerHTML = '<div style="font-size:12px;color:#2f855a">🗺️ الشوارع ظاهرة بموافقتك (OpenStreetMap يرى المنطقة المعروضة) — <a href="javascript:void(0)" id="tmStreetsOff">إيقاف الشوارع</a></div>'; el('tmStreetsOff').onclick = () => { streetsRevoke(); bgNote(); paintStreets(); requestDraw(); }; return; }
+  if (!S.user) { b.innerHTML = ''; return; }
+  if (!S.streetsAsk) { b.innerHTML = '<button class="btn btn-secondary btn-sm" id="tmStreetsAsk">🗺️ إظهار الشوارع حول موقعي</button>'; el('tmStreetsAsk').onclick = () => { S.streetsAsk = true; paintStreets(); }; return; }
+  b.innerHTML = '<div style="padding:10px;border:1px solid #F6C23E;border-radius:10px;background:#FFFAF0;font-size:13px">لعرض الشوارع تُطلب صور الخريطة من خادم <b>OpenStreetMap</b> (طرف خارجي): سيرى ذلك الخادم <b>المنطقة المعروضة حول موقعك</b> (وعنوان اتصال الجهاز). لا يُرسل إليه موقعك الدقيق ولا بيانات الأبراج، ولا يُرسل شيء لخادم التطبيق. تنتهي الموافقة بإغلاق الخريطة أو بتبدّل الحساب. بدون الموافقة تعمل الخريطة والأقرب كاملة بلا خلفية.<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" id="tmStreetsYes">أوافق — أظهر الشوارع</button><button class="btn btn-secondary btn-sm" id="tmStreetsNo">لا، بدون شوارع</button></div></div>';
+  el('tmStreetsNo').onclick = () => { S.streetsAsk = false; paintStreets(); };
+  el('tmStreetsYes').onclick = () => { if (!S.user) { S.streetsAsk = false; paintStreets(); return; } S.streets = { gen: featSessionTag() }; S.streetsAsk = false; frameFromUser(); setView(S.user.lat, S.user.lon, Math.max(S.view.z, 15)); bgNote(); paintStreets(); requestDraw(); };
+}
 function paintLoc() {
   const box = el('tmLocMsg'), btn = el('tmLocBtn'); if (!box) return;
   const m = S.locMsg;
@@ -300,7 +357,8 @@ function paintLoc() {
   else if (m === 'ok' && S.user) box.innerHTML = '<span style="color:#1e8449">✅ موقعك ظاهر على الخريطة (دقة ±' + (S.user.acc != null ? Math.round(S.user.acc) + ' م' : '—') + ') — للعرض فقط: لا يُحفظ ولا يُرسل</span> <a href="javascript:void(0)" id="tmLocOff" style="margin-right:8px">إخفاء</a>';
   else if (m) box.innerHTML = '<span style="color:#c0392b">⚠️ ' + esc(m) + '</span>'; else box.innerHTML = '';
   if (btn) btn.textContent = S.user ? '📍 تحديث موقعي' : '📍 موقعي';
-  const off = el('tmLocOff'); if (off) off.onclick = () => { S.user = null; S.locMsg = ''; paintLoc(); computeNearest(); requestDraw(); };
+  const off = el('tmLocOff'); if (off) off.onclick = () => { S.user = null; S.locMsg = ''; S.streetsAsk = false; paintLoc(); computeNearest(); requestDraw(); };
+  paintStreets();
 }
 
 // ---------- GPS reference lines (display only; token-checked server read; per-account device copy) ----------
@@ -345,7 +403,7 @@ function paint() {
     else h = '📴 نسخة محفوظة على الجهاز (غير محدّثة من الخادم)' + (i.at ? ' — آخر تحديث ' + fmtTime(i.at) : '') + ' — قد تتضمّن أبراجاً أُرشفت أو نقاطاً تغيّرت';
     h += ' · <b>' + S.rows.length + '</b> برج بموقع' + (i.total ? ' من ' + i.total : '');
     if (i.missing.length) h += '<br><span style="color:#c0392b">⚠️ لا بيانات محلية لـ: ' + esc(i.missing.slice(0, 4).join('، ')) + (i.missing.length > 4 ? '…' : '') + ' — اتصل بالإنترنت لتحميلها</span>';
-    else if (!S.rows.length) h += '<br><span style="color:#7B341E">لا توجد أبراج بموقع محفوظ لهذه الاختيار بعد (يُسجَّل الموقع من تفاصيل البرج).</span>';
+    else if (!S.rows.length) h += '<br><span style="color:#7B341E">⏳ الخط ينتظر إحداثياته: لا توجد أبراج بموقع محفوظ لهذا الاختيار بعد (تُسجَّل من «تفاصيل البرج» في الميدان). لا تُخمَّن إحداثيات.</span>';
     if (S.pend.length) h += '<br><span style="color:#B7791F">◇ ' + S.pend.length + ' موقع معلّق (غير مؤكَّد) لحسابك يظهر بشكل معيّن</span>';
   }
   st.innerHTML = h;
@@ -385,7 +443,7 @@ function build(root) {
     '<div id="tmPop" style="display:none;position:absolute;background:#fff;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.3);padding:8px 10px;font-size:13px;direction:rtl;z-index:5"></div>' +
     '<div id="tmFooter" style="position:absolute;bottom:2px;left:6px;font-size:10px;color:#555;background:rgba(255,255,255,.75);padding:1px 5px;border-radius:4px"></div><div style="position:absolute;bottom:2px;right:6px;font-size:10px;color:#555;background:rgba(255,255,255,.75);padding:1px 5px;border-radius:4px"><span id="tmOsm" style="display:none">© OpenStreetMap</span></div></div>' +
     '<div id="tmLocConsent" style="display:none;margin-top:8px;padding:10px;border:1px solid #F6C23E;border-radius:10px;background:#FFFAF0;font-size:13px">يُستعمل موقعك لعرض مكانك وأقرب الأبراج على هذا الجهاز فقط — <b>لا يُخزَّن ولا يُرسل</b>، وبلا تتبّع بالخلفية. سيطلب المتصفح إذنك الآن.<div style="margin-top:8px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" id="tmLocGo">متابعة</button><button class="btn btn-secondary btn-sm" id="tmLocNo">إلغاء</button></div></div>' +
-    '<div id="tmLocMsg" style="margin-top:8px;font-size:12px"></div><div class="form-card" style="margin-top:10px;padding:10px"><div id="tmNearest"></div></div>';
+    '<div id="tmLocMsg" style="margin-top:8px;font-size:12px"></div><div id="tmStreets" style="margin-top:8px"></div><div class="form-card" style="margin-top:10px;padding:10px"><div id="tmNearest"></div></div>';
   el('tmMode_single').onclick = () => setMode('single'); el('tmMode_multi').onclick = () => setMode('multi'); el('tmMode_all').onclick = () => setMode('all');
   el('tmSingle').onchange = () => { S.sel = el('tmSingle').value ? [el('tmSingle').value] : []; loadData(); };
   el('tmMultiQ').oninput = () => buildSelectors(); el('tmMultiClear').onclick = () => { S.sel = []; buildSelectors(); updModeUi(); loadData(); };
@@ -402,14 +460,15 @@ window.showTowerMapImpl = function (tok) {
   document.getElementById('linesHomeView').style.display = 'none'; document.getElementById('linesInfoView').style.display = 'none'; document.getElementById('linesStatusView').style.display = 'none';
   const lt = document.getElementById('lineTowerListView'); if (lt) lt.style.display = 'none'; const td = document.getElementById('towerDetailView'); if (td) td.style.display = 'none';
   const root = document.getElementById('towerMapView'); root.style.display = '';
-  if (S.gen !== featSessionTag() || S.uid !== uidNow()) { S.sel = []; S.mode = 'single'; S.rows = []; S.fitSig = null; S.nearest = []; S.frameUser = false; S.view = { lat: 32.5, lon: 45.8, z: 8 }; S.tiles = new Map(); S.ref = { on: {}, data: null, at: null, src: null, err: '' }; }   // حساب/جلسة مختلفة: لا اختيار ولا بيانات سابقة
-  S.locTok++; S.gen = featSessionTag(); S.bg = false; S.open = true; S.user = null; S.locMsg = ''; S.pop = null; S.hl = null;
+  if (S.gen !== featSessionTag() || S.uid !== uidNow()) { S.sel = []; S.mode = 'single'; S.rows = []; deriveTowers(); S.fitSig = null; S.nearest = []; S.frameUser = false; S.view = { lat: 32.5, lon: 45.8, z: 8 }; S.tiles = new Map(); S.ref = { on: {}, data: null, at: null, src: null, err: '' }; }   // حساب/جلسة مختلفة: لا اختيار ولا بيانات سابقة
+  S.locTok++; streetsRevoke(); S.gen = featSessionTag(); S.bg = false; S.open = true; S.user = null; S.locMsg = ''; S.pop = null; S.hl = null;
   build(root); updModeUi(); buildSelectors(); paintLoc(); renderNearest(); bgNote(); refLoad();
   if (S.ro) { try { S.ro.disconnect(); } catch (e) {} S.ro = null; try { S.ro = new ResizeObserver(() => resize()); S.ro.observe(el('tmWrap')); } catch (e) {} }
   setTimeout(() => { resize(); if (S.sel.length || S.mode === 'all') loadData(); else paint(); }, 0);
 };
-window.tmapLeave = function () { S.locTok++; S.open = false; S.user = null; S.locMsg = ''; S.pop = null; S.nearest = []; try { if (S.ro) S.ro.disconnect(); } catch (e) {} const root = document.getElementById('towerMapView'); if (root && root.style.display !== 'none') root.style.display = 'none'; };
-window.__tmapInfo = function () { return { frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
+window.tmapLeave = function () { S.locTok++; streetsRevoke(); S.open = false; S.user = null; S.locMsg = ''; S.pop = null; S.nearest = []; try { if (S.ro) S.ro.disconnect(); } catch (e) {} const root = document.getElementById('towerMapView'); if (root && root.style.display !== 'none') root.style.display = 'none'; };
+window.__tmapDrawn = function () { return S.drawn.map(d => ({ x: d.x, y: d.y, kind: d.kind, n: d.items ? d.items.length : 0 })); };   // خطاف اختبار للقراءة فقط
+window.__tmapInfo = function () { return { streets: streetsOn(), streetsAsk: S.streetsAsk, labels: S.labelCount, labelTexts: S.labelTexts.slice(), towers: S.towers.length, popRows: S.pop ? S.pop.rows.length : 0, frameUser: S.frameUser, bg: S.bg, bgAllowed: bgAllowed(), refShown: refPoints().length, refLines: (S.ref.data || []).map(l => l.ref_key), refSrc: S.ref.src, status: (document.getElementById('tmStatus') || {}).textContent || '', open: S.open, mode: S.mode, sel: S.sel.slice(), rows: S.rows.length, lines: Array.from(new Set(S.rows.map(r => r.line))), source: S.info.source, drawnSingles: S.singles, drawnClusters: S.clusters, visible: S.visCount, user: S.user ? { lat: S.user.lat, lon: S.user.lon, acc: S.user.acc } : null, locMsg: S.locMsg, nearest: S.nearest.map(x => ({ line: x.r.line, number: x.r.number, d: Math.round(x.d * 10) / 10 })), view: Object.assign({}, S.view), pend: S.pend.length, missing: S.info.missing.slice() }; };
 window.__tmapProbe = function (line, number) { const r = S.rows.find(x => x.line === line && String(x.number) === String(number)); if (!r) return null; const q = toScreen(r.lat, r.lon); const rect = el('tmCanvas').getBoundingClientRect(); return { x: rect.left + q.x, y: rect.top + q.y, ok: q.x > 0 && q.y > 0 && q.x < S.W && q.y < S.H }; };
 
 // ---------- tower detail card: confirmed vs pending, and the capture flow ----------
