@@ -654,7 +654,15 @@ function renderTowerDetail(lineName, towerNum, pk) {   // pk (N25-R28) = { pk, e
   const msg = t => { body.innerHTML = (pk ? lpkBannerHtml(pk.pk) : '') + '<div class="empty-state">' + t + '</div>'; };
   if (!env) return msg('⚠️ حالة هذا البرج غير متاحة حالياً (لم تُقرأ من الخادم ولا يوجد نسخة محفوظة)');
   if (env.status === 'uninitialized') return msg('⚠️ حالة هذا البرج لم تُهيّأ بعد' + (env.failed ? ' (فشلت التهيئة)' : '') + ' — يلزم إجراء المدير؛ لا تُعرض حالة مستنتجة من التاريخ');
-  if (env.resolution === 'no_source' || env.status === 'no_source') return msg('لم يُكشف هذا البرج بعد (لا يوجد كشف معتمد في الحالة الحالية)');
+  if (env.resolution === 'no_source' || env.status === 'no_source') {
+    msg('لم يُكشف هذا البرج بعد (لا يوجد كشف معتمد في الحالة الحالية)');
+    if (!pk) { try {   // N25-R34: برج نشط لم يُكشف بعد يبقى قابلاً لالتقاط موقعه (الموقع لا يتبع الكشف)
+      body.insertAdjacentHTML('beforeend', '<div id="towerLocCard" style="margin-top:14px"></div>');
+      const c0 = _towerDetailCtx && _towerDetailCtx.line === lineName && _towerDetailCtx.tower === String(towerNum) ? _towerDetailCtx : null, sn0 = csIdentSnap(lineName, towerNum);
+      towerLocCardMount({ line: lineName, number: String(towerNum), ident: sn0 || null, live: !!(c0 && c0.live), uid: (currentUser && currentUser.id != null) ? String(currentUser.id) : null });
+    } catch (e) { console.warn('[tower-app] loc card', e); } }
+    return;
+  }
   if (env.basis !== 'operations' || !Array.isArray(env.components) || !env.row || typeof env.row !== 'object') return msg('⚠️ تفاصيل هذا البرج غير متاحة حالياً (قراءة تفصيلية غير مكتملة) — تحقق من الاتصال وأعد الفتح');
   const ctx = !pk && _towerDetailCtx && _towerDetailCtx.line === lineName && _towerDetailCtx.tower === String(towerNum) ? _towerDetailCtx : null;
   const r = env.row, iid = r.id;
@@ -680,6 +688,8 @@ function renderTowerDetail(lineName, towerNum, pk) {   // pk (N25-R28) = { pk, e
   </div>`;
   if (!pk) html += `<button class="btn btn-secondary" id="towerHistoryBtn" style="width:100%;margin-bottom:14px" onclick="openTowerHistory(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">📜 سجل البرج</button>`;
   if (!pk && currentUser && currentUser.role === 'admin') html += `<button class="btn btn-secondary" id="towerSpecBtn" style="width:100%;margin-bottom:14px"${ctx && ctx.verifying ? ' disabled title="يتاح بعد التحقق من الخادم"' : ''} onclick="openTowerSpec(${_tdEsc(JSON.stringify(lineName))}, ${_tdEsc(JSON.stringify(String(towerNum)))})">⚙️ مواصفات البرج (تصحيح)</button>`;   // N25-R6   // v335-C6r24 (P02)
+  let _locId = null; if (!pk) { try { const sn = csIdentSnap(lineName, towerNum); _locId = sn && !sn.blocked ? sn : (sn || null); } catch (e) { _locId = null; } }   // N25-R34: هوية البرج الدائمة من نفس لقطة الهوية التي تستعملها نماذج الحفظ (لا حلّ من الرقم)
+  if (!pk) html += '<div id="towerLocCard" style="margin-bottom:14px"></div>';
   const draws = [], geoGaps = [];
   model.circuits.forEach(c => {
     if (c.applicability === 'not_applicable') { html += '<div class="form-card" style="margin-bottom:14px;color:#718096;font-size:0.82rem">🔘 الدائرة الثانية: غير منطبقة على هذا البرج</div>'; return; }
@@ -728,6 +738,7 @@ function renderTowerDetail(lineName, towerNum, pk) {   // pk (N25-R28) = { pk, e
   if (model.footer === 'clear' && !geoGaps.length) html += '<div class="empty-state" style="padding:10px">✅ لا توجد ملاحظات مسجّلة — كل الأقسام المنطبقة معروفة وسليمة</div>';
   html += '</div></div>';
   body.innerHTML = html;
+  if (!pk) { try { towerLocCardMount({ line: lineName, number: String(towerNum), ident: _locId, live: !!(ctx && ctx.live), uid: (currentUser && currentUser.id != null) ? String(currentUser.id) : null }); } catch (e) { console.warn('[tower-app] loc card', e); } }   // N25-R34
   setTimeout(() => draws.forEach(d => { try { d(); } catch (e) { console.warn('[tower-app] فشل رسم عوازل التفاصيل', e); } }), 10);
 }
 

@@ -891,8 +891,10 @@ tbody tr:hover { background: #F7FAFC; }
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="showLinesInfo()">📋 بيانات الخطوط</button>
       <button class="btn btn-secondary" onclick="showLinesStatus()">📡 حالة الخطوط</button>
+      <button class="btn btn-secondary" id="btnTowerMap" onclick="showTowerMap()">🗺️ خريطة الأبراج</button>
     </div>
   </div>
+  <div id="towerMapView" style="display:none"></div>
   <div id="linesInfoView" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="page-title" style="margin:0">📋 بيانات الخطوط</div>
@@ -4135,7 +4137,7 @@ function updateStatus(online) {
 function getTotalPendingCount() {
   // طابور المعالجات/PATCH غير القابل للقراءة ليس فارغاً: يُحسب كعنصر معلّق مجهول حتى لا يُعلَن اكتمال المزامنة ولا يُسمح بإغلاق بلا تحذير
   const tq = readQueueStrict(TREATMENT_QUEUE_KEY), pq = readQueueStrict(INSPECTION_PATCH_QUEUE_KEY);
-  return getQueue().length + getThermalQueue().filter(thqVisible).length + (tq.ok ? tq.items.length : 1) + getLineEntryQueue().filter(thqVisible).length + (pq.ok ? pq.items.length : 1) + getStaffRosterQueue().length + opsPendingCount() + invTxnCount() + docqCount();   // v335-C5r3/r4
+  return getQueue().length + getThermalQueue().filter(thqVisible).length + (tq.ok ? tq.items.length : 1) + getLineEntryQueue().filter(thqVisible).length + (pq.ok ? pq.items.length : 1) + getStaffRosterQueue().length + opsPendingCount() + invTxnCount() + docqCount() + tlocCount();   // v335-C5r3/r4 + N25-R34
 }
 
 function updatePendingBadge() {
@@ -4181,6 +4183,7 @@ async function syncAllQueues() {
     await syncStaffRosterQueue();
     await invTxnSync();   // v335-C5r3: استعارة/إرجاع المخزن (معاملة واحدة بالخادم، مرة واحدة لكل معرّف عملية)
     await docqSync();   // v335-C5r4: الاستمارة الحرارية الرسمية + أوراق الواجب
+    await tlocSync();   // N25-R34: التقاط مواقع الأبراج (بمعرّف طلب ثابت، مرة واحدة)
   } finally {
     syncInProgress = false;
     try { csNoteWrites(); } catch (e) {} // v335: القراءات الحيّة السابقة لم تعد مرجعاً بعد دورة رفع
@@ -5691,6 +5694,164 @@ function docqDiscard(opId) {
   const e = (docqRead().items || []).find(x => x && x.op_id === opId);
   if (!confirm('إلغاء هذا السجل المعلّق؟' + (e && e.sent_at ? ' (سبق إرساله؛ قد يكون وصل الخادم ولن يُلغى هناك)' : ''))) return;
   docqRemove(opId); try { renderPendingSyncPage(); } catch (x) {}
+}
+
+// ============================================================================================================
+// N25-R34 — صندوق «التقاط موقع البرج» (مسار الحفظ والمزامنة نفسه: csCall + طابور دائم + العدّاد + المعلّقة + syncAllQueues)
+//  • العنصر يحمل من لحظة الالتقاط: tower_id (الهوية الدائمة) + uid (الحساب) + الرقم ونسخة الترقيم كسياق فقط. لا يُعاد حلّ الهوية من الرقم عند الإرسال.
+//  • معرّف الطلب (request_id) يُولَّد مرة عند الالتقاط ويبقى عبر كل المحاولات: الخادم يعيد الجواب نفسه ولا يكتب مرتين، ولا يستبدل موقعاً أحدث بموقع أقدم.
+//  • معزول حسب الحساب: كل عرض/عدّ/إرسال لعناصر المستخدم الحالي فقط؛ عناصر حساب آخر على الجهاز تبقى ولا تُرسل ولا تُعرض.
+//  • موقع المستخدم لا يُخزَّن ولا يُرسَل بمجرد عرضه على الخريطة؛ فقط ما أكّده المستخدم صراحةً كموقع برج يدخل هذا الصندوق.
+// ============================================================================================================
+const TLOC_KEY = 'tower_loc_outbox', TLOC_CONF_KEY = 'tower_loc_confirmed';
+
+const TLOC_MSG = { unknown_tower_id: 'هوية البرج غير معروفة بالخادم', tower_retired: 'البرج مؤرشف/محذوف — لا يُسجَّل له موقع', identity_required: 'هوية البرج مطلوبة', op_id_reused: 'معرّف الطلب مستعمل لطلب مختلف',
+  out_of_region: 'الإحداثيات خارج النطاق الجغرافي المقبول', invalid: 'بيانات غير صالحة', captured_in_future: 'وقت الالتقاط في المستقبل (ساعة الجهاز؟)', captured_too_old: 'الالتقاط أقدم من المدة المسموحة', forbidden: 'ما عندك صلاحية لهذا الإجراء' };
+
+let _tlocRun = null, _tlocAgain = false;
+
+function tlocRead() {
+  try {
+    const raw = localStorage.getItem(TLOC_KEY);
+    if (raw === null || raw === '') return { ok: true, items: [] };
+    const a = JSON.parse(raw);
+    return Array.isArray(a) ? { ok: true, items: a } : { ok: false, items: [] };
+  } catch (e) { return { ok: false, items: [] }; }
+}
+
+function tlocWrite(items) {
+  const txt = JSON.stringify(items);
+  if (!safeSetItem(TLOC_KEY, txt)) return false;
+  try { return localStorage.getItem(TLOC_KEY) === txt; } catch (e) { return false; }   // لا نعتبرها محفوظة قبل قراءتها
+}
+
+const tlocUid = () => (typeof currentUser !== 'undefined' && currentUser && currentUser.id != null) ? String(currentUser.id) : null;
+
+function tlocMine() { const r = tlocRead(), u = tlocUid(); return { ok: r.ok, items: r.ok && u ? r.items.filter(e => e && String(e.uid) === u) : [] }; }
+
+function tlocCount() { const r = tlocRead(); if (!r.ok) return 1; const u = tlocUid(); return u ? r.items.filter(e => e && String(e.uid) === u).length : 0; }   // غير مقروء = عنصر معلّق مجهول
+
+function tlocForTower(towerId) { return tlocMine().items.filter(e => String(e.tower_id) === String(towerId)); }
+
+// إضافة: يرجع {ok:true,entry} فقط بعد حفظ دائم متحقَّق منه. نفس request_id مرتين = نفس العنصر (لا نسخة ثانية)
+function tlocEnqueue(c) {
+  const r = tlocRead(); const u = tlocUid();
+  if (!r.ok || !u) return { ok: false, reason: r.ok ? 'no_user' : 'unreadable' };
+  if (String(c.uid) !== u) return { ok: false, reason: 'account_changed' };
+  const dup = r.items.find(x => x && x.request_id === c.request_id);
+  if (dup) return { ok: true, entry: dup, duplicate: true };
+  const e = { request_id: c.request_id, uid: u, owner: (currentUser.full_name || currentUser.username || ''), tower_id: String(c.tower_id), line: c.line, number: String(c.number), topology_rev: c.topology_rev == null ? null : Number(c.topology_rev),
+    lat: c.lat, lon: c.lon, accuracy_m: c.accuracy_m == null ? null : c.accuracy_m, captured_at: c.captured_at, created_at: Date.now() };
+  r.items.push(e);
+  if (!tlocWrite(r.items)) return { ok: false, reason: 'storage' };
+  updatePendingBadge();
+  return { ok: true, entry: e };
+}
+
+function tlocFlag(rid, patch) { const r = tlocRead(); if (!r.ok) return false; return tlocWrite(r.items.map(x => (x && x.request_id === rid) ? Object.assign({}, x, patch) : x)); }
+
+function tlocRemove(rid) { const r = tlocRead(); if (!r.ok) return false; const ok = tlocWrite(r.items.filter(x => !(x && x.request_id === rid))); updatePendingBadge(); return ok; }
+
+// آخر مواقع أكّدها الخادم لهذا الحساب (للعرض دون اتصال حتى قبل أن تُحمَّل الخريطة من الخادم): tower_id -> {line,number,lat,lon,acc,at,by}
+function tlocConfRead() { try { const o = JSON.parse(localStorage.getItem(TLOC_CONF_KEY) || '{}'); return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {}; } catch (e) { return {}; } }
+function tlocConfMine() { const u = tlocUid(), all = tlocConfRead(); return (u && all[u] && typeof all[u] === 'object') ? all[u] : {}; }
+function tlocConfPut(towerId, rec) {
+  const u = tlocUid(); if (!u) return;
+  const all = tlocConfRead(), mine = all[u] || {}; mine[String(towerId)] = rec;
+  const ids = Object.keys(mine); if (ids.length > 400) ids.sort((a, b) => String(mine[a].at).localeCompare(String(mine[b].at))).slice(0, ids.length - 400).forEach(k => delete mine[k]);
+  all[u] = mine; safeSetItem(TLOC_CONF_KEY, JSON.stringify(all));
+}
+function tlocConfClear(pred) {   // N25-R36: ردّ خادم ناجح وكامل لنطاق يستبدل نسخ هذا الحساب المؤكَّدة محلياً لذلك النطاق (الغائب عن الردّ لا يبقى)
+  const u = tlocUid(); if (!u) return; const all = tlocConfRead(), mine = all[u]; if (!mine) return; let ch = false;
+  Object.keys(mine).forEach(k => { if (pred(mine[k], k)) { delete mine[k]; ch = true; } });
+  if (ch) { all[u] = mine; safeSetItem(TLOC_CONF_KEY, JSON.stringify(all)); }
+}
+function tlocConfPrune(serverRows) {   // بعد قراءة حيّة: ما صار عند الخادم بنفس الوقت أو أحدث لا حاجة لنسخته المحلية
+  const u = tlocUid(); if (!u) return; const all = tlocConfRead(), mine = all[u]; if (!mine) return; let ch = false;
+  (serverRows || []).forEach(r => { const m = mine[String(r.id)]; if (m && String(r.at) >= String(m.at)) { delete mine[String(r.id)]; ch = true; } });
+  if (ch) { all[u] = mine; safeSetItem(TLOC_CONF_KEY, JSON.stringify(all)); }
+}
+
+// يرسل عنصراً واحداً: {state:'done',res} | {state:'retry',code} | {state:'rejected',code}
+async function tlocSendOne(e) {
+  const out = await csCall('app_tower_location_save', { p_request_id: e.request_id, p_tower_id: e.tower_id, p_lat: e.lat, p_lon: e.lon, p_accuracy_m: e.accuracy_m, p_captured_at: e.captured_at,
+    p_line_name: e.line, p_tower_number: String(e.number), p_topology_rev: e.topology_rev }, { timeout: 30000 });
+  if (out && out.ok === true) return { state: 'done', res: out };
+  if (!out || out.stale) return { state: 'retry', code: 'session_changed' };
+  if (out.net) return { state: 'retry', code: 'network' };
+  if (['topology_busy', 'server_error', 'bad_response'].indexOf(out.code) >= 0 || /^http_(5\d\d|408|429|404)$/.test(String(out.code))) return { state: 'retry', code: out.code === 'http_404' ? 'server_not_ready' : out.code };   // 404 = SQL74 غير مطبّقة بعد: يبقى العمل
+  if (['invalid_session', 'expired', 'revoked', 'inactive', 'locked'].indexOf(out.code) >= 0) return { state: 'retry', code: out.code };
+  return { state: 'rejected', code: out.code || 'rejected' };
+}
+
+function tlocSync() {
+  if (_tlocRun) { _tlocAgain = true; return _tlocRun; }
+  _tlocRun = (async () => { try { do { _tlocAgain = false; await tlocSyncPass(); } while (_tlocAgain); } finally { _tlocRun = null; } })();
+  return _tlocRun;
+}
+
+async function tlocSyncPass() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  const u0 = tlocUid(); const r0 = tlocRead(); if (!r0.ok || !u0) return;
+  const mine = r0.items.filter(e => e && String(e.uid) === u0 && !e.rejected).sort((a, b) => String(a.captured_at).localeCompare(String(b.captured_at)) || a.created_at - b.created_at);
+  let changed = false;
+  for (const e of mine) {
+    if (tlocUid() !== u0) break;
+    const cur = tlocRead().items.find(x => x && x.request_id === e.request_id); if (!cur || cur.rejected) continue;
+    if (!cur.sent_at && !tlocFlag(e.request_id, { sent_at: Date.now() })) break;   // تعذّر الحفظ => لا نرسل
+    const s = await tlocSendOne(cur);
+    if (s.state === 'done') {
+      const loc = s.res && s.res.location;
+      if (loc && String(tlocUid()) === u0) { try { tlocConfPut(cur.tower_id, { line: cur.line, number: cur.number, lat: loc.lat, lon: loc.lon, acc: loc.accuracy_m, at: loc.captured_at, src: loc.source, by: loc.saved_by_name || '' }); } catch (x) {} }
+      tlocRemove(e.request_id); changed = true;
+      _tlocDone.set(e.request_id, { applied: s.res.applied !== false, duplicate: !!s.res.duplicate, renumbered: !!s.res.renumbered });
+    } else if (s.state === 'rejected') {
+      tlocFlag(e.request_id, { rejected: { code: s.code, at: Date.now() } }); changed = true;
+      showToast('⚠️ رُفض موقع برج معلّق: ' + (TLOC_MSG[s.code] || s.code), 'error');
+    } else { tlocFlag(e.request_id, { _lastError: s.code }); break; }
+  }
+  updatePendingBadge();
+  try { if (changed && typeof towerLocCardRefresh === 'function') towerLocCardRefresh(); } catch (x) {}
+  try { renderPendingSyncPage(); } catch (x) {}
+}
+
+const _tlocDone = new Map();   // request_id -> نتيجة أكّدها الخادم (بالذاكرة)
+
+// الحفظ من الواجهة: يحفظ أولاً ثم يحاول الإرسال. state: confirmed | pending | rejected
+async function tlocSubmit(c) {
+  const q = tlocEnqueue(c); if (!q.ok) return q;
+  await tlocSync();
+  const left = tlocRead().items.find(x => x && x.request_id === q.entry.request_id);
+  if (!left) { const d = _tlocDone.get(q.entry.request_id) || {}; return { ok: true, state: 'confirmed', entry: q.entry, applied: d.applied !== false, renumbered: !!d.renumbered }; }
+  if (left.rejected) return { ok: true, state: 'rejected', entry: left, code: left.rejected.code };
+  return { ok: true, state: 'pending', entry: left };
+}
+
+function tlocRetry(rid) {
+  if (!tlocFlag(rid, { rejected: undefined, _lastError: undefined })) { showToast('⛔ تعذّر الحفظ على الجهاز', 'error'); return; }
+  updatePendingBadge(); try { renderPendingSyncPage(); } catch (e) {} tlocSync();
+}
+
+function tlocDiscard(rid) {
+  const e = tlocMine().items.find(x => x && x.request_id === rid);
+  if (!e) return;
+  if (!confirm('إلغاء موقع البرج المعلّق؟' + (e.sent_at ? ' (سبق إرساله؛ قد يكون وصل الخادم ولن يُلغى هناك)' : ''))) return;
+  tlocRemove(rid); try { renderPendingSyncPage(); } catch (x) {} try { towerLocCardRefresh(); } catch (x) {}
+}
+
+function tlocRenderPending() {
+  const r = tlocRead();
+  if (!r.ok) return `<h3 style="color:#c0392b;margin:14px 0 8px">📍 مواقع الأبراج: الصندوق غير قابل للقراءة</h3>`;
+  const items = tlocMine().items; if (!items.length) return '';
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  let h = `<h3 style="color:#2E4057;margin:14px 0 8px">📍 مواقع أبراج ملتقطة (${items.length})</h3>`;
+  items.forEach(e => {
+    const rej = e.rejected ? `<div style="font-size:12px;color:#c0392b;background:#fdecea;border-radius:6px;padding:6px 8px;margin:4px 0">⛔ رفضها الخادم: ${esc(TLOC_MSG[e.rejected.code] || e.rejected.code)} — لن تُرسل تلقائياً</div>` : '';
+    const st = e.rejected ? '' : `<div style="font-size:11px;color:#718096;margin:4px 0">⏳ معلّق — محفوظ على الجهاز فقط${e._lastError ? ' (آخر محاولة: ' + esc(e._lastError) + ')' : ''}؛ يُرسل تلقائياً بمعرّف طلب ثابت (مرة واحدة)</div>`;
+    h += `<div class="card" style="padding:10px;margin-bottom:6px;cursor:default"><div style="font-size:13px">📍 ${esc(e.line)} — برج ${esc(e.number)} — ${Number(e.lat).toFixed(6)}, ${Number(e.lon).toFixed(6)}${e.accuracy_m != null ? ' (±' + Math.round(e.accuracy_m) + ' م)' : ''}</div>${rej}${st}
+      ${e.rejected ? `<button class="btn btn-sm" style="background:#2E4057;color:white;border:none" onclick="tlocRetry('${esc(e.request_id)}')">🔁 إعادة المحاولة</button> ` : ''}<button class="btn btn-sm" style="background:#e74c3c;color:white;border:none" onclick="tlocDiscard('${esc(e.request_id)}')">🗑️ إلغاء</button></div>`;
+  });
+  return h;
 }
 
 // ============================================================================================================
@@ -8860,6 +9021,8 @@ function getLinesInfoData() {
 }
 
 function showLinesHome() {
+  try { if (typeof tmapLeave === 'function') tmapLeave(); } catch (e) {}   // N25-R34: موقع المستخدم بالذاكرة فقط ويُمسح بمغادرة الخريطة
+  { const mv = document.getElementById('towerMapView'); if (mv) mv.style.display = 'none'; }
   document.getElementById('linesHomeView').style.display = '';
   document.getElementById('linesInfoView').style.display = 'none';
   document.getElementById('linesStatusView').style.display = 'none';
@@ -9086,13 +9249,14 @@ function renderPendingSyncPage() {
   const lineEntryQ = getLineEntryQueue();
   const staffRosterQ = getStaffRosterQueue();
   const thermVis = thermQ.filter(thqVisible).length, leVis = lineEntryQ.filter(thqVisible).length;   // N25-R14a: قياسات حساب آخر لا تظهر هنا
-  const total = inspQ.length + thermVis + treatQ.length + leVis + staffRosterQ.length + opsPendingCount() + invTxnCount() + docqCount();
+  const total = inspQ.length + thermVis + treatQ.length + leVis + staffRosterQ.length + opsPendingCount() + invTxnCount() + docqCount() + tlocCount();
 
   if (!total) { body.innerHTML = '<div class="empty-state">لا توجد عناصر معلقة ✅</div>'; return; }
 
   let html = opsRenderPendingSection();   // v335-C4
   html += invTxnRenderPending();   // v335-C5r3
   html += docqRenderPending();   // v335-C5r4
+  html += tlocRenderPending();   // N25-R34
 
   if (inspQ.length) {
     html += `<h3 style="color:#2E4057;margin:14px 0 8px">📋 كشوفات عادية (${inspQ.length})</h3>`;
@@ -10057,7 +10221,8 @@ function drawArabicTextPNG(items, widthCss, opts) {
 const FEAT_MODULE_SRC = { svg: './tower-svg.js', insp: './inspection-editor.js', dep: './departures-list.js', treat: './treatment-editor.js',
   hist: './treatment-history.js', thist: './tower-history.js', lexp: './treatment-log-export.js', dexp: './departures-export.js', rexp: './records-export.js',
   lpg: './lines-pages.js', ladm: './lines-admin.js', lprt: './lines-print.js', acct: './accounts.js', emg: './emergency-departures.js', tg: './work-telegram.js',
-  topo: './topology-admin.js' };   // N25-R6: إدارة ترقيم الأبراج + مواصفات البرج
+  topo: './topology-admin.js',   // N25-R6: إدارة ترقيم الأبراج + مواصفات البرج
+  tmap: './tower-map.js' };   // N25-R34: خريطة الأبراج + التقاط موقع البرج
 
 const FEAT_MODULE_DEPS = { insp: ['svg'], treat: ['svg'], ladm: ['lpg'], lexp: ['hist'], thist: ['hist'] };   // v335-C6r24 (P02): سجل البرج يستخدم مُرقِّم المعالجات   // v335-C6r21 (P01-B1): التصدير يستخدم مُرقِّم السجل
 
@@ -10210,6 +10375,8 @@ function openDepLogExportModal() { return featRun(['lexp'], () => openDepLogExpo
 // يبقى هنا دائماً: lines-data.js وLINES_INFO، linesInfoCache وloadLinesInfoFromDB وgetLinesInfoData، كاش أبراج الخطوط وgetLineTowers (متزامن)،
 // الجلسة/الصلاحيات، صفحة المعلّقة، أدوات Canvas/PDF المشتركة. كل وحدة هنا: Promise واحد مشترك، تنفيذ مرة واحدة، إعادة المحاولة بعد الفشل.
 function showLinesInfo() { return featRun(['lpg'], () => showLinesInfoImpl(), 'lpg'); }
+function showTowerMap() { return featRun(['tmap'], (tok) => showTowerMapImpl(tok), 'tmap'); }   // N25-R34
+function towerLocCardMount(ctx) { return featRun(['tmap'], (tok) => towerLocCardImpl(ctx, tok), 'tloc'); }   // N25-R34
 function showLinesStatus() { return featRun(['lpg'], (tok) => showLinesStatusImpl(tok), 'lpg'); }
 function openPrintLinesModal() { return featRun(['lprt'], () => openPrintLinesModalImpl(), 'lprt'); }
 function openAddLineModal() { return featRun(['ladm'], () => openAddLineModalImpl(), 'ladm'); }

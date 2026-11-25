@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tower-app-v335-C6r98-N25R35b';
+const CACHE_NAME = 'tower-app-v335-C6r99-N25R36b';
 // N23: خطوط المذكرة في كاش مستقل غير مرتبط برقم الإصدار (≈1.9MB): لا تُعاد تنزيلها مع كل إصدار، وتُخزَّن عند أول استخدام للمذكرة (دون إبطاء بدء التطبيق).
 const FONT_CACHE = 'tower-memo-fonts-v1';
 
@@ -78,6 +78,7 @@ const CRITICAL_ASSETS = [
   './treatment-log-export.js',
   './departures-export.js',
   './records-export.js',
+  './tower-map.js',   // N25-R34: خريطة الأبراج + التقاط موقع البرج (تخزين مسبق؛ لا يُنفَّذ إلا عند الطلب)
   // v335-C5r9: وحدات بيانات الخطوط/الحسابات/المغادرات الطارئة/برقية العمل (تخزين مسبق للعمل بدون إنترنت؛ لا تُنفَّذ إلا عند الطلب)
   './lines-pages.js',
   './lines-admin.js',
@@ -156,6 +157,9 @@ self.addEventListener('fetch', (event) => {
 
   // طلبات Supabase: لا تُعترض إطلاقاً — تذهب للشبكة مباشرة ليصل فشلها للتطبيق فيحفظ أوف لاين
   if (url.includes('supabase.co')) return;
+
+  // N25-R34: بلاطات خلفية الخريطة (خارجية، كثيرة): لا تُعترض ولا تُخزَّن بكاش التطبيق؛ تعذّرها لا يمنع عرض الأبراج
+  if (/^https:\/\/[a-c]?\.?tile\.openstreetmap\.org\//.test(url)) return;
 
   // أي طلب غير GET (POST/PATCH/DELETE): لا يُعترض ولا يُخزَّن — التخزين المؤقت للقراءة فقط
   if (event.request.method !== 'GET') return;
