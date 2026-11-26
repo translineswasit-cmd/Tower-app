@@ -1676,6 +1676,8 @@ tbody tr:hover { background: #F7FAFC; }
     <button class="btn btn-primary" id="hcBtnSave" onclick="hcSave()">💾 حفظ</button>
     <button class="btn btn-secondary" id="hcBtnCancel" onclick="hcCancel()">إلغاء</button>
     <button class="btn btn-secondary" id="hcBtnReset" onclick="hcReset()">🔄 استعادة الافتراضي</button>
+    <button class="btn btn-primary" id="hcBtnPublish" style="display:none" onclick="hcPublish()">📢 حفظ ونشر للجميع</button>
+    <button class="btn btn-secondary" id="hcBtnUnpublish" style="display:none" onclick="hcUnpublish()">🚫 إلغاء النشر</button>
   </div>
 </div>
 
@@ -3581,7 +3583,7 @@ const QUEUE_KEY = 'tower_queue';
 // ========================
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('f_inspection_date').value = new Date().toISOString().split('T')[0];
-  window.addEventListener('online', () => { updateStatus(true); syncAllQueues(); });
+  window.addEventListener('online', () => { updateStatus(true); syncAllQueues(); try { homeSyncPublished(true); } catch (e) {} });
   window.addEventListener('offline', () => updateStatus(false));
   updateStatus(navigator.onLine);
   try { opsMigrateOldQueues(); } catch (e) { console.error('[tower-app] ops init', e); }   // v335-C4: ترحيل آمن للطوابير القديمة قبل أي مزامنة (واجهة الرصد تُركَّب عند تحميل محرر الكشف)
@@ -3739,6 +3741,7 @@ function enterApp() {
   document.getElementById('headerUserName').textContent = currentUser.full_name || '';
 
   applyRolePermissions();
+  try { homeSyncPublished(true); } catch (e) {}   // N25-R43
   // v335-C6: لا جلب للأرشيف عند الدخول؛ السجلات التاريخية تُحمَّل فقط من شاشات الأرشيف/التقارير الصريحة
   if (navigator.onLine) { loadLinesInfoFromDB(); }   // v335-C5: القراءة تحتاج جلسة، فتُعاد بعد الدخول
   try { featSchedulePreload(['insp', 'treat']); } catch (e) {}   // N03-C / P01-A: تحميل مسبق للكود فقط وقت الخمول (insp ثم treat بالتتابع)
@@ -3821,16 +3824,56 @@ const HOME_BY_ID = {}; HOME_CATALOG.forEach(e => { HOME_BY_ID[e.id] = e; });
 function _homeUid() { return currentUser && currentUser.id != null ? String(currentUser.id) : null; }
 function homeAvail(e) { try { return !!e.avail(); } catch (x) { return false; } }
 // التخزين: مصفوفة معرّفات مرتبة لهذا الحساب؛ غياب المفتاح = الافتراضي. أي تلف يُهمل ويرجع للافتراضي.
-function homeLayoutLoad() {
-  const u = _homeUid(); if (!u) return homeDefault();
-  try {
-    const raw = localStorage.getItem(HOME_LAYOUT_KEY + u); if (raw == null) return homeDefault();
-    const o = JSON.parse(raw); if (!o || o.v !== 1 || !Array.isArray(o.ids)) return homeDefault();
-    const seen = {}, out = []; o.ids.forEach(id => { if (typeof id === 'string' && HOME_BY_ID[id] && !seen[id]) { seen[id] = 1; out.push(id); } }); return out;
-  } catch (e) { return homeDefault(); }
+// N25-R43a: ما دام هناك ترتيب منشور فهو المعتمد لكل الحسابات ولا يتجاوزه أي حفظ شخصي (يبقى الحفظ الشخصي مخزوناً ويعود إن أُلغي النشر).
+// N25-R43: النسخة المنشورة من المدير (Supabase) تُحفظ بالجهاز للأوفلاين. الأولوية: المنشور أحدث من التخصيص المحلي ← المنشور، وإلا المحلي، وإلا الافتراضي.
+const HOME_PUB_KEY = 'tower_home_pub_v1';
+let _homePub, _homeSyncing = false, _homeSyncAt = 0;
+function homePubRead() {
+  if (_homePub !== undefined) return _homePub;
+  _homePub = null;
+  try { const o = JSON.parse(localStorage.getItem(HOME_PUB_KEY) || 'null'); if (o && o.v === 1 && typeof o.version === 'number' && (o.ids === null || Array.isArray(o.ids))) _homePub = o; } catch (e) {}
+  return _homePub;
 }
-function homeLayoutSave(ids) { const u = _homeUid(); if (!u) return false; try { localStorage.setItem(HOME_LAYOUT_KEY + u, JSON.stringify({ v: 1, ids })); return true; } catch (e) { return false; } }
+function homePubWrite(version, ids, by, at) {
+  _homePub = { v: 1, version: version, ids: Array.isArray(ids) ? ids.filter(x => typeof x === 'string') : null, by: by || null, at: at || null };
+  try { localStorage.setItem(HOME_PUB_KEY, JSON.stringify(_homePub)); } catch (e) {}
+}
+function homePubVer() { const p = homePubRead(); return p ? p.version : 0; }
+function _homeClean(ids) { const seen = {}, out = []; (ids || []).forEach(id => { if (typeof id === 'string' && HOME_BY_ID[id] && !seen[id]) { seen[id] = 1; out.push(id); } }); return out; }
+function homeLocalRaw() {
+  const u = _homeUid(); if (!u) return null;
+  try { const o = JSON.parse(localStorage.getItem(HOME_LAYOUT_KEY + u) || 'null'); if (!o || o.v !== 1 || !Array.isArray(o.ids)) return null; return { ids: _homeClean(o.ids), pv: typeof o.pv === 'number' ? o.pv : 0 }; } catch (e) { return null; }
+}
+// المصدر الفعّال: published | local | default
+function homeEffective() {
+  const loc = homeLocalRaw(), pub = homePubRead();
+  if (pub && pub.ids) return { src: 'published', ids: _homeClean(pub.ids), ver: pub.version };
+  if (loc) return { src: 'local', ids: loc.ids, ver: loc.pv };
+  return { src: 'default', ids: homeDefault(), ver: 0 };
+}
+function homeLayoutLoad() { if (!_homeUid()) return homeDefault(); return homeEffective().ids; }
+function homeIsLocked() { const p = homePubRead(); return !!(p && p.ids); }
+function homeLayoutSave(ids) { const u = _homeUid(); if (!u || homeIsLocked()) return false; try { localStorage.setItem(HOME_LAYOUT_KEY + u, JSON.stringify({ v: 1, ids, pv: homePubVer() })); return true; } catch (e) { return false; } }
 function homeLayoutClear() { const u = _homeUid(); if (!u) return; try { localStorage.removeItem(HOME_LAYOUT_KEY + u); } catch (e) {} }
+// مزامنة النسخة المنشورة: عند الدخول وفتح الرئيسية وعودة الاتصال. تفشل بصمت أوفلاين وتبقى آخر نسخة محفوظة.
+async function homeSyncPublished(force) {
+  if (!currentUser || !navigator.onLine || _homeSyncing) return;
+  if (!force && Date.now() - _homeSyncAt < 20000) return;
+  _homeSyncing = true;
+  try {
+    const r = await csCall('app_home_layout_get');
+    if (r && r.ok === true && typeof r.version === 'number') {
+      _homeSyncAt = Date.now();
+      const cur = homePubRead();
+      if (!cur || cur.version !== r.version || (cur.ids === null) !== !r.published) {
+        homePubWrite(r.version, r.published ? r.ids : null, r.published_by_name, r.published_at);
+        homeRender();
+        const pg = document.getElementById('page-homeCustom');
+        if (pg && pg.classList.contains('active') && !(_hmc && _hmc.dirty)) { _hmc.draft = homeLayoutLoad().filter(id => homeAvail(HOME_BY_ID[id])); hcPaint(); }
+      }
+    }
+  } catch (e) {} finally { _homeSyncing = false; }
+}
 function _homeIconHtml(e) { return e.img ? '<img src="' + e.img + '" class="' + (e.cls || 'icon-img') + '" alt="">' : '<span class="icon">' + e.icon + '</span>'; }
 function homeRender() {
   const g = document.getElementById('homeGrid'); if (!g) return;
@@ -3854,7 +3897,7 @@ function _hcRow(e, acts, on) {
   return '<div class="hc-row" data-hc="' + e.id + '"><div class="hc-ico">' + (e.img ? '<img src="' + e.img + '" alt="">' : e.icon) + '</div><div class="hc-name"><b>' + e.name + (on ? '<span class="hc-chip">على الرئيسية</span>' : '') + '</b><span>' + e.sub + '</span></div><div class="hc-acts">' + acts + '</div></div>';
 }
 function hcPaint() {
-  const box = document.getElementById('hcBody'); if (!box) return; const d = _hmc.draft; let h = '';
+  const box = document.getElementById('hcBody'); if (!box) return; const d = _hmc.draft; let h = hcPubHtml();
   h += '<div class="hc-sec" id="hcOrder"><h3>🏠 على الرئيسية الآن (' + d.length + ')</h3>';
   if (!d.length) h += '<div style="font-size:0.85rem;color:#718096;padding:6px">الرئيسية فارغة. أضِف اختصاراً من القوائم أدناه. (زر الإعدادات يبقى ظاهراً دائماً.)</div>';
   d.forEach((id, i) => { const e = HOME_BY_ID[id]; h += _hcRow(e, '<button data-up="' + id + '" onclick="hcMove(\'' + id + '\',-1)" aria-label="رفع"' + (i === 0 ? ' disabled' : '') + '>▲</button><button data-down="' + id + '" onclick="hcMove(\'' + id + '\',1)" aria-label="تنزيل"' + (i === d.length - 1 ? ' disabled' : '') + '>▼</button><button class="hc-hide" data-hide="' + id + '" onclick="hcToggle(\'' + id + '\')">إخفاء</button>', false); });
@@ -3866,18 +3909,86 @@ function hcPaint() {
     h += '</div>';
   });
   box.innerHTML = h;
+  const ad = _homeIsAdmin(), bp = document.getElementById('hcBtnPublish'), bu = document.getElementById('hcBtnUnpublish'), pb = homePubRead();
+  if (bp) bp.style.display = ad ? '' : 'none';
+  const lk = homeIsLocked(), bs = document.getElementById('hcBtnSave'), br = document.getElementById('hcBtnReset'); if (bs) bs.style.display = lk ? 'none' : ''; if (br) br.style.display = lk ? 'none' : '';
+  if (_hcRO()) box.querySelectorAll('.hc-acts button, .hc-hide, .hc-add').forEach(b => { b.style.display = 'none'; }); if (bu) bu.style.display = (ad && pb && pb.ids) ? '' : 'none';
 }
-function hcToggle(id) { if (!HOME_BY_ID[id] || !homeAvail(HOME_BY_ID[id])) return; const i = _hmc.draft.indexOf(id); if (i >= 0) _hmc.draft.splice(i, 1); else _hmc.draft.push(id); _hmc.dirty = true; hcPaint(); }
-function hcMove(id, dir) { const i = _hmc.draft.indexOf(id), j = i + dir; if (i < 0 || j < 0 || j >= _hmc.draft.length) return; const t = _hmc.draft[i]; _hmc.draft[i] = _hmc.draft[j]; _hmc.draft[j] = t; _hmc.dirty = true; hcPaint(); }
+// ---- N25-R43: حالة المصدر + أدوات المدير (نشر/إلغاء النشر/معاينة الترتيب المحلي القديم) ----
+function _homeIsAdmin() { return !!currentUser && currentUser.role === 'admin'; }
+function hcPubHtml() {
+  const ef = homeEffective(), pub = homePubRead(), admin = _homeIsAdmin(); let h = '';
+  const srcTxt = ef.src === 'published' ? '📢 الترتيب المنشور من المدير (نسخة ' + ef.ver + ') — معتمد لكل الحسابات' : ef.src === 'local' ? '💾 ترتيب محفوظ على هذا الجهاز' : '🏠 الترتيب الافتراضي';
+  h += '<div class="hc-note" id="hcSrc" data-src="' + ef.src + '" data-ver="' + homePubVer() + '" data-locked="' + (homeIsLocked() ? 1 : 0) + '">المصدر الحالي: <b>' + srcTxt + '</b>' + (pub && pub.ids ? '<br>آخر نشر: نسخة ' + pub.version + (pub.by ? ' — ' + pub.by : '') : '<br>لا يوجد ترتيب منشور') + '</div>';
+  const loc = homeLocalRaw();
+  if (!admin && homeIsLocked()) h += '<div class="hc-note" id="hcLockNote" style="background:#FFFAF0;border-color:#ED8936;color:#744210">🔒 الرئيسية محدَّدة من المدير ولا يمكن تغييرها شخصياً. إذا ألغى المدير النشر يرجع ترتيبك الشخصي أو الافتراضي.</div>';
+  if (admin) {
+    if (loc && homeIsLocked()) h += '<div class="hc-sec" id="hcLegacy"><h3>💾 ترتيب محلي قديم على هذا الجهاز (' + loc.ids.length + ' اختصار)</h3><div style="font-size:0.82rem;color:#4a5568;margin-bottom:8px">غير مطبّق ما دام هناك ترتيب منشور. يمكنك معاينته ثم نشره للجميع.</div><button class="btn btn-secondary" id="hcLegacyPreview" onclick="hcLegacyPreview()">👁️ معاينة</button></div>';
+    if (_hmc.preview) h += '<div class="hc-note" id="hcPreviewNote" style="background:#FFFAF0;border-color:#ED8936;color:#744210">أنت تعاين الترتيب المحلي القديم. لم يُنشر ولم يُحفظ بعد.</div>';
+  }
+  return h;
+}
+function hcLegacyPreview() { const loc = homeLocalRaw(); if (!loc) return; _hmc.draft = loc.ids.filter(id => homeAvail(HOME_BY_ID[id])); _hmc.preview = true; _hmc.dirty = true; hcPaint(); window.scrollTo(0, 0); }
+function _homeReq(sig) { if (!_hmc.req || _hmc.req.sig !== sig) _hmc.req = { sig: sig, id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }) }; return _hmc.req.id; }
+function _homePubFail(r) {
+  const c = r && r.code;
+  if (c === 'version_conflict') {
+    if (typeof r.version === 'number') homePubWrite(r.version, r.published ? r.ids : null, null, null);
+    homeRender(); _hmc.req = null; hcPaint(); showToast('⚠️ تغيّر الترتيب المنشور من جهاز آخر. راجعه ثم انشر من جديد', 'error');
+  } else if (c === 'forbidden') showToast('⚠️ النشر للمدير فقط', 'error');
+  else if (c === 'network' || c === 'bad_response' || (typeof c === 'string' && c.indexOf('http_') === 0) || c === 'invalid_session') showToast('❌ تعذّر النشر (لا اتصال). لم يُنشر شيء', 'error');
+  else showToast('❌ تعذّر النشر', 'error');
+}
+let _hcPubBusy = false;
+async function hcPublish() {
+  if (!_homeIsAdmin()) { showToast('⚠️ النشر للمدير فقط', 'error'); return; }
+  if (_hcPubBusy) return;
+  if (!navigator.onLine) { showToast('❌ النشر يحتاج اتصالاً بالإنترنت', 'error'); return; }
+  const ids = _hmc.draft.filter(id => homeAvail(HOME_BY_ID[id]));
+  if (!ids.length) { showToast('⚠️ لا يمكن نشر رئيسية فارغة', 'error'); return; }
+  if (!confirm('نشر هذا الترتيب لكل الحسابات؟ (كل حساب يرى منه ما تسمح به صلاحياته فقط)')) return;
+  _hcPubBusy = true;
+  try {
+    const exp = homePubVer(), rid = _homeReq(JSON.stringify(ids) + '|' + exp);
+    const r = await csCall('app_home_layout_publish', { p_request_id: rid, p_ids: ids, p_expected_version: exp });
+    if (r && r.stale) return;
+    if (r && r.ok === true) {
+      homePubWrite(r.version, ids, currentUser.full_name || null, new Date().toISOString());
+      homeLayoutClear(); _hmc.req = null; _hmc.dirty = false; _hmc.preview = false;
+      homeRender(); showToast('✅ نُشر الترتيب للجميع (نسخة ' + r.version + ')'); goBackFromOperation();
+    } else _homePubFail(r);
+  } finally { _hcPubBusy = false; }
+}
+async function hcUnpublish() {
+  if (!_homeIsAdmin()) { showToast('⚠️ النشر للمدير فقط', 'error'); return; }
+  if (_hcPubBusy) return;
+  if (!navigator.onLine) { showToast('❌ إلغاء النشر يحتاج اتصالاً بالإنترنت', 'error'); return; }
+  const pub = homePubRead(); if (!pub || !pub.ids) { showToast('لا يوجد ترتيب منشور', 'error'); return; }
+  if (!confirm('إلغاء النشر؟ ترجع الحسابات لترتيبها المحلي أو الافتراضي.')) return;
+  _hcPubBusy = true;
+  try {
+    const exp = homePubVer(), rid = _homeReq('clear|' + exp);
+    const r = await csCall('app_home_layout_clear', { p_request_id: rid, p_expected_version: exp });
+    if (r && r.stale) return;
+    if (r && r.ok === true) { homePubWrite(r.version, null, null, null); _hmc.req = null; homeRender(); _hmc.draft = homeLayoutLoad().filter(id => homeAvail(HOME_BY_ID[id])); _hmc.dirty = false; hcPaint(); showToast('✅ أُلغي النشر'); }
+    else if (r && r.code === 'nothing_published') { homePubWrite(r.version || 0, null, null, null); homeRender(); hcPaint(); showToast('لا يوجد ترتيب منشور'); }
+    else _homePubFail(r);
+  } finally { _hcPubBusy = false; }
+}
+function _hcRO() { return homeIsLocked() && !_homeIsAdmin(); }
+function hcToggle(id) { if (_hcRO()) return; if (!HOME_BY_ID[id] || !homeAvail(HOME_BY_ID[id])) return; const i = _hmc.draft.indexOf(id); if (i >= 0) _hmc.draft.splice(i, 1); else _hmc.draft.push(id); _hmc.dirty = true; hcPaint(); }
+function hcMove(id, dir) { if (_hcRO()) return; const i = _hmc.draft.indexOf(id), j = i + dir; if (i < 0 || j < 0 || j >= _hmc.draft.length) return; const t = _hmc.draft[i]; _hmc.draft[i] = _hmc.draft[j]; _hmc.draft[j] = t; _hmc.dirty = true; hcPaint(); }
 function hcSave() {
+  if (homeIsLocked()) { showToast('🔒 الرئيسية محدَّدة من المدير ولا يمكن حفظ ترتيب شخصي الآن', 'error'); return; }
   const ids = _hmc.draft.concat(_hmc.hidden.filter(id => _hmc.draft.indexOf(id) < 0));
   if (!homeLayoutSave(ids)) { showToast('❌ تعذّر حفظ التخصيص على هذا الجهاز', 'error'); return; }
-  homeRender(); _hmc.dirty = false; showToast('✅ تم حفظ تخصيص الرئيسية'); goBackFromOperation();
+  homeRender(); _hmc.dirty = false; _hmc.preview = false; showToast('✅ تم حفظ تخصيص الرئيسية'); goBackFromOperation();
 }
 function hcCancel() { _hmc.dirty = false; goBackFromOperation(); }
 function hcReset() {
-  if (!confirm('استعادة الرئيسية الافتراضية لهذا الحساب؟ (يُحذف التخصيص المحفوظ)')) return;
-  homeLayoutClear(); homeRender(); _hmc = { draft: homeDefault().filter(id => homeAvail(HOME_BY_ID[id])), hidden: [], dirty: false }; hcPaint(); showToast('🔄 استُعيدت الرئيسية الافتراضية');
+  if (homeIsLocked()) { showToast('🔒 الرئيسية محدَّدة من المدير', 'error'); return; }
+  if (!confirm('إزالة التخصيص المحلي لهذا الحساب؟ ترجع الرئيسية للترتيب المنشور إن وُجد وإلا للافتراضي.')) return;
+  homeLayoutClear(); homeRender(); _hmc = { draft: homeLayoutLoad().filter(id => homeAvail(HOME_BY_ID[id])), hidden: [], dirty: false }; hcPaint(); showToast('🔄 أُزيل التخصيص المحلي');
 }
 
 function applyRolePermissions() {
@@ -4246,6 +4357,7 @@ function cancelToHome() {
 
 function showPage(id, btn) {
   pageNavigationRequestSeq++;
+  if (id === 'home') { try { homeSyncPublished(); } catch (e) {} }   // N25-R43: عند فتح الرئيسية
   try { if (typeof hubEditNavReset === 'function') hubEditNavReset(); } catch (e) {}   // v335-C6r13: طلب فتح تعديل معلّق من الأرشيف يسقط بأي تنقّل
   invalidatePrefill(); // v334: التنقّل يُبطل أي تهيئة معلّقة
   // إلغاء تركيز أي حقل (خاصة حقول التاريخ) قبل أي تنقّل — يمنع عالق منتقي التاريخ الأصلي بالآيفون فوق الصفحة
